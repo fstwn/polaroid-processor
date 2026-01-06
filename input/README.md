@@ -1,0 +1,1 @@
+# Folder for raw input images

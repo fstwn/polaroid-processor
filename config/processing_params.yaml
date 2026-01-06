@@ -1,0 +1,59 @@
+# Polaroid Processing Configuration
+# Adjust these parameters based on your scan quality and requirements
+
+# Image processing parameters
+image:
+  dpi: 600  # DPI of input images
+  target_width_mm: 88  # Polaroid width in mm
+  target_height_mm: 107  # Polaroid height in mm
+
+# JPG output settings
+jpg_output:
+  dpi: 350  # DPI for JPG output
+  size_multiplier: 2.0  # Multiplier for JPG size (2.0 = 2x original Polaroid size)
+  quality: 95  # JPEG quality (0-100)
+
+# Preprocessing parameters
+preprocessing:
+  threshold_value: 100  # Threshold to separate white Polaroid from black background (0-255)
+
+# Edge detection parameters
+edge_detection:
+  canny_low: 50  # Lower threshold for Canny edge detection
+  canny_high: 150  # Upper threshold for Canny edge detection
+
+# Contour detection parameters
+contour_detection:
+  min_area: 10000  # Minimum contour area (pixels) to consider as Polaroid
+  min_aspect_ratio: 0.7  # Minimum aspect ratio for Polaroid detection
+  max_aspect_ratio: 1.0  # Maximum aspect ratio for Polaroid detection
+
+# Quality control parameters
+quality_control:
+  min_quality_score: 0.3  # Minimum quality score to accept detection
+  enable_debug_visualization: false  # Create debug images showing detected corners
+  debug_output_dir: "debug"  # Directory for debug images
+
+# Distortion correction parameters (for holder-induced barrel/pincushion distortion)
+distortion_correction:
+  enabled: true  # Enable barrel/pincushion distortion correction
+  k1: -0.02  # Primary radial distortion coefficient (negative = correct barrel/bulge)
+  k2: 0.0  # Secondary radial distortion coefficient (usually not needed)
+  k3: 0.0  # Tertiary radial distortion coefficient (rarely needed)
+  # Tip: Start with k1 between -0.1 and -0.3 for barrel distortion
+  # Positive values correct pincushion distortion
+
+# Cropping parameters
+cropping:
+  safety_margin_percent: 0.85  # Crop this % inward from detected edge to avoid artifacts
+  # Higher values = more aggressive cropping, less chance of edge artifacts
+  # Typical range: 0.3 to 1.5
+
+# Shadow/vignette correction for edges (holder shadow artifacts)
+shadow_correction:
+  enabled: true  # Enable edge shadow compensation
+  border_region_percent: 15  # Width of border region to analyze (% of image dimension)
+  corner_region_percent: 10  # Size of corner regions for targeted correction
+  max_brightness_boost: 20  # Maximum brightness increase for darkest areas (0-255)
+  detection_threshold: 0.9  # Brightness ratio below which correction is applied
+  blend_falloff: 0.8  # How smoothly correction blends toward center (0-1, higher = smoother)
