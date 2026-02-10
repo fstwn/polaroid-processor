@@ -1,5 +1,6 @@
 # data folders
 /input/*/
 /output/*/
+/debug/
 
 __pycache__/

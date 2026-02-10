@@ -37,7 +37,7 @@ quality_control:
 # Distortion correction parameters (for holder-induced barrel/pincushion distortion)
 distortion_correction:
   enabled: true  # Enable barrel/pincushion distortion correction
-  k1: -0.02  # Primary radial distortion coefficient (negative = correct barrel/bulge)
+  k1: -0.009  # Primary radial distortion coefficient (negative = correct barrel/bulge)
   k2: 0.0  # Secondary radial distortion coefficient (usually not needed)
   k3: 0.0  # Tertiary radial distortion coefficient (rarely needed)
   # Tip: Start with k1 between -0.1 and -0.3 for barrel distortion
@@ -45,15 +45,15 @@ distortion_correction:
 
 # Cropping parameters
 cropping:
-  safety_margin_percent: 0.85  # Crop this % inward from detected edge to avoid artifacts
+  safety_margin_percent: 0.75  # Crop this % inward from detected edge to avoid artifacts
   # Higher values = more aggressive cropping, less chance of edge artifacts
   # Typical range: 0.3 to 1.5
 
 # Shadow/vignette correction for edges (holder shadow artifacts)
 shadow_correction:
   enabled: true  # Enable edge shadow compensation
-  border_region_percent: 15  # Width of border region to analyze (% of image dimension)
+  border_region_percent: 12  # Width of border region to analyze (% of image dimension)
   corner_region_percent: 10  # Size of corner regions for targeted correction
-  max_brightness_boost: 20  # Maximum brightness increase for darkest areas (0-255)
+  max_brightness_boost: 15  # Maximum brightness increase for darkest areas (0-255)
   detection_threshold: 0.9  # Brightness ratio below which correction is applied
-  blend_falloff: 0.8  # How smoothly correction blends toward center (0-1, higher = smoother)
+  blend_falloff: 0.9  # How smoothly correction blends toward center (0-1, higher = smoother)

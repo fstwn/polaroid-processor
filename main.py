@@ -21,7 +21,8 @@ from image_utils import (  # noqa: E402
     create_debug_visualization,
     calculate_quality_score,
     apply_barrel_distortion_correction,
-    get_distortion_correction_config
+    get_distortion_correction_config,
+    apply_safety_margin_crop
 )
 from shadow_corrector import ShadowCorrector, get_shadow_correction_config  # NOQA
 
@@ -93,16 +94,11 @@ def process_single_image(
                 f"for {input_path}"
             )
 
-        # Get cropping safety margin from config
-        cropping_config = config.get('cropping', {})
-        safety_margin = cropping_config.get('safety_margin_percent', 0.0)
-
-        # Apply perspective correction with safety margin
-        corrected = processor.perspective_correct(
-            image, corners, safety_margin_percent=safety_margin
-        )
+        # Apply perspective correction (without safety margin - applied later)
+        corrected = processor.perspective_correct(image, corners)
 
         # Apply barrel distortion correction if enabled
+        # (BEFORE safety margin crop)
         dist_cfg = get_distortion_correction_config(config)
         distortion_enabled, k1, k2, k3 = dist_cfg
         if distortion_enabled:
@@ -110,6 +106,14 @@ def process_single_image(
                 corrected, k1, k2, k3
             )
             print(f"Distortion correction applied: k1={k1}, k2={k2}")
+
+        # Apply safety margin crop AFTER distortion correction
+        # This removes any black edges introduced by distortion correction
+        cropping_config = config.get('cropping', {})
+        safety_margin = cropping_config.get('safety_margin_percent', 0.0)
+        if safety_margin > 0:
+            corrected = apply_safety_margin_crop(corrected, safety_margin)
+            print(f"Safety margin crop applied: {safety_margin}%")
 
         # Apply shadow correction if enabled
         shadow_enabled, shadow_params = get_shadow_correction_config(config)
@@ -178,6 +182,8 @@ def process_batch(
     jpg_only: bool = False
 ) -> None:
     """Process all TIFF files in a directory."""
+    print('-' * 75)
+    print('Starting batch processing...')
     # Create output directories
     os.makedirs(output_dir, exist_ok=True)
 
@@ -196,7 +202,7 @@ def process_batch(
         for file_path in Path(input_dir).glob(f"*{ext}"):
             tiff_files.add(file_path)
 
-    tiff_files = list(tiff_files)
+    tiff_files = sorted(list(tiff_files))
 
     if not tiff_files:
         print(f"No TIFF files found in {input_dir}")
@@ -206,8 +212,9 @@ def process_batch(
 
     successful = 0
     failed = 0
-
+    print('-' * 75)
     for tiff_file in tiff_files:
+        print(f'Processing {tiff_file.name}...')
         input_path = str(tiff_file)
         output_filename = f"processed_{tiff_file.name}"
         output_path = os.path.join(output_dir, output_filename)
@@ -262,6 +269,7 @@ def process_batch(
                     successful += 1
                 else:
                     failed += 1
+        print('-' * 75)
 
     print("\nBatch processing complete:")
     print(f"  Successful: {successful}")

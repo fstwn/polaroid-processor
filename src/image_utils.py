@@ -195,6 +195,49 @@ def save_with_metadata(
     pil_image.save(output_path, "TIFF", compression="lzw", dpi=(dpi, dpi))
 
 
+def apply_safety_margin_crop(
+    image: np.ndarray,
+    margin_percent: float = 1.0
+) -> np.ndarray:
+    """
+    Crop edges of an image by a percentage to remove artifacts.
+
+    This should be applied AFTER distortion correction to remove any
+    black edges introduced by the distortion correction process.
+
+    Args:
+        image: Input image
+        margin_percent: Percentage of each edge to crop (e.g., 1.0 = 1%)
+
+    Returns:
+        Cropped image
+    """
+    if margin_percent <= 0:
+        return image
+
+    height, width = image.shape[:2]
+    # Calculate pixels to crop from each edge
+    crop_x = int(width * margin_percent / 100.0)
+    crop_y = int(height * margin_percent / 100.0)
+
+    # Ensure we don't crop too much
+    if crop_x * 2 >= width or crop_y * 2 >= height:
+        logger.warning(
+            f"Safety margin {margin_percent}% too large, skipping crop"
+        )
+        return image
+
+    # Crop the image
+    cropped = image[crop_y:height-crop_y, crop_x:width-crop_x]
+
+    logger.info(
+        f"Applied safety margin crop: {margin_percent}% "
+        f"({width}x{height} -> {cropped.shape[1]}x{cropped.shape[0]})"
+    )
+
+    return cropped
+
+
 def create_debug_visualization(
     image: np.ndarray,
     corners: np.ndarray,
