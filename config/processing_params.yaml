@@ -15,7 +15,7 @@ jpg_output:
 
 # Preprocessing parameters
 preprocessing:
-  threshold_value: 100  # Threshold to separate white Polaroid from black background (0-255)
+  threshold_value: 'OTSU'  # Threshold to separate white Polaroid from black background (0-255) or use 'OTSU' to specify automatic inference
 
 # Edge detection parameters
 edge_detection:

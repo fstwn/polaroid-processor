@@ -107,11 +107,12 @@ class PolaroidProcessor:
 
         # Simple thresholding - white Polaroid should be
         # much brighter than background
-        if isinstance(self.threshold_value, str) and self.threshold_value == 'OTSU':
+        if (isinstance(self.threshold_value, str) and
+                self.threshold_value == 'OTSU'):
             _, thresh = cv2.threshold(
                 gray, 0, 255, cv2.THRESH_OTSU
             )
-        else: 
+        else:
             _, thresh = cv2.threshold(
                 gray, self.threshold_value, 255, cv2.THRESH_BINARY
             )

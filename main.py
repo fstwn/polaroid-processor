@@ -63,18 +63,22 @@ def process_single_image(
         image = processor.load_image(input_path)
         processed = processor.preprocess_image(image)
 
-        # Detect edges and find contours
-        edges = edge_detector.detect_edges(processed)
-        contours = edge_detector.find_rectangular_contours(
-            edges,
-            min_area=processor.min_contour_area
-        )
+        # Prefer contour-from-binary: outer boundary of white (polaroid) region.
+        # This avoids picking the inner rectangle (photo content) when Canny
+        # yields both outer and inner edges and the outer is noisy.
+        corners = processor.find_polaroid_contour(processed)
 
-        # Find best matching rectangle using aspect ratio from config
-        corners = edge_detector.find_largest_rectangle(
-            contours,
-            target_aspect_ratio=processor.aspect_ratio
-        )
+        if corners is None:
+            # Fall back to edge-based detection (Canny + rectangular contours)
+            edges = edge_detector.detect_edges(processed)
+            contours = edge_detector.find_rectangular_contours(
+                edges,
+                min_area=processor.min_contour_area
+            )
+            corners = edge_detector.find_largest_rectangle(
+                contours,
+                target_aspect_ratio=processor.aspect_ratio
+            )
 
         if corners is None:
             print(f"Error: Could not detect Polaroid in {input_path}")
