@@ -117,8 +117,8 @@ def test_inspect_writes_png(scans, tmp_path, capsys):
 
 def test_inspect_refuses_input_folder(scans, capsys):
     src, _ = scans
-    with pytest.raises(SystemExit):
-        main(["inspect", str(src / "scan_gold.tif"), "--image", str(src / "x.png")])
+    assert main(["inspect", str(src / "scan_gold.tif"), "--image", str(src / "x.png")]) == 2
+    assert not (src / "x.png").exists()
 
 
 def test_failed_scan_sets_exit_code(tmp_path, capsys):

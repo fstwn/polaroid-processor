@@ -437,8 +437,12 @@ def _store_job_result(manifest: Manifest, res: dict) -> None:
 
 
 def run_batch(inputs: Sequence[str], out_dir: Optional[str], settings: Settings,
-              emit: Callable[[dict], None] = lambda r: None, recursive: bool = False) -> dict:
+              emit: Callable[[dict], None] = lambda r: None, recursive: bool = False,
+              progress: Optional[Callable[[str, str], None]] = None) -> dict:
     """Process scans into ``out_dir``. Emits one result record per scan and returns a summary.
+
+    ``progress(key, what)`` is called as each worker job finishes ("detected", "exported" or
+    an error message); scans that are up to date produce no call.
 
     Each scan is decoded once: detection (if the scan is new or changed) and export run in
     the same worker with a provisional scale. Once every scan is measured, the final scale
@@ -488,6 +492,8 @@ def run_batch(inputs: Sequence[str], out_dir: Optional[str], settings: Settings,
             _store_job_result(manifest, res)
             exported_now[res["key"]] = "outputs" in res
             log.info("%s: %s in %.1fs", res["key"], res.get("error") or "done", res["time_s"])
+            if progress:
+                progress(res["key"], res.get("error") or "detected")
             manifest.save()
 
     # ---- scale and review --------------------------------------------------------------
@@ -543,6 +549,8 @@ def run_batch(inputs: Sequence[str], out_dir: Optional[str], settings: Settings,
                 e["export_key"] = xkeys[res["key"]]
                 exported_now[res["key"]] = True
             log.info("%s: exported in %.1fs", res["key"], res["time_s"])
+            if progress:
+                progress(res["key"], res.get("error") or "exported")
             manifest.save()
 
     for k in keys:

@@ -123,3 +123,12 @@ Open findings for M3 (edge flattening):
 
 - Many prints have slightly concave sides: the corners lie 20-60 px (0.15-0.45 mm) outside the fitted line while the middle sits on it, probably print cupping. The crop then trims a sliver of print at the corners but never shows holder.
 - Some corners flare outward by up to 0.6 mm (`flare_start_px` / `flare_end_px` per edge in the manifest). The measurement is still noisy near the holder rim and on printed frames, so it is diagnostic only and sets no warning.
+
+## M2 status (2026-10-17)
+
+- `polaroid_processor.api`: the commands as functions returning JSON-ready records; CLI and MCP server share it.
+- MCP server `polaroid-mcp`: dependency-free stdio implementation, because the official `mcp` SDK needs Python 3.10+ and the target environment is 3.9. Five tools (process, detect, inspect with inline image, fix, status), a progress notification per finished scan, tool errors as `isError` results. Tested end to end over stdio, including parallel workers on real scans.
+- Claude Code skill in `skills/polaroid-processor/`.
+- Packaging: version 0.2.0, console scripts `polaroid` and `polaroid-mcp`; wheel builds offline and installs into a clean venv.
+- Windows launcher `launcher/polaroid-drop.bat`: drag folders onto it; finds `polaroid.exe` on the PATH or in a named conda environment.
+- Not done: publishing to PyPI, a Claude Code plugin bundle (skill plus MCP registration in one install).

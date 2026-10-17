@@ -6,19 +6,26 @@ Scope and roadmap: [docs/SCOPE.md](docs/SCOPE.md).
 
 ## Install
 
-Python 3.9 or newer.
+Python 3.9 or newer. As a standalone tool (puts `polaroid` and `polaroid-mcp` on the PATH):
 
 ```bash
+pipx install git+https://github.com/fstwn/polaroid-processor.git
+```
+
+Into the current environment, or from a checkout for development:
+
+```bash
+pip install git+https://github.com/fstwn/polaroid-processor.git
 pip install -e .
 ```
 
-Inside an existing conda environment that already provides OpenCV, NumPy and Pillow, skip dependency resolution:
+Inside a conda environment that already provides OpenCV, NumPy and Pillow, skip dependency resolution (`pip install -e . --no-deps`); otherwise pip adds `opencv-python-headless` next to conda's OpenCV.
 
-```bash
-pip install -e . --no-deps
-```
+This installs two commands: `polaroid` (CLI) and `polaroid-mcp` (MCP server for agents). `python -m polaroid_processor` works too.
 
-This installs the `polaroid` command. `python -m polaroid_processor` works too.
+### Windows: drag and drop
+
+[`launcher/polaroid-drop.bat`](launcher/polaroid-drop.bat) needs no terminal. Drag one or more scan folders onto it (or double-click it and type a folder path). Each folder is processed into a sibling folder `<folder>_processed`, which opens in Explorer when done. If `polaroid.exe` is not on the PATH, set `POLAROID_CONDA_ENV` (or `POLAROID_EXE`) at the top of the file. Extra options go into `POLAROID_ARGS`, e.g. `--overlay`.
 
 ## Quick start
 
@@ -154,6 +161,38 @@ Exit codes: `0` success (scans may still need review), `1` at least one scan fai
 
 Agents never need to touch the input folder; all state lives in the output folder's manifest.
 
+## Agents
+
+### MCP server
+
+`polaroid-mcp` speaks the Model Context Protocol over stdio (no extra dependencies). Register it in Claude Code:
+
+```bash
+claude mcp add polaroid -- polaroid-mcp
+```
+
+Use the full path to `polaroid-mcp` (for example `.../envs/<env>/Scripts/polaroid-mcp.exe`) if it is not on the PATH. Other MCP clients take the same command.
+
+| Tool | Does |
+|---|---|
+| `polaroid_process` | `process` a batch; returns the summary and per-scan results (full records for flagged scans). Sends a progress notification per finished scan. |
+| `polaroid_detect` | Detect outlines, write nothing |
+| `polaroid_inspect` | Review sheet as an inline image plus corner coordinates; also saved to `<output>/_inspect/` |
+| `polaroid_fix` | `set` / `nudge` / `shift` / `accept` / `reset` as JSON objects, author `agent` by default, re-exports by default |
+| `polaroid_status` | Counts and the scans that need review |
+
+Tool errors (bad arguments, missing manifest) come back as tool results with `isError`, so the agent can correct itself.
+
+### Claude Code skill
+
+[`skills/polaroid-processor/SKILL.md`](skills/polaroid-processor/SKILL.md) teaches Claude the batch, review and fix workflow, how to read the review sheet, and when to hand a scan to a human. Install it for all projects by copying the folder:
+
+```bash
+cp -r skills/polaroid-processor ~/.claude/skills/
+```
+
+It works with the MCP tools when they are registered and falls back to the CLI otherwise.
+
 ## Python API
 
 ```python
@@ -164,7 +203,7 @@ det = detect(rgb)              # Detection: quad, size_px, skew_deg, edges, ...
 img = rectify(rgb, det.quad, margin_px=25)
 ```
 
-Batch processing with manifest and exports: `polaroid_processor.pipeline.run_batch`.
+Batch processing with manifest and exports: `polaroid_processor.pipeline.run_batch`. The commands as functions that return JSON-ready records (used by the CLI and the MCP server): `polaroid_processor.api`.
 
 ## Development
 

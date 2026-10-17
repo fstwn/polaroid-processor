@@ -10,19 +10,11 @@ import argparse
 import json
 import logging
 import sys
-from pathlib import Path
 from typing import List, Optional
 
-import cv2
-import numpy as np
-
-from . import __version__
-from .detection import DetectionError, detect, manual_detection
-from .imageio import load_rgb, write_derivative
-from .manifest import Manifest
-from .pipeline import (DEFAULT_DERIVATIVES, Derivative, Settings, collect_inputs, result_record, run_batch,
-                       settings_from_dict)
-from .render import CORNERS, inspect_sheet, quad_summary
+from . import __version__, api
+from .api import apply_fix  # noqa: F401  (public, used by tests)
+from .pipeline import DEFAULT_DERIVATIVES, Settings
 
 log = logging.getLogger("polaroid_processor")
 
@@ -65,92 +57,38 @@ def _setup_logging(verbose: int, quiet: bool) -> None:
 
 # --------------------------------------------------------------------------- process / detect
 def _settings_from_args(a) -> Settings:
-    s = Settings()
-    s.margin_mm = a.margin_mm
-    if a.derivative is not None:
-        s.derivatives = tuple(Derivative.parse(x) for x in a.derivative)
-    if a.no_derivatives:
-        s.derivatives = ()
-    s.interpolation = a.interpolation
-    s.tiff_compression = a.tiff_compression
-    s.overlay = a.overlay
-    s.ppi, s.profile, s.profiles_file = a.ppi, a.profile, a.profiles
-    s.strict, s.force, s.redetect = a.strict, a.force, a.redetect
-    s.dry_run = a.dry_run
-    s.workers = a.workers
-    return s
+    return api.make_settings(
+        margin_mm=a.margin_mm, derivatives=a.derivative, no_derivatives=a.no_derivatives,
+        interpolation=a.interpolation, tiff_compression=a.tiff_compression, overlay=a.overlay,
+        ppi=a.ppi, profile=a.profile, profiles=a.profiles, strict=a.strict, force=a.force,
+        redetect=a.redetect, dry_run=a.dry_run, workers=a.workers)
 
 
 def cmd_process(a) -> int:
-    out = a.output
-    if out is None and not a.dry_run:
-        raise SystemExit("process: --output is required (use --dry-run to only detect)")
-    settings = _settings_from_args(a)
     emit = _emit if a.json else _human
-    summary = run_batch(a.inputs, out, settings, emit=emit, recursive=a.recursive)
+    summary = api.process(a.inputs, a.output, _settings_from_args(a), recursive=a.recursive, emit=emit)
     emit(summary)
     return 1 if summary["failed"] else 0
 
 
+def _human_detection(rec: dict) -> None:
+    if rec["status"] == "ok":
+        d = rec["detection"]
+        print(f"ok      {rec['file']}  {d['size_px'][0]:.0f}x{d['size_px'][1]:.0f}px  aspect {d['aspect']}  "
+              f"skew {d['skew_deg']}deg  thr {d['speck_threshold']}  {d['time_s']}s")
+    else:
+        print(f"FAILED  {rec['file']}  {rec['error']}")
+
+
 def cmd_detect(a) -> int:
-    failed = False
-    for f in collect_inputs(a.inputs, a.recursive):
-        rec = {"type": "detection", "file": f.name, "input": str(f.resolve())}
-        try:
-            det = detect(load_rgb(str(f)))
-            rec.update(status="ok", detection=det.to_dict())
-        except DetectionError as e:
-            failed = True
-            rec.update(status="failed", error=str(e))
-        if a.json:
-            _emit(rec)
-        else:
-            if rec["status"] == "ok":
-                d = rec["detection"]
-                print(f"ok      {f.name}  {d['size_px'][0]:.0f}x{d['size_px'][1]:.0f}px  aspect {d['aspect']}  "
-                      f"skew {d['skew_deg']}deg  thr {d['speck_threshold']}  {d['time_s']}s")
-            else:
-                print(f"FAILED  {f.name}  {rec['error']}")
-    return 1 if failed else 0
+    records = api.detect_scans(a.inputs, recursive=a.recursive, emit=_emit if a.json else _human_detection)
+    return 1 if any(r["status"] == "failed" for r in records) else 0
 
 
 # --------------------------------------------------------------------------- inspect
-def _resolve_scan(manifest_dir: Optional[str], scan: str):
-    """Return (manifest or None, key or None, input path)."""
-    if manifest_dir:
-        m = Manifest(manifest_dir)
-        key = m.find(scan)
-        if key is None:
-            raise SystemExit(f"{scan!r} is not in the manifest of {manifest_dir}")
-        return m, key, m.get(key)["input"]
-    if not Path(scan).is_file():
-        raise SystemExit(f"{scan!r} is not a file (pass --manifest/-m to look it up in an output folder)")
-    return None, None, scan
-
-
 def cmd_inspect(a) -> int:
-    m, key, path = _resolve_scan(a.manifest, a.scan)
-    rgb = load_rgb(path)
-    quad = Manifest.effective_quad(m.get(key)) if m else None
-    source = ("override" if m.get(key).get("override") else "auto") if quad is not None else "auto"
-    if quad is None:
-        quad = detect(rgb).quad
-    stem = Path(path).stem
-    if a.image:
-        img_path = Path(a.image)
-    elif m:
-        img_path = m.out_dir / "_inspect" / f"{stem}.png"
-    else:
-        img_path = Path.cwd() / f"{stem}.inspect.png"
-    if Path(path).resolve().parent == img_path.resolve().parent:
-        raise SystemExit("refusing to write the inspect image into the input folder; pass --image")
-    header = f"{stem}  quad={source}  grid={a.grid}px  window={a.window}px"
-    sheet = inspect_sheet(rgb, quad, a.window, a.zoom, a.grid, header, a.stretch)
-    write_derivative(str(img_path), sheet, "png", 0, None)
-    rec = {"type": "inspect", "file": Path(path).name, "image": str(img_path.resolve()), "quad_source": source,
-           **quad_summary(quad),
-           "hint": "Tiles show full-resolution pixels; grid labels are absolute scan coordinates. "
-                   "The green line is the current crop edge; magenta crosses are corners."}
+    rec, _ = api.inspect_scan(a.scan, a.manifest, image=a.image, window=a.window, zoom=a.zoom, grid=a.grid,
+                              stretch=a.stretch)
     if a.json:
         _emit(rec)
     else:
@@ -161,99 +99,39 @@ def cmd_inspect(a) -> int:
 
 
 # --------------------------------------------------------------------------- fix
-def _parse_pairs(items: Optional[List[str]], names, n_vals: int):
+def _parse_pairs(items: Optional[List[str]], what: str) -> dict:
     out = {}
     for it in items or []:
         if "=" not in it:
-            raise SystemExit(f"bad value {it!r}: expected NAME=...")
+            raise api.UsageError(f"{what}: bad value {it!r}, expected NAME=...")
         k, v = it.split("=", 1)
-        k = k.strip().lower()
-        if k not in names:
-            raise SystemExit(f"bad name {k!r}: expected one of {', '.join(names)}")
-        vals = [float(x) for x in v.split(",")]
-        if len(vals) != n_vals:
-            raise SystemExit(f"bad value {it!r}: expected {n_vals} number(s)")
-        out[k] = vals
+        try:
+            out[k] = [float(x) for x in v.split(",")]
+        except ValueError:
+            raise api.UsageError(f"{what}: bad number in {it!r}") from None
     return out
 
 
-def apply_fix(quad: np.ndarray, sets=None, nudges=None, shifts=None) -> np.ndarray:
-    q = quad.astype(np.float64).copy()
-    idx = {n: i for i, n in enumerate(CORNERS)}
-    for n, (x, y) in (sets or {}).items():
-        q[idx[n]] = (x, y)
-    for n, (dx, dy) in (nudges or {}).items():
-        q[idx[n]] += (dx, dy)
-    side_corners = {"top": ("tl", "tr"), "right": ("tr", "br"), "bottom": ("br", "bl"), "left": ("bl", "tl")}
-    centre = q.mean(axis=0)
-    for side, (d,) in (shifts or {}).items():
-        a, b = (idx[c] for c in side_corners[side])
-        t = q[b] - q[a]
-        n = np.array([-t[1], t[0]]) / np.linalg.norm(t)
-        if np.dot((q[a] + q[b]) / 2 - centre, n) < 0:
-            n = -n
-        q[a] += d * n
-        q[b] += d * n
-    return q
-
-
 def cmd_fix(a) -> int:
-    m = Manifest(a.output)
-    key = m.find(a.scan)
-    if key is None:
-        raise SystemExit(f"{a.scan!r} is not in the manifest of {a.output}")
-    e = m.get(key)
-    current = Manifest.effective_quad(e)
-    if a.reset:
-        m.set_override(key, None, a.author, a.note or "reset to automatic detection", "reset")
-    else:
-        sets = _parse_pairs(a.set, CORNERS, 2)
-        nudges = _parse_pairs(a.nudge, CORNERS, 2)
-        shifts = _parse_pairs(a.shift, ("top", "right", "bottom", "left"), 1)
-        if not (sets or nudges or shifts or a.accept):
-            raise SystemExit("fix: give --set, --nudge, --shift, --accept or --reset")
-        if current is None:
-            raise SystemExit("fix: scan has no quad yet; set all four corners with --set")
-        new = apply_fix(current, sets, nudges, shifts)
-        action = "accept" if a.accept and not (sets or nudges or shifts) else "fix"
-        m.set_override(key, new, a.author, a.note or "", action)
-    m.save()
-    rc = 0
-    if a.export:
-        settings = settings_from_dict(m.data.get("settings", {}))
-        settings.workers = 1
-        summary = run_batch([m.get(key)["input"]], a.output, settings,
-                            emit=_emit if a.json else _human)
-        rc = 1 if summary["failed"] else 0
-    else:
-        m2 = Manifest(a.output)
-        rec = result_record(m2, key)
-        rec["type"] = "fix"
-        rec["history"] = m2.history(key)[-3:]
-        rec["note"] = "manifest updated; run 'polaroid process' again or pass --export to write files"
-        (_emit if a.json else lambda r: print(json.dumps(r, indent=1)))(rec)
-    return rc
+    emit = _emit if a.json else _human
+    rec = api.fix_scan(a.output, a.scan, sets=_parse_pairs(a.set, "--set"),
+                       nudges=_parse_pairs(a.nudge, "--nudge"), shifts=_parse_pairs(a.shift, "--shift"),
+                       accept=a.accept, reset=a.reset, author=a.author, note=a.note, export=a.export, emit=emit)
+    summary = rec.pop("summary", None)
+    if summary is not None:
+        emit(summary)
+        return 1 if summary["failed"] else 0
+    (_emit if a.json else lambda r: print(json.dumps(r, indent=1)))(rec)
+    return 0
 
 
 # --------------------------------------------------------------------------- status
 def cmd_status(a) -> int:
-    m = Manifest(a.output)
-    if not m.path.exists():
-        raise SystemExit(f"no manifest in {a.output}")
-    counts = {}
-    for key, e in sorted(m.items()):
-        st = e.get("status", "pending")
-        counts[st] = counts.get(st, 0) + 1
-        if a.needs_review and st != "needs_review":
-            continue
-        rec = result_record(m, key)
-        rec["type"] = "status"
-        (_emit if a.json else _human)(rec)
-    summary = {"type": "summary", "scans": len(m.scans), "counts": counts, "manifest": str(m.path)}
+    summary = api.status(a.output, needs_review=a.needs_review, emit=_emit if a.json else _human)
     if a.json:
         _emit(summary)
     else:
-        print("\n" + ", ".join(f"{v} {k}" for k, v in sorted(counts.items())))
+        print("\n" + ", ".join(f"{v} {k}" for k, v in sorted(summary["counts"].items())))
     return 0
 
 
