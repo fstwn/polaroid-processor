@@ -1,0 +1,822 @@
+{
+ "scans": {
+  "241199_PS_Speicher_Einbeck/241199_RollerRoids_PS_Speicher_01.tif": {
+   "quad": [
+    [
+     340.5,
+     448.24
+    ],
+    [
+     11477.51,
+     436.7
+    ],
+    [
+     11475.76,
+     13998.92
+    ],
+    [
+     329.28,
+     14022.69
+    ]
+   ],
+   "author": "agent",
+   "status": "proposed",
+   "note": "reviewed inspect sheet: outline on the print edge (line fit); awaiting human confirmation",
+   "reviewed_at": "2026-10-17T16:25:53+02:00",
+   "auto_quad": [
+    [
+     340.5,
+     448.24
+    ],
+    [
+     11477.51,
+     436.7
+    ],
+    [
+     11475.76,
+     13998.92
+    ],
+    [
+     329.28,
+     14022.69
+    ]
+   ],
+   "fixes": 0
+  },
+  "250807_Mercedes_Benz_230_Oldtimer/250807_Mercedes_Benz_230_Oldtimer_01.tif": {
+   "quad": [
+    [
+     153.47,
+     355.98
+    ],
+    [
+     11296.52,
+     321.61
+    ],
+    [
+     11334.32,
+     13875.42
+    ],
+    [
+     184.84,
+     13922.9
+    ]
+   ],
+   "author": "agent",
+   "status": "proposed",
+   "note": "reviewed inspect sheet: outline on the print edge (line fit); awaiting human confirmation",
+   "reviewed_at": "2026-10-17T16:25:50+02:00",
+   "auto_quad": [
+    [
+     153.47,
+     355.98
+    ],
+    [
+     11296.52,
+     321.61
+    ],
+    [
+     11334.32,
+     13875.42
+    ],
+    [
+     184.84,
+     13922.9
+    ]
+   ],
+   "fixes": 0
+  },
+  "260210_RollerRoids_Misc/250531_Camptrip_Michael_05.tif": {
+   "quad": [
+    [
+     205.93,
+     365.05
+    ],
+    [
+     11325.64,
+     329.46
+    ],
+    [
+     11359.85,
+     13896.03
+    ],
+    [
+     202.86,
+     13946.74
+    ]
+   ],
+   "author": "agent",
+   "status": "proposed",
+   "note": "reviewed inspect sheet: outline on the print edge (line fit); awaiting human confirmation",
+   "reviewed_at": "2026-10-17T16:25:51+02:00",
+   "auto_quad": [
+    [
+     205.93,
+     365.05
+    ],
+    [
+     11325.64,
+     329.46
+    ],
+    [
+     11359.85,
+     13896.03
+    ],
+    [
+     202.86,
+     13946.74
+    ]
+   ],
+   "fixes": 0
+  },
+  "260214_RollerRoids_Misc/250621_Kaefer_01.tif": {
+   "quad": [
+    [
+     191.64,
+     449.05
+    ],
+    [
+     11330.58,
+     424.59
+    ],
+    [
+     11322.17,
+     13985.38
+    ],
+    [
+     173.67,
+     14023.29
+    ]
+   ],
+   "author": "agent",
+   "status": "proposed",
+   "note": "reviewed inspect sheet: outline on the print edge (line fit); awaiting human confirmation",
+   "reviewed_at": "2026-10-17T16:25:54+02:00",
+   "auto_quad": [
+    [
+     191.64,
+     449.05
+    ],
+    [
+     11330.58,
+     424.59
+    ],
+    [
+     11322.17,
+     13985.38
+    ],
+    [
+     173.67,
+     14023.29
+    ]
+   ],
+   "fixes": 0
+  },
+  "260217_Polaroids_Misc/260216_RollerRoids_Scan_04.tif": {
+   "quad": [
+    [
+     351.55,
+     440.11
+    ],
+    [
+     11490.59,
+     408.97
+    ],
+    [
+     11514.39,
+     13960.74
+    ],
+    [
+     376.81,
+     14003.97
+    ]
+   ],
+   "author": "agent",
+   "status": "proposed",
+   "note": "reviewed inspect sheet: outline on the print edge (line fit); awaiting human confirmation",
+   "reviewed_at": "2026-10-17T16:25:52+02:00",
+   "auto_quad": [
+    [
+     351.55,
+     440.11
+    ],
+    [
+     11490.59,
+     408.97
+    ],
+    [
+     11514.39,
+     13960.74
+    ],
+    [
+     376.81,
+     14003.97
+    ]
+   ],
+   "fixes": 0
+  },
+  "260328_tttacho_IGNITION/260328_RollerRoids_tttacho_02-2.tif": {
+   "quad": [
+    [
+     393.07,
+     458.2
+    ],
+    [
+     11536.42,
+     414.42
+    ],
+    [
+     11577.5,
+     13975.69
+    ],
+    [
+     412.03,
+     14029.19
+    ]
+   ],
+   "author": "agent",
+   "status": "proposed",
+   "note": "reviewed inspect sheet: outline on the print edge (line fit); awaiting human confirmation",
+   "reviewed_at": "2026-10-17T16:25:58+02:00",
+   "auto_quad": [
+    [
+     393.07,
+     458.2
+    ],
+    [
+     11536.42,
+     414.42
+    ],
+    [
+     11577.5,
+     13975.69
+    ],
+    [
+     412.03,
+     14029.19
+    ]
+   ],
+   "fixes": 0
+  },
+  "260328_tttacho_IGNITION/260328_RollerRoids_tttacho_03-2.tif": {
+   "quad": [
+    [
+     487.66,
+     432.55
+    ],
+    [
+     11670.06,
+     398.55
+    ],
+    [
+     11678.48,
+     13985.04
+    ],
+    [
+     514.02,
+     14014.11
+    ]
+   ],
+   "author": "agent",
+   "status": "proposed",
+   "note": "reviewed inspect sheet: outline on the print edge (line fit); awaiting human confirmation",
+   "reviewed_at": "2026-10-17T16:25:56+02:00",
+   "auto_quad": [
+    [
+     487.66,
+     432.55
+    ],
+    [
+     11670.06,
+     398.55
+    ],
+    [
+     11678.48,
+     13985.04
+    ],
+    [
+     514.02,
+     14014.11
+    ]
+   ],
+   "fixes": 0
+  },
+  "260328_tttacho_IGNITION/260328_RollerRoids_tttacho_13-2.tif": {
+   "quad": [
+    [
+     408.52,
+     481.61
+    ],
+    [
+     11542.73,
+     405.19
+    ],
+    [
+     11592.48,
+     13992.73
+    ],
+    [
+     477.17,
+     14046.97
+    ]
+   ],
+   "author": "agent",
+   "status": "proposed",
+   "note": "reviewed inspect sheet: outline on the print edge (line fit); awaiting human confirmation",
+   "reviewed_at": "2026-10-17T16:25:57+02:00",
+   "auto_quad": [
+    [
+     408.52,
+     481.61
+    ],
+    [
+     11542.73,
+     405.19
+    ],
+    [
+     11592.48,
+     13992.73
+    ],
+    [
+     477.17,
+     14046.97
+    ]
+   ],
+   "fixes": 0
+  },
+  "260328_tttacho_IGNITION/260328_RollerRoids_tttacho_21-2.tif": {
+   "quad": [
+    [
+     424.0,
+     468.2
+    ],
+    [
+     11612.43,
+     422.88
+    ],
+    [
+     11639.08,
+     14011.73
+    ],
+    [
+     482.13,
+     14058.27
+    ]
+   ],
+   "author": "agent",
+   "status": "proposed",
+   "note": "reviewed inspect sheet: outline on the print edge (line fit); awaiting human confirmation",
+   "reviewed_at": "2026-10-17T16:25:57+02:00",
+   "auto_quad": [
+    [
+     424.0,
+     468.2
+    ],
+    [
+     11612.43,
+     422.88
+    ],
+    [
+     11639.08,
+     14011.73
+    ],
+    [
+     482.13,
+     14058.27
+    ]
+   ],
+   "fixes": 0
+  },
+  "SICK_D3/250928_SICKalps_L2_D3_17.tif": {
+   "quad": [
+    [
+     284.25,
+     429.53
+    ],
+    [
+     11436.21,
+     394.33
+    ],
+    [
+     11468.04,
+     13965.47
+    ],
+    [
+     306.84,
+     14000.24
+    ]
+   ],
+   "author": "agent",
+   "status": "proposed",
+   "note": "reviewed inspect sheet: outline on the print edge (line fit); awaiting human confirmation",
+   "reviewed_at": "2026-10-17T16:25:55+02:00",
+   "auto_quad": [
+    [
+     284.25,
+     429.53
+    ],
+    [
+     11436.21,
+     394.33
+    ],
+    [
+     11468.04,
+     13965.47
+    ],
+    [
+     306.84,
+     14000.24
+    ]
+   ],
+   "fixes": 0
+  },
+  "SICK_D3/250928_SICKalps_L2_D3_21.tif": {
+   "quad": [
+    [
+     232.35,
+     421.45
+    ],
+    [
+     11411.02,
+     396.41
+    ],
+    [
+     11436.33,
+     13968.32
+    ],
+    [
+     265.33,
+     14010.78
+    ]
+   ],
+   "author": "agent",
+   "status": "proposed",
+   "note": "reviewed inspect sheet: outline on the print edge (line fit); awaiting human confirmation",
+   "reviewed_at": "2026-10-17T16:25:59+02:00",
+   "auto_quad": [
+    [
+     232.35,
+     421.45
+    ],
+    [
+     11411.02,
+     396.41
+    ],
+    [
+     11436.33,
+     13968.32
+    ],
+    [
+     265.33,
+     14010.78
+    ]
+   ],
+   "fixes": 0
+  },
+  "SICK_D3/250928_SICKalps_L2_D3_20.tif": {
+   "quad": [
+    [
+     167.37,
+     463.75
+    ],
+    [
+     11343.18,
+     406.76
+    ],
+    [
+     11373.77,
+     13981.24
+    ],
+    [
+     219.86,
+     14033.91
+    ]
+   ],
+   "author": "agent",
+   "status": "proposed",
+   "note": "reviewed inspect sheet: outline on the print edge (line fit); awaiting human confirmation",
+   "reviewed_at": "2026-10-17T16:25:55+02:00",
+   "auto_quad": [
+    [
+     167.37,
+     463.75
+    ],
+    [
+     11343.18,
+     406.76
+    ],
+    [
+     11373.77,
+     13981.24
+    ],
+    [
+     219.86,
+     14033.91
+    ]
+   ],
+   "fixes": 0
+  },
+  "SICK_D3/250928_SICKalps_L2_D3_24.tif": {
+   "quad": [
+    [
+     158.18,
+     443.85
+    ],
+    [
+     11336.75,
+     398.48
+    ],
+    [
+     11373.49,
+     13976.97
+    ],
+    [
+     218.3,
+     14034.79
+    ]
+   ],
+   "author": "agent",
+   "status": "proposed",
+   "note": "reviewed inspect sheet: outline on the print edge (line fit); awaiting human confirmation",
+   "reviewed_at": "2026-10-17T16:25:59+02:00",
+   "auto_quad": [
+    [
+     158.18,
+     443.85
+    ],
+    [
+     11336.75,
+     398.48
+    ],
+    [
+     11373.49,
+     13976.97
+    ],
+    [
+     218.3,
+     14034.79
+    ]
+   ],
+   "fixes": 0
+  },
+  "SICK_D3/250928_SICKalps_L2_D3_29.tif": {
+   "quad": [
+    [
+     193.16,
+     361.53
+    ],
+    [
+     11342.93,
+     324.63
+    ],
+    [
+     11404.83,
+     13886.27
+    ],
+    [
+     242.02,
+     13942.75
+    ]
+   ],
+   "author": "agent",
+   "status": "proposed",
+   "note": "reviewed inspect sheet: outline on the print edge (line fit); awaiting human confirmation",
+   "reviewed_at": "2026-10-17T16:25:53+02:00",
+   "auto_quad": [
+    [
+     193.16,
+     361.53
+    ],
+    [
+     11342.93,
+     324.63
+    ],
+    [
+     11404.83,
+     13886.27
+    ],
+    [
+     242.02,
+     13942.75
+    ]
+   ],
+   "fixes": 0
+  },
+  "SICK_D3/250928_SICKalps_L2_D3_29 (2).tif": {
+   "quad": [
+    [
+     193.84,
+     365.72
+    ],
+    [
+     11342.18,
+     326.51
+    ],
+    [
+     11405.37,
+     13901.96
+    ],
+    [
+     241.73,
+     13941.44
+    ]
+   ],
+   "author": "agent",
+   "status": "proposed",
+   "note": "holder rim parallel to the bottom edge; moved onto the print edge per hint",
+   "reviewed_at": "2026-10-17T16:16:30+02:00",
+   "auto_quad": [
+    [
+     193.84,
+     365.72
+    ],
+    [
+     11342.18,
+     326.51
+    ],
+    [
+     11405.58,
+     13960.96
+    ],
+    [
+     241.94,
+     14000.44
+    ]
+   ],
+   "fixes": 1
+  },
+  "shelby_gt_h/251030_Shelby_GT_H_01.tif": {
+   "quad": [
+    [
+     212.92,
+     353.52
+    ],
+    [
+     11374.23,
+     310.57
+    ],
+    [
+     11409.19,
+     13871.07
+    ],
+    [
+     268.47,
+     13922.88
+    ]
+   ],
+   "author": "agent",
+   "status": "proposed",
+   "note": "reviewed inspect sheet: outline on the print edge (line fit); awaiting human confirmation",
+   "reviewed_at": "2026-10-17T16:26:02+02:00",
+   "auto_quad": [
+    [
+     212.92,
+     353.52
+    ],
+    [
+     11374.23,
+     310.57
+    ],
+    [
+     11409.19,
+     13871.07
+    ],
+    [
+     268.47,
+     13922.88
+    ]
+   ],
+   "fixes": 0
+  },
+  "test/250928_RollerRoids_Scan_01.tif": {
+   "quad": [
+    [
+     137.27,
+     480.8
+    ],
+    [
+     16863.08,
+     362.31
+    ],
+    [
+     16937.87,
+     20698.83
+    ],
+    [
+     227.23,
+     20846.34
+    ]
+   ],
+   "author": "agent",
+   "status": "proposed",
+   "note": "reviewed inspect sheet: outline on the print edge (line fit); awaiting human confirmation",
+   "reviewed_at": "2026-10-17T16:26:01+02:00",
+   "auto_quad": [
+    [
+     137.27,
+     480.8
+    ],
+    [
+     16863.08,
+     362.31
+    ],
+    [
+     16937.87,
+     20698.83
+    ],
+    [
+     227.23,
+     20846.34
+    ]
+   ],
+   "fixes": 0
+  },
+  "test/250928_RollerRoids_Scan_09.tif": {
+   "quad": [
+    [
+     439.48,
+     649.07
+    ],
+    [
+     17131.38,
+     555.97
+    ],
+    [
+     17240.03,
+     20911.16
+    ],
+    [
+     483.81,
+     21020.53
+    ]
+   ],
+   "author": "agent",
+   "status": "proposed",
+   "note": "reviewed inspect sheet: outline on the print edge (line fit); awaiting human confirmation",
+   "reviewed_at": "2026-10-17T16:26:01+02:00",
+   "auto_quad": [
+    [
+     439.48,
+     649.07
+    ],
+    [
+     17131.38,
+     555.97
+    ],
+    [
+     17240.03,
+     20911.16
+    ],
+    [
+     483.81,
+     21020.53
+    ]
+   ],
+   "fixes": 0
+  },
+  "test/250928_RollerRoids_Scan_03.tif": {
+   "quad": [
+    [
+     310.95,
+     428.85
+    ],
+    [
+     17025.08,
+     375.06
+    ],
+    [
+     17108.25,
+     20728.36
+    ],
+    [
+     340.66,
+     20800.37
+    ]
+   ],
+   "author": "agent",
+   "status": "proposed",
+   "note": "reviewed inspect sheet: outline on the print edge (line fit); awaiting human confirmation",
+   "reviewed_at": "2026-10-17T16:26:00+02:00",
+   "auto_quad": [
+    [
+     310.95,
+     428.85
+    ],
+    [
+     17025.08,
+     375.06
+    ],
+    [
+     17108.25,
+     20728.36
+    ],
+    [
+     340.66,
+     20800.37
+    ]
+   ],
+   "fixes": 0
+  }
+ },
+ "note": "Reviewed print corners (tl, tr, br, bl) in full-resolution scan pixels, continuous coordinates. status 'proposed' = set by an agent, awaiting human confirmation."
+}

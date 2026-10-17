@@ -98,10 +98,28 @@ The current scans are tagged 600 dpi but measure ~128 px/mm (~3250 ppi), so the 
 
 - Commit the current state as a baseline first.
 - Build the new package next to the old code; port only the useful warp and I/O ideas.
-- Retire `main.py`, `shadow_corrector`, radial distortion, `border_processor` and `edge_detector` once the new CLI passes the tests (end of M1).
+- Retire `main.py`, `shadow_corrector`, radial distortion, `border_processor` and `edge_detector` once the new CLI passes the tests (end of M1). Done: removed together with `config/processing_params.yaml` and `requirements.txt`; recoverable from the baseline commit.
 
 ## Milestones
 
 1. **M1 core**: package skeleton, detector, rectify, TIFF master + derivative presets, manifest, CLI with `--json`, `inspect` / `fix`, labelled set and regression tests. Old code retired.
 2. **M2 agents and packaging**: Claude Code skill, MCP server, pip packaging, Windows launcher.
 3. **M3 opt-ins**: photo-area crop incl. round windows with alpha, flat-field correction, edge flattening.
+
+## M1 status (2026-10-17)
+
+Measured on the 88 sample scans (12 folders, one output folder per input folder):
+
+- 88/88 detected, 0 crashes. 85 `ok`, 3 `needs_review`, all three genuine:
+  - `260315_Polaroids_Samsoe_02`: right edge physically curved (S-shape, about 0.5 mm); no straight line fits.
+  - `260328_RollerRoids_tttacho_14-2`: black glitter frame on the black holder; left and right edges uncertain.
+  - `250928_SICKalps_L2_D3_29 (2)`: holder rim parallel to the bottom edge, outline 0.46 mm too tall. The review output names the fix (`fix --shift bottom=-59`); applied and verified.
+- Holder rim touching the print at a slight angle (8 scans) is now repaired automatically (`edge_repaired:<side>`).
+- Labelled set: 19 scans (white, gold, printed, black glitter, round window, both scan resolutions) in `tests/data/labels.json`, status `proposed` (agent-reviewed, awaiting human confirmation). 18/19 within 0.2 mm; the remaining one is the manual fix above (xfail).
+- Print size spread at ~127 px/mm: width 11125-11196 px, height 13551-13576 px after the rim fix (about +-0.3 mm).
+- Throughput: 423 s for 88 scans on this machine (4.8 s per scan, auto workers). A single job takes about 8 s alone; with 11 parallel workers each job takes about 38 s, so worker scaling is poor (likely disk and memory bandwidth). Worker count needs tuning.
+
+Open findings for M3 (edge flattening):
+
+- Many prints have slightly concave sides: the corners lie 20-60 px (0.15-0.45 mm) outside the fitted line while the middle sits on it, probably print cupping. The crop then trims a sliver of print at the corners but never shows holder.
+- Some corners flare outward by up to 0.6 mm (`flare_start_px` / `flare_end_px` per edge in the manifest). The measurement is still noisy near the holder rim and on printed frames, so it is diagnostic only and sets no warning.

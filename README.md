@@ -1,192 +1,181 @@
-# Polaroid Image Processor
+# polaroid-processor
 
-An automatic processor for high-resolution Polaroid scans that detects, crops, and corrects perspective distortion to extract perfectly aligned Polaroid images.
+Detects, crops and rectifies high-resolution flatbed scans of instant prints (Polaroid 600 / i-Type / SX-70 and Polaroid Go) lying in a black scanning holder. Works with white, black (incl. glitter), gold and printed special-edition frames. Built to run unattended, from the command line or by an agent.
 
-## Features
+Scope and roadmap: [docs/SCOPE.md](docs/SCOPE.md).
 
-- **Automatic Detection**: Finds Polaroid boundaries using edge detection and contour analysis
-- **Perspective Correction**: Corrects for scanning angle and slight warping
-- **Barrel Distortion Correction**: Fixes lens-like distortion from non-flat Polaroids in holders
-- **Edge Shadow Compensation**: Removes holder-induced shadows at image borders
-- **Safety Margin Cropping**: Prevents black edge artifacts with configurable inward cropping
-- **Exact Aspect Ratio**: Outputs images in the correct Polaroid aspect ratio (88x107mm)
-- **High Resolution**: Preserves original 600 DPI resolution
-- **Batch Processing**: Process entire directories of TIFF files
-- **Quality Control**: Validates detection quality and provides debug visualizations
+## Install
 
-## Requirements
-
-- Python 3.8+
-- OpenCV
-- Pillow (PIL)
-- NumPy
-- PyYAML
-
-## Installation
-
-1. Clone or download this repository
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-## Usage
-
-### Single Image Processing
+Python 3.9 or newer.
 
 ```bash
-# Process single image (creates both TIFF and JPG)
-python main.py input_image.tif --single
-
-# Create only JPG output
-python main.py input_image.tif --single --jpg-only
-
-# Create only TIFF output
-python main.py input_image.tif --single --no-jpg
+pip install -e .
 ```
 
-### Batch Processing
+Inside an existing conda environment that already provides OpenCV, NumPy and Pillow, skip dependency resolution:
 
 ```bash
-# Process all images (creates both TIFF and JPG in separate directories)
-python main.py input_directory/
-
-# Create only JPG files
-python main.py input_directory/ --jpg-only
-
-# Create only TIFF files
-python main.py input_directory/ --no-jpg
-
-# Custom output directory
-python main.py input_directory/ -o my_output/
+pip install -e . --no-deps
 ```
 
-### Distortion and Shadow Correction Options
+This installs the `polaroid` command. `python -m polaroid_processor` works too.
+
+## Quick start
 
 ```bash
-# Disable distortion correction
-python main.py input_directory/ --no-distortion-correction
-
-# Override distortion coefficient (negative for barrel, positive for pincushion)
-python main.py input_directory/ --distortion-k1 -0.2
-
-# Override safety margin for cropping (percentage)
-python main.py input_directory/ --safety-margin 0.8
-
-# Disable shadow correction
-python main.py input_directory/ --no-shadow-correction
-
-# Override shadow correction brightness boost
-python main.py input_directory/ --shadow-boost 50
+polaroid process scans/2026-03-28 -o processed/2026-03-28
 ```
 
-### Output Directory Structure
+Per scan this writes:
 
-- **Default mode**: Creates both `output_fullres/` (TIFF files) and `output_jpg/` (JPG files)
-- **JPG-only mode**: Creates only `output_jpg/` directory
-- **TIFF-only mode**: Creates only `output_fullres/` directory
+| File | Content |
+|---|---|
+| `<out>/<name>.tif` | Lossless master, full resolution, ICC profile kept, true resolution in the TIFF tag |
+| `<out>/high/<name>.jpg` | Long edge 6000 px, quality 95 |
+| `<out>/web/<name>.jpg` | Long edge 2048 px, quality 88 |
+| `<out>/polaroid-manifest.json` | Detection, scale, status, manual fixes and their history |
 
-### Configuration
+Re-running the same command only processes new or changed scans and scans whose settings changed.
 
-Edit `config/processing_params.yaml` to adjust detection parameters for your specific scan setup.
+## How it works
 
-## How It Works
+1. **Detect** the print outline at reduced resolution. The holder is near-black and flat; every frame type has pixels brighter than the holder noise. Each edge is scanned from outside inward, averaged over long segments, and the edge is the first sharp step into a stable plateau. Holder rim lines, dust and flare-lit gaps are rejected. A consensus line fit per side gives the four corners. Where the holder rim touches the print, the side is refit on the print edge behind the rim so that it runs parallel to the opposite side.
+2. **Scale.** Pixels per millimetre come from `--ppi` / `--profile`, else from the TIFF tag if it gives a plausible print size, else from the median of all scans of the same scan size (assuming 88 x 107 mm).
+3. **Review rules** flag a scan `needs_review` when its size does not match a known format or the other scans of the batch, opposite sides are not parallel, or an edge is noisy, curved or inconsistent.
+4. **Export** with one perspective warp at full resolution, cropped by a margin in millimetres (default 0.2 mm). No other resampling, no colour changes.
 
-1. **Preprocessing**: Converts image to grayscale and applies thresholding to separate white Polaroid borders from black background
-2. **Edge Detection**: Uses Canny edge detection to find boundaries
-3. **Contour Analysis**: Finds rectangular contours and filters by area and aspect ratio
-4. **Corner Detection**: Identifies the four corners of the Polaroid
-5. **Perspective Correction**: Applies perspective transformation with safety margin cropping
-6. **Distortion Correction**: Applies radial undistortion to fix barrel/pincushion distortion from holders
-7. **Shadow Correction**: Brightens shadowed edges and corners caused by holder shadows
-8. **Output**: Saves the corrected image with exact Polaroid dimensions (88x107mm at 600 DPI)
+## Commands
 
-## Output
-
-- **TIFF Images**: High-resolution corrected Polaroid images (preserves original resolution)
-- **JPG Images**: 350 DPI JPG files at 2x original Polaroid size
-- **Debug Images**: Visualization showing detected corners (if enabled in config)
-- **Quality Scores**: Confidence metrics for each detection
-
-### File Specifications
-
-- **TIFF Output**: High resolution (typically 20,000+ pixels), perfect aspect ratio (88:107mm)
-- **JPG Output**: 350 DPI, 2x original Polaroid size, 95% quality
-
-## Configuration Options
-
-Key parameters you can adjust in `config/processing_params.yaml`:
-
-### Detection Parameters
-- `edge_detection.canny_low/high`: Edge detection sensitivity
-- `contour_detection.min_area`: Minimum size for detected rectangles
-- `quality_control.min_quality_score`: Minimum confidence threshold
-- `image.dpi`: Input image DPI (default: 600)
-
-### Distortion Correction (for holder-induced barrel distortion)
-- `distortion_correction.enabled`: Enable/disable distortion correction
-- `distortion_correction.k1`: Primary radial distortion coefficient (-0.3 to 0.3)
-  - Negative values correct barrel distortion (bulge outward)
-  - Positive values correct pincushion distortion (pinch inward)
-  - Start with -0.15 for typical holder distortion
-
-### Cropping Safety Margin
-- `cropping.safety_margin_percent`: Crop inward from detected edge (0.3-1.5%)
-  - Prevents black edge artifacts from imperfect detection
-
-### Shadow Correction (for holder-induced edge shadows)
-- `shadow_correction.enabled`: Enable/disable shadow correction
-- `shadow_correction.border_region_percent`: Width of border region to analyze
-- `shadow_correction.max_brightness_boost`: Maximum brightness increase (0-100)
-- `shadow_correction.detection_threshold`: Brightness ratio trigger (default: 0.85)
-
-## Troubleshooting
-
-- **No Polaroid Detected**: Try adjusting Canny thresholds or minimum area in config
-- **Poor Quality Detection**: Enable debug visualization to see what's being detected
-- **Wrong Aspect Ratio**: Verify your input images have the expected black background/white border contrast
-- **Barrel Distortion (bulging)**: Increase negative k1 value (e.g., -0.2 to -0.3)
-- **Pincushion Distortion**: Use positive k1 values (e.g., 0.1 to 0.2)
-- **Black Edge Artifacts**: Increase `safety_margin_percent` (e.g., 0.8 to 1.5)
-- **Dark Corners/Edges**: Increase `max_brightness_boost` or lower `detection_threshold`
-- **Over-brightened Borders**: Decrease `max_brightness_boost` or increase `detection_threshold`
-
-### Tuning Distortion Correction
-
-1. Start with `k1 = -0.15` (default)
-2. Process a test image with straight lines (buildings, horizons)
-3. If lines still curve outward: increase magnitude (e.g., -0.2, -0.25)
-4. If lines curve inward (overcorrected): decrease magnitude (e.g., -0.1, -0.05)
-5. Once tuned, the same values work for all images from the same holder
-
-## File Structure
-
-```
-rollerroids/
-├── src/
-│   ├── polaroid_processor.py    # Main processing class
-│   ├── edge_detector.py         # Edge detection utilities
-│   ├── image_utils.py           # Image utilities & distortion correction
-│   └── shadow_corrector.py      # Edge shadow compensation
-├── config/
-│   └── processing_params.yaml   # Configuration file
-├── main.py                      # Main execution script
-├── requirements.txt             # Python dependencies
-└── README.md                    # This file
-```
-
-## Example
+### `process`
 
 ```bash
-# Process a single image
-python main.py scan_001.tif --single
-
-# Process all TIFF files in a directory
-python main.py scans/ -o processed/
-
-# Process with custom distortion and shadow settings
-python main.py scans/ --distortion-k1 -0.2 --shadow-boost 40
-
-# Use custom configuration
-python main.py scans/ -o processed/ -c my_config.yaml
+polaroid process INPUT... -o OUTPUT [options]
 ```
+
+| Option | Effect |
+|---|---|
+| `--margin-mm 0.2` | Crop this far inside the detected print edge |
+| `--derivative NAME=SIZE[:FMT[:Q]]` | Derivative preset, repeatable. SIZE is a long edge in px or `x0.5`; FMT `jpg` or `png` |
+| `--no-derivatives` | Only the TIFF master |
+| `--ppi N` / `--profile NAME` | True scan resolution, directly or from a scanner profile |
+| `--overlay` | Also write `_overlays/<name>.jpg` with the detected outline |
+| `--strict` | Do not export scans that need review |
+| `--force` / `--redetect` | Re-export / re-detect even if up to date |
+| `--dry-run` | Detect and evaluate only, write nothing |
+| `-j N` | Worker processes (default: from free RAM, about 1.5 GB per worker) |
+| `--json` | Machine-readable output (see below) |
+
+Scanner profiles live in `~/.config/polaroid-processor/profiles.yaml` (or `--profiles`, or `$POLAROID_PROFILES`):
+
+```yaml
+profiles:
+  epson-v850-3200: 3200
+```
+
+Scan file names must be unique within one output folder. Use one output folder per input folder.
+
+### `detect`
+
+```bash
+polaroid detect SCAN... [--json]
+```
+
+Prints the detected outline. Writes nothing.
+
+### `inspect`
+
+```bash
+polaroid inspect NAME -m OUTPUT [--json]
+polaroid inspect path/to/scan.tif --image review.png
+```
+
+Writes a PNG with eight full-resolution tiles (four corners, four edge midpoints) and an overview. The grid is labelled in absolute scan pixels; the green line is the current crop edge. Tiles that are dark throughout (black, glitter or gold frames on the black holder) are contrast-stretched and marked `stretched`; `--stretch on|off` overrides. Use it to check a flagged scan or to read off exact coordinates for `fix`. It never writes into the input folder.
+
+### `fix`
+
+```bash
+polaroid fix OUTPUT NAME --nudge tl=4,-2 --shift right=-12 --export
+polaroid fix OUTPUT NAME --set bl=265,13868
+polaroid fix OUTPUT NAME --accept
+polaroid fix OUTPUT NAME --reset
+```
+
+Corners are `tl`, `tr`, `br`, `bl`; sides are `top`, `right`, `bottom`, `left`. `--shift` moves a side outward (positive) or inward (negative). `--accept` marks the current outline as reviewed. Every change is stored in the manifest with author (`--author`, default `human`), time, note and previous value. `--export` re-exports that scan right away; otherwise the next `process` run does it.
+
+### `status`
+
+```bash
+polaroid status OUTPUT [--needs-review] [--json]
+```
+
+## Machine-readable output
+
+With `--json`, `process` prints one JSON object per scan, then a summary:
+
+```json
+{"type": "result", "file": "scan_01.tif", "status": "needs_review",
+ "warnings": ["edge_curved:right:-0.51mm"], "quad": [[223.0, 324.0], ...],
+ "quad_source": "auto", "size_px": [11161.0, 13574.0],
+ "scale": {"px_per_mm": 126.9, "ppi": 3223.0, "source": "batch-median"},
+ "format": {"name": "polaroid-600", "size_mm": [87.97, 106.98], "error": 0.0003},
+ "edges": {"top": {"n_points": 18, "n_inliers": 18, "mad_px": 1.0, "bow_px": -0.2, "max_px": 3.1}, ...},
+ "outputs": {"tiff": "...", "high": "...", "web": "..."}, "exported": true, "error": null}
+{"type": "summary", "scans": 14, "counts": {"ok": 13, "needs_review": 1}, "exported": 14,
+ "needs_review": ["scan_01.tif"], "failed": [], "manifest": "...", "time_s": 59.0}
+```
+
+| Status | Meaning |
+|---|---|
+| `ok` | Exported, no warnings that need a look |
+| `needs_review` | Exported (unless `--strict`), check with `inspect` and correct with `fix` or `fix --accept` |
+| `failed` | No outline found or export error; see `error` |
+
+Warnings that set `needs_review`:
+
+| Warning | Meaning |
+|---|---|
+| `size_mismatch:<pct>` | Size differs from the nearest known print format by more than 1.5 % |
+| `size_outlier:<axis>:<mm>` | Width or height differs from the median print of the same scan size by more than 0.35 mm (5+ scans) |
+| `not_parallel:<pair>:<deg>` | Opposite sides differ in angle by more than 0.3 degrees |
+| `edge_noisy:<side>` | Edge points scatter more than 0.3 mm around the fitted line |
+| `edge_curved:<side>:<mm>` | Edge bows by more than 0.4 mm |
+| `edge_uncertain:<side>:<inliers>/<points>` | Less than 60 % of the edge points agree on one line |
+
+Informational: `scale_inferred:<source>`, `size_unverified` (single scan, no scale reference), `edge_repaired:<side>` (the holder rim touched that side; the side was refit on the print edge behind it).
+
+Exit codes: `0` success (scans may still need review), `1` at least one scan failed, `2` usage error. Logs go to stderr (`-v` for progress).
+
+### Review loop for agents
+
+1. `polaroid process IN -o OUT --json` and collect scans with `status: needs_review`.
+2. For each: `polaroid inspect NAME -m OUT --json`, open the PNG, compare the green line with the print edge.
+3. Correct with `polaroid fix OUT NAME --nudge/--shift/--set ... --author agent --note "why"`, or confirm with `--accept --author agent`.
+4. `polaroid process IN -o OUT --json` again, or pass `--export` to `fix`.
+
+Agents never need to touch the input folder; all state lives in the output folder's manifest.
+
+## Python API
+
+```python
+from polaroid_processor import load_rgb, detect, rectify
+
+rgb = load_rgb("scan.tif")
+det = detect(rgb)              # Detection: quad, size_px, skew_deg, edges, ...
+img = rectify(rgb, det.quad, margin_px=25)
+```
+
+Batch processing with manifest and exports: `polaroid_processor.pipeline.run_batch`.
+
+## Development
+
+```bash
+pip install -e ".[dev]"
+python -m pytest              # synthetic tests; real-scan regression runs when input/ is present
+python tools/export_labels.py OUTPUT...   # collect reviewed corners into tests/data/labels.json
+```
+
+`input/` and `output/` hold real scans and are git-ignored. Experiments go to `.dev/`.
+
+## License
+
+See [LICENSE](LICENSE).
