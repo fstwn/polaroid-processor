@@ -32,6 +32,7 @@ If `polaroid` is not found, it is installed in a Python environment that is not 
 2. For each scan with status `needs_review`, read its `warnings`:
    - `hint:fix --shift <side>=-<px> ...`: the review rules found the likely fix. Apply it, then verify with inspect.
    - `size_outlier`, `not_parallel`, `edge_uncertain`, `edge_noisy`, `edge_curved`, `size_mismatch`: inspect first.
+   - `edge_inside:<side>:<mm>`: part of that side's print edge lies inside the crop line, so holder would show. Shift the side inward by the reported amount minus the 0.2 mm margin (`shift` negative, in px; about 128 px per mm) if the rest of the side allows it; if the edge is visibly curved, escalate.
    - `scale_inferred`, `size_unverified`, `edge_repaired`: informational, no action.
 3. Inspect: `polaroid_inspect` with `scan` and `output`. The image has eight full-resolution tiles (corners `tl tr br bl`, edge midpoints `top right bottom left`) and an overview.
    - Grid labels are absolute scan pixel coordinates; the green line is the crop edge; magenta crosses are corners.

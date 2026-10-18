@@ -10,8 +10,10 @@ does not threshold brightness; it asks "is there anything at all here":
    largest component, close, fill.
 4. Per side, scan from outside inward and accept the first position where the
    feature stays set for ``run`` cells, then refine on raw speck cells.
-5. Robust (trimmed) line fit per side; corners are the line intersections.
-6. Second pass with the threshold raised above the measured holder noise.
+5. Refine each point at full resolution: 50 % crossing between holder and print level.
+6. Robust (trimmed) line fit per side, moved to the middle third of the side (concave prints);
+   corners are the line intersections.
+7. Second pass with the threshold raised above the measured holder noise.
 
 Coordinates are full-resolution pixels, continuous, pixel ``i`` spanning ``[i, i+1)``.
 """
@@ -58,6 +60,12 @@ class DetectParams:
     spike_ratio: float = 4.0  # a sparse plateau may not start with a spike this much brighter (holder lip)
     spike_cells: int = 4
     extend_max: int = 10  # extend the edge outward over contiguous bright cells (edge highlight)
+    # full-resolution refinement of each cell edge point: 50 % crossing between holder and print
+    refine_out: int = 6  # cells outside the cell point that give the holder level (darkest value)
+    refine_in: Tuple[int, int] = (3, 8)  # cells inside the cell point that give the print level (median)
+    refine_frac: float = 0.5  # crossing level between holder and print
+    refine_contrast: float = 20.0  # min print - holder level (max RGB, 8 bit); below: speck density profile
+    refine_density: float = 0.02  # min density contrast (pixel share); below: keep the cell point
     ahead_window: int = 8  # a sparse plateau followed this soon by a bright one is a holder gap
     ahead_ratio: float = 6.0
     corner_skip: float = 0.08  # fraction of each side ignored near the corners
@@ -83,6 +91,9 @@ class EdgeStats:
     # outward positive; a curled or bent corner shows up here
     flare_start_px: Optional[float] = None
     flare_end_px: Optional[float] = None
+    # how far a run of edge points (3 consecutive segments, outliers included) lies inside
+    # the outline; holder shows in the crop there when this exceeds the crop margin
+    inside_px: Optional[float] = None
 
     def to_dict(self) -> dict:
         return {k: (round(v, 1) if isinstance(v, float) else v) for k, v in asdict(self).items()}
@@ -230,6 +241,16 @@ def _intersect(l1, l2) -> np.ndarray:
     return c1 + t[0] * d1
 
 
+def _corners(lines) -> np.ndarray:
+    """Quad (tl, tr, br, bl) from the four side lines."""
+    return np.array([
+        _intersect(lines["top"], lines["left"]),
+        _intersect(lines["top"], lines["right"]),
+        _intersect(lines["bottom"], lines["right"]),
+        _intersect(lines["bottom"], lines["left"]),
+    ])
+
+
 def _angle_diff_deg(l1, l2) -> float:
     """Unsigned angle between two lines in degrees, in [0, 90]."""
     (_, d1), (_, d2) = l1, l2
@@ -375,12 +396,53 @@ class _Analysis:
             return j
         return None
 
+    def refine(self, pos: int, a: int, b: int, rows: bool, near: bool, thr: int) -> float:
+        """Full-resolution edge position near the cell boundary ``pos`` (full-res pixels).
+
+        Cell points sit on the outer boundary of the first bright cell, and the speck threshold
+        fires early in the soft print edge, so they lie outward of the visible edge. This
+        averages ``max(R, G, B)`` across the edge over the segment's full-res rows (or columns)
+        ``a * f .. b * f`` and returns the ``refine_frac`` crossing between the holder level just
+        outside and the print level just inside, interpolated between pixel centres. A sparse
+        glitter frame gives too little mean contrast; the share of pixels above ``thr`` is used
+        instead, and ``pos`` itself when that is flat too.
+        """
+        p, f = self.p, self.f
+        wo, ia, ib = p.refine_out * f, p.refine_in[0] * f, p.refine_in[1] * f
+        h, w = self.mx.shape
+        lim = w if rows else h
+        lo, hi = (pos - wo, pos + ib) if near else (pos - ib, pos + wo)
+        if lo < 0 or hi > lim:
+            return float(pos)
+        win = self.mx[a * f: b * f, lo:hi] if rows else self.mx[lo:hi, a * f: b * f].T
+        if not near:
+            win = win[:, ::-1]  # outside first
+
+        def crossing(prof: np.ndarray, min_contrast: float) -> Optional[float]:
+            level0 = float(prof[:wo].min())
+            level1 = float(np.median(prof[wo + ia: wo + ib]))
+            if level1 - level0 < min_contrast:
+                return None
+            half = level0 + p.refine_frac * (level1 - level0)
+            below = np.flatnonzero(prof[: wo + ia] < half)
+            if not below.size:
+                return None
+            j = int(below[-1]) + 1  # prof[j - 1] < half <= prof[j], all >= half from j to wo + ia
+            return j - 0.5 + (half - prof[j - 1]) / max(1e-9, float(prof[j] - prof[j - 1]))
+
+        t = crossing(win.mean(axis=0), p.refine_contrast)
+        if t is None:
+            t = crossing((win > thr).mean(axis=0), p.refine_density)
+        if t is None:
+            return float(pos)
+        return lo + t if near else hi - t
+
     def edge_points(self, blob: np.ndarray, thr: int):
         """Edge points per side, in full-res coordinates.
 
         Each segment averages the raw feature over ``segment`` rows (or columns) along the
         edge, which makes sparse glitter frames, dust and the holder rim separable.
-        Points are outward-biased to cell boundaries. Returns ``(points, inner, ends)``:
+        Each point is then refined at full resolution (:meth:`refine`). Returns ``(points, inner, ends)``:
         ``inner`` holds each point's inner candidate (NaN where there is none); ``ends`` holds
         points from the corner zones, not used for fitting, as ``(x, y, end, x_inner, y_inner)``
         with end 0 for the top/left end of the side and 1 for the other.
@@ -421,19 +483,20 @@ class _Analysis:
             pos = (lambda v: (v, c)) if rows else (lambda v: (c, v))
             lo = max(0, int(first.min()) - p.search_out)
             hi = min(n, int(last.max()) + p.search_out + 1)
-            for side, pr, to_px in (
-                (near, prof[lo: int(first.max()) + p.search_in], lambda k: (lo + k) * f),
-                (far, prof[max(0, int(last.min()) - p.search_in): hi][::-1], lambda k: (hi - k) * f),
+            for side, pr, to_px, is_near in (
+                (near, prof[lo: int(first.max()) + p.search_in], lambda k: (lo + k) * f, True),
+                (far, prof[max(0, int(last.min()) - p.search_in): hi][::-1], lambda k: (hi - k) * f, False),
             ):
                 k = self.profile_edge(pr)
                 if k is None:
                     continue
                 k2 = self.inner_edge(pr, k)
-                second = (np.nan, np.nan) if k2 is None else pos(to_px(k2))
+                point = pos(self.refine(to_px(k), a, b, rows, is_near, thr))
+                second = (np.nan, np.nan) if k2 is None else pos(self.refine(to_px(k2), a, b, rows, is_near, thr))
                 if end is not None:
-                    ends[side].append((*pos(to_px(k)), end, *second))
+                    ends[side].append((*point, end, *second))
                 else:
-                    pts[side].append(pos(to_px(k)))
+                    pts[side].append(point)
                     alt[side].append(second)
 
         for ra, rb in spans(y0 + my, y1 - my):
@@ -455,6 +518,9 @@ class _Analysis:
     def fit(self, pts: Dict[str, np.ndarray], inner: Optional[Dict[str, np.ndarray]] = None,
             end_pts: Optional[Dict[str, np.ndarray]] = None):
         """Fit four lines and intersect them. Returns ``(quad, edges, points, repaired)``.
+
+        Each side's outline is its robust line moved to the median of the middle third of its
+        inlier points; edge statistics are relative to the robust line.
 
         When opposite sides are not parallel and one of them has inner candidates, that
         side is refit on the candidates that line up parallel to its opposite side.
@@ -497,14 +563,8 @@ class _Analysis:
                 _, s, line, inl, chosen = best
                 lines[s], inliers[s], pts[s] = line, inl, chosen
                 repaired.append(s)
-        quad = np.array([
-            _intersect(lines["top"], lines["left"]),
-            _intersect(lines["top"], lines["right"]),
-            _intersect(lines["bottom"], lines["right"]),
-            _intersect(lines["bottom"], lines["left"]),
-        ])
-        centre = quad.mean(axis=0)
-        edges = {}
+        centre = _corners(lines).mean(axis=0)
+        edges, outline = {}, {}
         for s in SIDES:
             c, d = lines[s]
             n = np.array([-d[1], d[0]])
@@ -517,6 +577,13 @@ class _Analysis:
             ends = np.median(np.concatenate([res[:sixth], res[-sixth:]]))
             st = EdgeStats(len(pts[s]), k, float(np.median(np.abs(res))), float(mid - ends),
                            float(np.abs(res).max()))
+            # the outline runs through the middle third of the side: prints are often concave,
+            # and the fitted line then sits outward of the edge middle (statistics stay on it)
+            outline[s] = (c + mid * n, d)
+            inward = mid - (pts[s] - c) @ n  # all points, in side order; positive = inside the outline
+            if len(inward) >= 3:
+                runs = np.lib.stride_tricks.sliding_window_view(inward, 3).min(axis=1)
+                st.inside_px = float(max(0.0, runs.max()))
             alt = inner[s][~np.isnan(inner[s][:, 0])] if inner else np.zeros((0, 2))
             if len(alt) >= 3:
                 band = _consensus_offset(alt, d, tol)
@@ -534,7 +601,7 @@ class _Analysis:
                     res = np.where(np.abs(res2) < np.abs(res), res2, res)
                     setattr(st, attr, float(res[np.argmax(np.abs(res))]))
             edges[s] = st
-        return quad, edges, pts, tuple(repaired)
+        return _corners(outline), edges, pts, tuple(repaired)
 
     def plausible(self, quad: np.ndarray) -> bool:
         w, h = self.scan_size

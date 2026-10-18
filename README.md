@@ -147,6 +147,7 @@ Warnings that set `needs_review`:
 | `edge_noisy:<side>` | Edge points scatter more than 0.3 mm around the fitted line |
 | `edge_curved:<side>:<mm>` | Edge bows by more than 0.4 mm |
 | `edge_uncertain:<side>:<inliers>/<points>` | Less than 60 % of the edge points agree on one line |
+| `edge_inside:<side>:<mm>` | A stretch of the print edge lies further inside the outline than the crop margin, so holder would show in the export there (curved or concave edge) |
 
 Informational: `scale_inferred:<source>`, `size_unverified` (single scan, no scale reference), `edge_repaired:<side>` (the holder rim touched that side; the side was refit on the print edge behind it).
 

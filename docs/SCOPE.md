@@ -124,6 +124,34 @@ Open findings for M3 (edge flattening):
 - Many prints have slightly concave sides: the corners lie 20-60 px (0.15-0.45 mm) outside the fitted line while the middle sits on it, probably print cupping. The crop then trims a sliver of print at the corners but never shows holder.
 - Some corners flare outward by up to 0.6 mm (`flare_start_px` / `flare_end_px` per edge in the manifest). The measurement is still noisy near the holder rim and on printed frames, so it is diagnostic only and sets no warning.
 
+## Edge bias fix (2026-10-18)
+
+The 19 labels are now human-confirmed (outline on the middle of the soft print-holder transition). Against them the detector sat systematically outward. Two causes, both fixed in `detection.py`:
+
+- Edge points came from the analysis cells: outer cell boundary, extended outward over bright cells, and the speck threshold fires early in the soft edge. Each point is now refined at full resolution: `max(R,G,B)` averaged over the segment, 50 % crossing between the darkest holder level up to 6 cells outside and the median print level 3-8 cells inside, sub-pixel interpolated. Sparse glitter frames (contrast < 20 levels) use the speck-density profile instead, and keep the cell point when that is flat too.
+- Concave sides: the robust line through all points runs outward of the side's middle, where the labeller placed the outline. Each outline is now moved to the median of the middle third of its inlier points. Edge statistics (residuals, bow, flare, inner candidates) stay relative to the robust line, so review rules are unchanged.
+
+Detected minus label, outward positive, mm, 18 labels (known failure excluded). Script: `.dev/bias/measure.py`.
+
+| side | before: median (range) | after: median (range) |
+| --- | --- | --- |
+| top | +0.026 (-0.000..+0.100) | -0.005 (-0.040..+0.050) |
+| right | +0.072 (+0.009..+0.115) | +0.012 (-0.021..+0.029) |
+| bottom | +0.038 (+0.000..+0.086) | -0.019 (-0.043..+0.012) |
+| left | +0.080 (-0.022..+0.122) | +0.013 (-0.030..+0.030) |
+| worst corner | 0.152 | 0.095 |
+
+Regression tolerance tightened from 0.2 mm to 0.1 mm. The worst corner is the black glitter frame `tttacho_13-2` (density fallback). The remaining spread (about +-0.04 mm per side) is close to the label noise: on long, soft ramps (bottom edges, cupped top edges) the labeller's choice varies between scans. The parameters were chosen on the same 18 labels, so new labels should be checked before tuning further.
+
+88-scan dry run (one output folder per input folder, `.dev/bias/run/`): 88/88 detected, 0 crashes, 87 `ok`, 1 `needs_review` (`250928_SICKalps_L2_D3_29 (2)`, same rim case and hint as before). No new review cases, but two of the three M1 review cases now pass by a hair, although both edges are still not straight:
+
+- `260315_Polaroids_Samsoe_02`: the right edge is S-shaped. The refit line is more vertical now, so `not_parallel:left-right` dropped from 0.32 deg to 0.27 deg (rule: 0.3). The bottom-right corner sits about 40 px outside the print, the old outline was worse there.
+- `260328_RollerRoids_tttacho_14-2`: black glitter frame with a concave left edge. Left inliers went from 13/23 to 14/23 (rule: share 0.6). The five middle points that sit 21-36 px inside the line are outliers, so the outline in the middle of the side runs about 0.25 mm outside the print, more than the 0.2 mm margin.
+
+Both show that the review rules missed a curved edge whose middle points are rejected as outliers. New rule `edge_inside:<side>:<mm>`: per side, the deepest run of three consecutive edge points (outliers included) inside the outline; above the crop margin, holder would show in the export, so the scan needs review. On the 88 scans every good scan stays at or below 0.07 mm. Flagged: `tttacho_14-2` (right 1.23 mm, left 0.24 mm), `tttacho_16-2` (left 1.75 mm, right 0.60 mm; black glitter, previously `ok`), and `D3_29 (2)` (bottom 0.55 mm, alongside its rim hint). Result: 85 `ok`, 3 `needs_review`. `Samsoe_02` stays `ok`: its S-shaped right edge bulges outward at the bottom, so the crop trims print there but shows no holder.
+
+Detection time is unchanged: 3.3 s per labelled scan with 4 parallel jobs (3.5 s before). The refinement averages about 100 small full-res windows per attempt.
+
 ## M2 status (2026-10-17)
 
 - `polaroid_processor.api`: the commands as functions returning JSON-ready records; CLI and MCP server share it.

@@ -217,3 +217,18 @@ def test_review_rules_parallel_size_outlier_and_hint():
     assert status == "needs_review"
     assert "size_outlier:height:+0.50mm" in warnings
     assert any(x.startswith("hint:fix --shift bottom=-62") for x in warnings)
+
+
+def test_review_rule_edge_inside_margin():
+    from polaroid_processor.pipeline import ReviewRules, evaluate
+    from polaroid_processor.scale import Scale
+    ppm = 128.0
+    w, h = 88 * ppm, 107 * ppm
+    quad = [[0, 0], [w, 0], [w, h], [0, h]]
+    base = {"n_points": 20, "n_inliers": 20, "mad_px": 1.0, "bow_px": 0.0, "max_px": 2.0}
+    for inside, flagged in ((20.0, False), (40.0, True)):  # 0.16 mm and 0.31 mm against a 0.2 mm margin
+        edges = {"left": {**base, "inside_px": inside}}
+        status, warnings, _ = evaluate({"detection": {"quad": quad, "edges": edges}}, Scale(ppm, "ppi"),
+                                       ReviewRules(), (w, h), margin_mm=0.2)
+        assert (status == "needs_review") is flagged
+        assert any(x.startswith("edge_inside:left:") for x in warnings) is flagged

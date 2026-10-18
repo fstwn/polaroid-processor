@@ -311,8 +311,10 @@ def resolve_scales(manifest: Manifest, keys: Sequence[str], settings: Settings) 
 
 
 def evaluate(entry: dict, scale: Scale, rules: ReviewRules,
-             ref_size: Optional[Tuple[float, float]] = None) -> Tuple[str, List[str], Optional[dict]]:
-    """Status and warnings for one scan. ``ref_size`` is the median print size of its scan-size group."""
+             ref_size: Optional[Tuple[float, float]] = None,
+             margin_mm: float = 0.2) -> Tuple[str, List[str], Optional[dict]]:
+    """Status and warnings for one scan. ``ref_size`` is the median print size of its scan-size group;
+    ``margin_mm`` is the crop margin, which hides edge points that lie at most that far inside."""
     warnings: List[str] = []
     quad = Manifest.effective_quad(entry)
     fm = match_format(quad_size(quad), scale.px_per_mm)
@@ -355,6 +357,10 @@ def evaluate(entry: dict, scale: Scale, rules: ReviewRules,
                 review = True
             if st["mad_px"] / scale.px_per_mm > rules.edge_mad_mm:
                 warnings.append(f"edge_noisy:{side}")
+                review = True
+            inside = st.get("inside_px")
+            if inside is not None and inside / scale.px_per_mm > margin_mm:
+                warnings.append(f"edge_inside:{side}:{inside / scale.px_per_mm:.2f}mm")
                 review = True
             if abs(st["bow_px"]) / scale.px_per_mm > rules.edge_bow_mm:
                 warnings.append(f"edge_curved:{side}:{st['bow_px'] / scale.px_per_mm:+.2f}mm")
@@ -502,7 +508,7 @@ def run_batch(inputs: Sequence[str], out_dir: Optional[str], settings: Settings,
     for k in keys:
         e = manifest.entry(k)
         if k in scales and (e.get("detection") or e.get("override")):
-            status, warnings, fmt = evaluate(e, scales[k], settings.rules, refs.get(_group(e)))
+            status, warnings, fmt = evaluate(e, scales[k], settings.rules, refs.get(_group(e)), settings.margin_mm)
             e.update(scale=scales[k].to_dict(), format=fmt, status=status, warnings=warnings, error=None)
 
     # ---- reconcile exports with the final scale ---------------------------------------
