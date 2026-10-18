@@ -160,3 +160,12 @@ Detection time is unchanged: 3.3 s per labelled scan with 4 parallel jobs (3.5 s
 - Packaging: version 0.2.0, console scripts `polaroid` and `polaroid-mcp`; wheel builds offline and installs into a clean venv.
 - Windows launcher `launcher/polaroid-drop.bat`: drag folders onto it; finds `polaroid.exe` on the PATH or in a named conda environment.
 - Not done: publishing to PyPI, a Claude Code plugin bundle (skill plus MCP registration in one install).
+
+## Held-out check (2026-10-18)
+
+The user offered five more folders from the scan library (`D:/11_pictures/Pictures`). Of 119 files, 36 hold the same pixels as files in `input/`; 83 are new.
+
+- Detection only (dry run) on the 83: 72 `ok`, 10 `needs_review`, 1 failed. The failure is an emulsion lift on white paper, outside v1 scope (light-background mode, v2). All 10 flags point at real problems: holder rim on the bottom edge (D2_13, D3_10, Misc_22), curled prints whose sides bow up to 1 mm (D2_18, 27, 28, 29), black glitter frames (Samsoe_06, 09), and two size outliers.
+- 16 of the `ok` scans (olive, yellow, printed, gold, round window, white) were labelled by the user in a second review round and stored in `tests/data/labels_holdout.json`. They are used to measure, never to tune.
+- Detected minus label, outward positive: median 0.000 mm on every side, worst corner 0.12 mm (top edge of a printed frame, which sits 0.03-0.12 mm outside the print). 7 of 16 outlines were confirmed unchanged; 13 of 16 are within 0.1 mm, all within the 0.2 mm target. `test_corners_match_holdout_labels` checks them against 0.2 mm.
+- So the edge bias fix carries over to unseen prints. The remaining failure modes are the holder rim at the bottom edge and curled prints (M3 edge flattening).
