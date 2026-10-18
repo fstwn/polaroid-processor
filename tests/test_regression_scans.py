@@ -30,9 +30,8 @@ def test_corners_match_labels(rel, label, request):
     path = ROOT / "input" / rel
     if not path.exists():
         pytest.skip(f"{rel} not present")
-    if label.get("fixes"):
-        # the reviewer had to correct the automatic outline: a known detector failure
-        request.applymarker(pytest.mark.xfail(reason=f"needed a manual fix: {label.get('note', '')}"))
+    if label.get("known_failure"):
+        request.applymarker(pytest.mark.xfail(reason=f"known detector failure: {label['known_failure']}"))
     truth = np.array(label["quad"], dtype=float)
     px_per_mm = np.linalg.norm(truth[1] - truth[0]) / POLAROID_600.width_mm
     det = detect(load_rgb(str(path)))

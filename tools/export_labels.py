@@ -1,7 +1,8 @@
 """Collect reviewed corners from output manifests into tests/data/labels.json.
 
 A scan counts as reviewed when its manifest entry has an override (from
-``polaroid fix --accept`` or a corner fix). Usage::
+``polaroid fix --accept`` or a corner fix). A ``known_failure`` note added by hand to an
+entry is kept; the regression test expects the detector to miss those. Usage::
 
     python tools/export_labels.py OUTPUT_DIR [OUTPUT_DIR ...] [--input-root input] [--out tests/data/labels.json]
 """
@@ -35,6 +36,7 @@ def main() -> int:
                 continue
             rel = Path(e["input"]).resolve().relative_to(root).as_posix()
             hist = e.get("history", [])
+            known = data["scans"].get(rel, {}).get("known_failure")
             data["scans"][rel] = {
                 "quad": ov["quad"],
                 "author": ov["author"],
@@ -44,6 +46,8 @@ def main() -> int:
                 "auto_quad": (e.get("detection") or {}).get("quad"),
                 "fixes": sum(1 for h in hist if h["action"] == "fix"),
             }
+            if known:  # set by hand: the detector is expected to miss this label
+                data["scans"][rel]["known_failure"] = known
             added += 1
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(data, indent=1), encoding="utf-8")
