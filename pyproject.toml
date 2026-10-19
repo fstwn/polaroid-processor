@@ -14,12 +14,12 @@ dependencies = [
     "opencv-python-headless>=4.8",
     "pillow>=10",
     "tifffile>=2023.7",
+    "imagecodecs>=2024.1",  # tifffile uses it for a faster TIFF zlib encoder; same pixels
     "pyyaml>=6",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]
-fast = ["imagecodecs>=2024.1"]  # tifffile uses it for a faster TIFF zlib encoder; same pixels
 
 [project.scripts]
 polaroid = "polaroid_processor.cli:main"

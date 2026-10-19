@@ -19,7 +19,9 @@ pip install git+https://github.com/fstwn/polaroid-processor.git
 pip install -e .
 ```
 
-Inside a conda environment that already provides OpenCV, NumPy and Pillow, skip dependency resolution (`pip install -e . --no-deps`); otherwise pip adds `opencv-python-headless` next to conda's OpenCV.
+Inside a conda environment that already provides OpenCV, NumPy and Pillow, skip dependency resolution (`pip install -e . --no-deps`) and add the rest yourself (`pip install tifffile pyyaml imagecodecs`); otherwise pip adds `opencv-python-headless` next to conda's OpenCV.
+
+`imagecodecs` gives `tifffile` a faster zlib encoder: TIFF masters write about 3x faster with identical pixels. Without it everything still works, only slower.
 
 This installs two commands: `polaroid` (CLI) and `polaroid-mcp` (MCP server for agents). `python -m polaroid_processor` works too.
 
