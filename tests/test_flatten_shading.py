@@ -68,6 +68,21 @@ def test_unwarp_straightens_the_bowed_side(bowed):
     assert max(flattened.values()) < 0.1, flattened
 
 
+def test_fade_straightens_the_side_and_leaves_the_inside_plain(bowed):
+    rgb, _, det, curves = bowed
+    ext, fade = 1.5 * PX_PER_MM, 5.0 * PX_PER_MM
+    flattened = side_spread_mm(flat.unwarp(rgb, curves, det.quad, -ext, fade_px=fade), ext, det.speck_threshold)
+    assert max(flattened.values()) < 0.1, flattened
+    # beyond the fade the map is the bilinear map between the corners: no curvature along rows
+    # or columns (Coons would carry the bow of the left side across the print)
+    for f, plain in ((fade, True), (None, False)):
+        mapx, mapy, _ = flat.coons_map(curves, det.quad, fade_px=f)
+        k = int(fade) + 20
+        inner_x, inner_y = mapx[k:-k:50, k:-k:50], mapy[k:-k:50, k:-k:50]
+        curv = max(np.abs(np.diff(inner_x, 2, axis=0)).max(), np.abs(np.diff(inner_y, 2, axis=1)).max())
+        assert (curv < 0.01) == plain, (f, curv)
+
+
 def test_unwarp_keeps_the_print_size(bowed):
     _, _, det, curves = bowed
     W, H = flat.output_size(curves, det.quad)

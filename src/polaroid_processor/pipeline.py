@@ -113,6 +113,7 @@ class Settings:
         }
         if self.flatten != "off" and curves and not override:
             payload["curves"] = {s: [round(v, 3) for v in c["coef"]] for s, c in sorted(curves.items())}
+            payload["fade_mm"] = self.flatten_params.fade_mm
         return hashlib.sha1(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
 
 
@@ -203,7 +204,8 @@ def _export(rgb: np.ndarray, quad: np.ndarray, px_per_mm: float, icc: Optional[b
     fplan = flatten_plan(curves, px_per_mm, ex["flatten"], override, ex["flatten_params"])
     sides = flat.curves_from_dict(curves) if fplan.apply else None
     if sides:
-        img = flat.unwarp(rgb, sides, quad, margin, ex["interpolation"])
+        img = flat.unwarp(rgb, sides, quad, margin, ex["interpolation"],
+                          fade_px=ex["flatten_params"].fade_mm * px_per_mm)
     else:
         img = rectify(rgb, quad, margin, ex["interpolation"])
     shade = {"sides": []}

@@ -3,8 +3,13 @@
 Curled prints do not lie flat on the scanner glass, so their sides bow by up to about 1 mm.
 A straight-sided crop then trims print in some places and shows holder in others. This
 module traces each side densely at full resolution, fits a smooth curve, and maps the
-curved outline onto a rectangle with transfinite (Coons) interpolation: the four sides
-become straight and the inside follows smoothly.
+curved outline onto a rectangle: the four sides become straight.
+
+Only the border is distorted. The photo window of a curled print stays straight (square
+windows) and round (round windows) in a plain rectification, so the correction of each side
+fades out within ``fade_mm`` of the edge; further in, the map is the bilinear map between
+the corners. With an unlimited fade this is transfinite (Coons) interpolation, which bends
+the photo window.
 
 Each side is checked on its own; a side whose trace is not trustworthy (printed graphics or
 black glitter at the edge) stays straight. Coordinates are continuous scan pixels: pixel
@@ -38,6 +43,7 @@ class FlattenParams:
     max_mad_mm: float = 0.05  # median scatter of samples around the curve
     max_dev_mm: float = 1.6  # a curve that bends further than this is not trusted
     min_bend_mm: float = 0.1  # flatten only when a reliable side bends at least this much
+    fade_mm: float = 5.0  # a side's correction fades to zero this far inward (photo window untouched)
 
 
 @dataclass
@@ -278,8 +284,22 @@ def output_size(curves: Dict[str, SideCurve], quad: np.ndarray) -> Tuple[float, 
     return W, H
 
 
-def coons_map(curves: Dict[str, SideCurve], quad: np.ndarray, margin_px: float = 0.0, grid: int = 16):
+def _fade(d: np.ndarray, fade_px: Optional[float], extent: float) -> np.ndarray:
+    """Weight of a side's correction at distance ``d`` (px) from it: 1 at the edge, 0 from
+    ``fade_px`` inward (raised cosine). None: linear across the print (Coons)."""
+    if fade_px is None:
+        return 1.0 - d / extent
+    x = np.clip(d / fade_px, 0.0, 1.0)
+    return 0.5 * (1.0 + np.cos(np.pi * x))
+
+
+def coons_map(curves: Dict[str, SideCurve], quad: np.ndarray, margin_px: float = 0.0, grid: int = 16,
+              fade_px: Optional[float] = None):
     """Source coordinates for every output pixel (float32 maps for cv2.remap) and the size (W, H).
+
+    Source point = bilinear map of the four corners + each side's deviation from its chord,
+    weighted by :func:`_fade` of the distance to that side. The deviation is zero at the
+    corners, so the sides map exactly onto the curves for any fade.
 
     The map is smooth, so it is evaluated on a coarse grid and resized; the error is about
     0.002 px. Coarse node k sits at output pixel ``k * grid + (grid - 1) / 2`` (k = -1 .. K),
@@ -296,9 +316,13 @@ def coons_map(curves: Dict[str, SideCurve], quad: np.ndarray, margin_px: float =
     v = (ky * grid + (grid - 1) / 2 + 0.5 + m) / H
     T, B = _boundary(curves["top"], tl, tr, u), _boundary(curves["bottom"], bl, br, u)
     L, R = _boundary(curves["left"], tl, bl, v), _boundary(curves["right"], tr, br, v)
+    uu, vv = u[:, None], v[:, None]
+    dT, dB = T - ((1 - uu) * tl + uu * tr), B - ((1 - uu) * bl + uu * br)  # deviation from the chord
+    dL, dR = L - ((1 - vv) * tl + vv * bl), R - ((1 - vv) * tr + vv * br)
     U, V = u[None, :, None], v[:, None, None]
-    P = ((1 - V) * T[None] + V * B[None] + (1 - U) * L[:, None] + U * R[:, None]
-         - ((1 - U) * (1 - V) * tl + U * (1 - V) * tr + (1 - U) * V * bl + U * V * br))
+    P = ((1 - U) * (1 - V) * tl + U * (1 - V) * tr + (1 - U) * V * bl + U * V * br
+         + _fade(V * H, fade_px, H) * dT[None] + _fade((1 - V) * H, fade_px, H) * dB[None]
+         + _fade(U * W, fade_px, W) * dL[:, None] + _fade((1 - U) * W, fade_px, W) * dR[:, None])
     size = (len(kx) * grid, len(ky) * grid)
     mapx = cv2.resize((P[..., 0] - 0.5).astype(np.float32), size, interpolation=cv2.INTER_LINEAR)
     mapy = cv2.resize((P[..., 1] - 0.5).astype(np.float32), size, interpolation=cv2.INTER_LINEAR)
@@ -309,9 +333,10 @@ INTERPOLATION = {"linear": cv2.INTER_LINEAR, "cubic": cv2.INTER_CUBIC, "lanczos"
 
 
 def unwarp(rgb: np.ndarray, curves: Dict[str, SideCurve], quad: np.ndarray, margin_px: float = 0.0,
-           interpolation: str = "cubic", strip_rows: int = 1024) -> np.ndarray:
-    """Map the curved outline onto a rectangle, cropped ``margin_px`` inside the edge."""
-    mapx, mapy, _ = coons_map(curves, quad, margin_px)
+           interpolation: str = "cubic", strip_rows: int = 1024, fade_px: Optional[float] = None) -> np.ndarray:
+    """Map the curved outline onto a rectangle, cropped ``margin_px`` inside the edge; the side
+    corrections fade out within ``fade_px`` (None: Coons, linear across the print)."""
+    mapx, mapy, _ = coons_map(curves, quad, margin_px, fade_px=fade_px)
     out = np.empty(mapx.shape + rgb.shape[2:], rgb.dtype)
     for r0 in range(0, mapx.shape[0], strip_rows):
         sl = slice(r0, r0 + strip_rows)
