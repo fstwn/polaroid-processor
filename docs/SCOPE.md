@@ -119,6 +119,25 @@ Measured on the 88 sample scans (12 folders, one output folder per input folder)
 - Print size spread at ~127 px/mm: width 11125-11196 px, height 13551-13576 px after the rim fix (about +-0.3 mm).
 - Throughput: 423 s for 88 scans on this machine (4.8 s per scan, auto workers). A single job takes about 8 s alone; with 11 parallel workers each job takes about 38 s, so worker scaling is poor (likely disk and memory bandwidth). Worker count needs tuning.
 
+### Parallel tuning (2026-10-18): no gain from worker or thread caps
+
+Tried: workers capped at cores / 2, `cv2.setNumThreads` and TIFF threads set to cores / workers, TIFF write overlapped with the JPG derivatives. Not kept (patch in the session notes). Machine: i7-9750H, 6 cores / 12 threads, NVMe, 41 GB free RAM. The numbers below are s per scan (wall time of the whole batch / scans); the old default is 11 workers with all OpenCV threads and 8 TIFF threads each.
+
+| Run | Old default | 6 workers x 2 threads, overlap |
+|---|---|---|
+| 85 scans, cold files | 4.11 | 4.24 |
+| 39 scans, warm files | 4.42 | 4.34 |
+| 22 scans, warm files, 3 repeats | 3.47 / 3.59 / 3.91 | 3.79 / 3.82 / 4.43 |
+| 39 scans, TIFF uncompressed | 2.40 | 3.14 |
+
+Other layouts on 39 scans (steady rate in the middle half): 8x2 3.93, 12x1 4.73, 4x3 4.68, 6x1 4.54, 6x2 without overlap 4.13, old default 4.27. Repeat runs of one config differ by up to 0.7 s per scan, so differences under about 10 % are noise. Another session shared the machine during all runs and its load was not checked per run, so every number may include contention. Two runs that overlapped another benchmark were discarded.
+
+Findings:
+
+- The old default already ran at 4.1 s per scan on 85 cold scans. The 4.8 s measured earlier does not reproduce.
+- CPU work per scan is about 18 s single-threaded: TIFF zlib 8.3 s, warp 4.1, detect 2.3, read 1.0, derivatives 1.7. At 6 cores that bounds a batch near 3 s per scan; the batch runs at 65-80 % of it. Fewer workers do not help and uncompressed output got slower with 6 workers (more concurrent I/O hides write time).
+- The only large lever is TIFF deflate (46 % of CPU): zlib level 1 runs at about 50 MB/s. A faster deflate encoder (`imagecodecs` with libdeflate or zlib-ng) writes valid TIFF with identical decoded pixels but adds a dependency; not tried.
+
 Open findings for M3 (edge flattening):
 
 - Many prints have slightly concave sides: the corners lie 20-60 px (0.15-0.45 mm) outside the fitted line while the middle sits on it, probably print cupping. The crop then trims a sliver of print at the corners but never shows holder.

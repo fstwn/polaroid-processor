@@ -44,7 +44,8 @@ If `polaroid` is not found, it is installed in a Python environment that is not 
    - Only one corner off: `nudge` that corner by `[dx, dy]`, or `set` it to `[x, y]`.
    - Then inspect again and check the tiles you changed.
 5. Escalate to the user instead of guessing when: the edge is invisible even in stretched tiles (black frame on black holder), an edge is visibly curved so no straight line fits, or a fix would move a side by more than about 1 mm (~130 px at 128 px/mm).
-6. Report: counts, what you fixed and why, what you left for the user, and the output folder.
+6. Hand-off: for the scans you escalated, tell the user to run `polaroid review OUTPUT_FOLDER` (add `--all` to see every scan). It opens a local page where they drag the outline onto the print edge and press Confirm or Save correction; fixes go into the manifest with `author` `human`. Do not run it yourself (it blocks until stopped). Afterwards run `process` again, or `polaroid review OUTPUT_FOLDER --export` to export on save.
+7. Report: counts, what you fixed and why, what you left for the user (name the scans and the `review` command), and the output folder.
 
 ## Notes
 

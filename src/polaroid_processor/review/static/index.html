@@ -1,0 +1,589 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Polaroid review</title>
+<style>
+:root {
+  --bg: #15161a; --panel: #1e2026; --line: #343740; --text: #e6e7ea; --dim: #9a9ea8;
+  --green: #28e628; --magenta: #ff00ff; --amber: #ffc83d; --red: #ff6b6b; --blue: #6aa8ff;
+  font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); }
+body { display: grid; grid-template-columns: 1fr 300px; grid-template-rows: auto 1fr; }
+header { grid-column: 1 / 3; display: flex; align-items: center; gap: 14px; padding: 8px 14px;
+  border-bottom: 1px solid var(--line); background: var(--panel); }
+header h1 { font-size: 15px; margin: 0; font-weight: 600; white-space: nowrap; }
+header .out { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+header .pos { color: var(--dim); white-space: nowrap; }
+main { overflow: auto; padding: 12px; }
+aside { overflow: auto; border-left: 1px solid var(--line); background: var(--panel); padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+button { font: inherit; color: var(--text); background: #2b2e37; border: 1px solid var(--line); border-radius: 6px;
+  padding: 7px 12px; cursor: pointer; }
+button:hover:not(:disabled) { background: #363a45; }
+button:disabled { opacity: .4; cursor: default; }
+button.primary { background: #1f6b1f; border-color: #2c8f2c; }
+button.primary:hover:not(:disabled) { background: #268526; }
+button.warn { background: #6b4e12; border-color: #94701c; }
+button.warn:hover:not(:disabled) { background: #85621a; }
+button:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+
+#grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; max-width: 1480px; margin: 0 auto; }
+.cell { position: relative; aspect-ratio: 1; background: #000; border: 1px solid var(--line); border-radius: 4px;
+  display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.cell canvas { display: block; touch-action: none; cursor: zoom-in; }
+.cap { position: absolute; left: 0; right: 0; bottom: 0; padding: 2px 6px; background: rgba(0,0,0,.72);
+  font: 12px ui-monospace, Consolas, monospace; color: #ddd; pointer-events: none; display: flex; justify-content: space-between; }
+.cap .moved { color: var(--amber); }
+.cell .busy { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--dim); pointer-events: none; }
+
+.badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; border: 1px solid var(--line); }
+.badge.needs_review { color: var(--amber); border-color: var(--amber); }
+.badge.ok { color: var(--green); border-color: var(--green); }
+.badge.failed { color: var(--red); border-color: var(--red); }
+h2 { font-size: 13px; margin: 0 0 4px; color: var(--dim); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+#name { font-weight: 600; word-break: break-all; }
+ul.warn { margin: 0; padding-left: 18px; }
+ul.warn li { margin: 2px 0; word-break: break-word; }
+ul.warn li.hint { color: var(--amber); }
+.row { display: flex; gap: 8px; flex-wrap: wrap; }
+.row button { flex: 1 1 auto; }
+.dim { color: var(--dim); }
+#msg { padding: 8px 10px; border-radius: 6px; background: #4a1f1f; border: 1px solid var(--red); display: none; word-break: break-word; }
+#msg.info { background: #1f3a4a; border-color: var(--blue); }
+#list { overflow: auto; max-height: 40vh; border: 1px solid var(--line); border-radius: 6px; }
+#list div { padding: 3px 8px; cursor: pointer; display: flex; gap: 6px; align-items: baseline; border-bottom: 1px solid #2a2d35; }
+#list div:last-child { border-bottom: 0; }
+#list div:hover { background: #2a2d35; }
+#list div.cur { background: #2f3440; }
+#list .mark { width: 14px; text-align: center; flex: none; }
+#list .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.mark.confirmed, .mark.fixed { color: var(--green); }
+.mark.skipped { color: var(--dim); }
+#empty { text-align: center; color: var(--dim); padding: 80px 20px; display: none; }
+
+#zoom { position: fixed; inset: 0; background: rgba(0,0,0,.88); display: none; flex-direction: column; align-items: center;
+  justify-content: center; gap: 8px; z-index: 10; }
+#zoom .bar { display: flex; gap: 14px; align-items: center; color: var(--dim); font: 13px ui-monospace, Consolas, monospace; }
+#zoom .bar b { color: var(--text); }
+#zoomwrap { background: #000; border: 1px solid var(--line); }
+#zoomwrap canvas { display: block; touch-action: none; cursor: crosshair; }
+kbd { background: #2b2e37; border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; font: 12px ui-monospace, Consolas, monospace; }
+
+@media (max-width: 900px) {
+  body { grid-template-columns: 1fr; grid-template-rows: auto auto auto; height: auto; }
+  header { grid-column: 1; }
+  aside { border-left: 0; border-top: 1px solid var(--line); }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>Polaroid review</h1>
+  <span class="out" id="out" title=""></span>
+  <span class="pos" id="pos"></span>
+  <button id="prev" title="Previous scan">&larr;</button>
+  <button id="next" title="Next scan">&rarr;</button>
+</header>
+
+<main>
+  <div id="empty"></div>
+  <div id="grid"></div>
+</main>
+
+<aside id="side">
+  <div id="msg" role="alert"></div>
+  <div>
+    <h2>Scan</h2>
+    <div id="name">&nbsp;</div>
+    <div><span id="status" class="badge"></span> <span id="source" class="dim"></span></div>
+    <div id="reviewed" class="dim"></div>
+  </div>
+  <div id="warnbox">
+    <h2>Warnings</h2>
+    <ul class="warn" id="warns"></ul>
+  </div>
+  <div>
+    <div class="row">
+      <button id="confirm" class="primary" title="The outline is right: store it as reviewed, go to the next scan">Confirm</button>
+      <button id="save" class="warn" title="Store the moved outline in the manifest">Save correction</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button id="reset" title="Throw away edits that are not saved yet">Reset</button>
+      <button id="skip" title="Next scan, nothing is written">Skip</button>
+    </div>
+  </div>
+  <div class="dim">
+    Drag a <span style="color:var(--magenta)">magenta corner</span> or the <span style="color:var(--green)">green grip</span>
+    on an edge tile onto the print edge. Click a tile to enlarge it: arrow keys move 1&nbsp;px,
+    <kbd>Shift</kbd> + arrow 10&nbsp;px, <kbd>Esc</kbd> closes.
+  </div>
+  <div>
+    <h2>Scans</h2>
+    <div id="list"></div>
+  </div>
+</aside>
+
+<div id="zoom">
+  <div class="bar"><b id="zname"></b><span id="zinfo"></span>
+    <span>arrows 1 px &middot; <kbd>Shift</kbd> 10 px &middot; <kbd>Esc</kbd> close</span>
+    <button id="zclose">Close</button></div>
+  <div id="zoomwrap"><canvas id="zcanvas"></canvas></div>
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const NAMES = ["tl", "top", "tr", "left", "overview", "right", "bl", "bottom", "br"];
+const CORNER_IDX = { tl: 0, tr: 1, br: 2, bl: 3 };
+const SIDE_CORNERS = { top: [0, 1], right: [1, 2], bottom: [2, 3], left: [3, 0] };
+const HIT = 18;           // css px around a handle that grabs it
+
+const S = {
+  scans: [], idx: 0, marks: {},     // marks: key -> "confirmed" | "fixed" | "skipped"
+  cur: null,                        // {rec, specs, imgs, quad, orig, load}
+  busy: false, zoom: null,          // zoom: tile name shown enlarged
+  meta: null,
+};
+const cells = {};                   // name -> {cell, canvas, cap, handles}
+
+// ---------------------------------------------------------------- helpers
+const clone = (q) => q.map((p) => p.slice());
+const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+const isDirty = () => !!S.cur && S.cur.quad.some((p, i) => dist(p, S.cur.orig[i]) > 0.005);
+
+function sideNormal(quad, side) {
+  const [a, b] = SIDE_CORNERS[side].map((i) => quad[i]);
+  const t = [b[0] - a[0], b[1] - a[1]], l = Math.hypot(t[0], t[1]) || 1;
+  let n = [-t[1] / l, t[0] / l];
+  const c = [0, 1].map((k) => (quad[0][k] + quad[1][k] + quad[2][k] + quad[3][k]) / 4);
+  const m = [(a[0] + b[0]) / 2 - c[0], (a[1] + b[1]) / 2 - c[1]];
+  if (m[0] * n[0] + m[1] * n[1] < 0) n = [-n[0], -n[1]];
+  return n;
+}
+const mid = (quad, side) => {
+  const [a, b] = SIDE_CORNERS[side].map((i) => quad[i]);
+  return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+};
+
+function showMsg(text, info) {
+  const m = $("msg");
+  m.textContent = text || "";
+  m.className = info ? "info" : "";
+  m.style.display = text ? "block" : "none";
+}
+
+async function api(path, body) {
+  const opt = body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
+  const r = await fetch(path, opt);
+  let data = null;
+  try { data = await r.json(); } catch (e) { /* not JSON */ }
+  if (!r.ok) throw new Error((data && data.error) || `${r.status} ${r.statusText}`);
+  return data;
+}
+
+// ---------------------------------------------------------------- tile canvases
+function buildGrid() {
+  const g = $("grid");
+  g.textContent = "";
+  for (const name of NAMES) {
+    const cell = document.createElement("div");
+    cell.className = "cell";
+    const canvas = document.createElement("canvas");
+    const cap = document.createElement("div");
+    cap.className = "cap";
+    const busy = document.createElement("div");
+    busy.className = "busy";
+    cell.append(canvas, cap, busy);
+    g.append(cell);
+    cells[name] = { cell, canvas, cap, busy, name };
+    attachPointer(canvas, name, false);
+  }
+}
+
+// Canvas CSS size: fit the tile's aspect into the box.
+function fitCanvas(canvas, box, t) {
+  const [iw, ih] = t.size;
+  const s = Math.min(box.w / iw, box.h / ih);
+  canvas.style.width = Math.floor(iw * s) + "px";
+  canvas.style.height = Math.floor(ih * s) + "px";
+}
+
+// Transform scan coords -> canvas device px for tile t
+function xform(canvas, t) {
+  const kx = canvas.width / t.window[0], ky = canvas.height / t.window[1];
+  return { kx, ky, X: (x) => (x - t.x0) * kx, Y: (y) => (y - t.y0) * ky };
+}
+
+function handlesFor(name, quad) {
+  if (name in CORNER_IDX) return [{ type: "corner", i: CORNER_IDX[name], p: quad[CORNER_IDX[name]] }];
+  if (name in SIDE_CORNERS) return [{ type: "side", side: name, p: mid(quad, name) }];
+  return [];
+}
+
+function drawTile(c, name, opts) {
+  const cur = S.cur;
+  const t = cur && cur.specs.tiles.find((x) => x.name === name);
+  const canvas = c.canvas;
+  if (!t) { canvas.width = canvas.height = 1; return; }
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = canvas.clientWidth || 1, cssH = canvas.clientHeight || 1;
+  const w = Math.round(cssW * dpr), h = Math.round(cssH * dpr);
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  const ctx = canvas.getContext("2d");
+  const img = cur.imgs[name];
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, w, h);
+  ctx.imageSmoothingEnabled = cssW < t.size[0];     // upscaled tiles stay pixel-exact
+  if (img && img.complete && img.naturalWidth) ctx.drawImage(img, 0, 0, w, h);
+  const T = xform(canvas, t);
+  const q = cur.quad;
+  ctx.lineJoin = "round";
+  ctx.strokeStyle = "#28e628";
+  ctx.lineWidth = Math.max(1, 1.5 * dpr);
+  ctx.beginPath();
+  q.forEach((p, i) => (i ? ctx.lineTo(T.X(p[0]), T.Y(p[1])) : ctx.moveTo(T.X(p[0]), T.Y(p[1]))));
+  ctx.closePath();
+  ctx.stroke();
+  if (name === "overview") {
+    ctx.strokeStyle = "#ff00ff";
+    ctx.lineWidth = Math.max(1, dpr);
+    for (const p of q) { const x = T.X(p[0]), y = T.Y(p[1]), r = 6 * dpr;
+      ctx.beginPath(); ctx.moveTo(x - r, y); ctx.lineTo(x + r, y); ctx.moveTo(x, y - r); ctx.lineTo(x, y + r); ctx.stroke(); }
+  }
+  for (const hd of handlesFor(name, q)) {
+    const x = T.X(hd.p[0]), y = T.Y(hd.p[1]);
+    if (hd.type === "corner") {
+      ctx.strokeStyle = "#ff00ff";
+      ctx.lineWidth = Math.max(1.5, 1.5 * dpr);
+      const r = 10 * dpr, s = 4 * dpr;
+      ctx.beginPath(); ctx.arc(x, y, r, 0, 2 * Math.PI); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x - s, y); ctx.lineTo(x + s, y); ctx.moveTo(x, y - s); ctx.lineTo(x, y + s); ctx.stroke();
+    } else {
+      const [a, b] = SIDE_CORNERS[hd.side].map((i) => q[i]);
+      const ang = Math.atan2(b[1] - a[1], b[0] - a[0]);
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(ang);
+      const gw = 34 * dpr, gh = 9 * dpr;
+      ctx.fillStyle = "rgba(40,230,40,.85)";
+      ctx.strokeStyle = "#04300a";
+      ctx.lineWidth = dpr;
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(-gw / 2, -gh / 2, gw, gh, gh / 2); else ctx.rect(-gw / 2, -gh / 2, gw, gh);
+      ctx.fill(); ctx.stroke();
+      ctx.restore();
+    }
+  }
+  caption(c, name);
+}
+
+function caption(c, name) {
+  const cur = S.cur;
+  c.cap.textContent = "";
+  const l = document.createElement("span"), r = document.createElement("span");
+  l.textContent = name;
+  if (name in CORNER_IDX) {
+    const i = CORNER_IDX[name], p = cur.quad[i], o = cur.orig[i];
+    l.textContent = `${name}  ${p[0].toFixed(1)}, ${p[1].toFixed(1)}`;
+    const d = dist(p, o);
+    if (d > 0.005) { r.className = "moved"; r.textContent = `moved ${(p[0] - o[0]).toFixed(1)}, ${(p[1] - o[1]).toFixed(1)}`; }
+  } else if (name in SIDE_CORNERS) {
+    const n = sideNormal(cur.orig, name), m = mid(cur.quad, name), m0 = mid(cur.orig, name);
+    const d = (m[0] - m0[0]) * n[0] + (m[1] - m0[1]) * n[1];
+    if (Math.abs(d) > 0.005) { r.className = "moved"; r.textContent = `moved ${d > 0 ? "+" : ""}${d.toFixed(1)} px ${d > 0 ? "out" : "in"}`; }
+  } else {
+    l.textContent = "overview";
+  }
+  c.cap.append(l, r);
+}
+
+function drawAll() {
+  if (!S.cur) return;
+  for (const name of NAMES) drawTile(cells[name], name);
+  if (S.zoom) drawZoom();
+  updateButtons();
+}
+
+function layout() {
+  if (!S.cur) return;
+  for (const name of NAMES) {
+    const c = cells[name], t = S.cur.specs.tiles.find((x) => x.name === name);
+    fitCanvas(c.canvas, { w: c.cell.clientWidth - 2, h: c.cell.clientHeight - 2 }, t);
+  }
+  drawAll();
+}
+
+// ---------------------------------------------------------------- pointer editing
+function attachPointer(canvas, nameOrFn, isZoom) {
+  let drag = null;
+  const nm = () => (typeof nameOrFn === "function" ? nameOrFn() : nameOrFn);
+  const toScan = (e) => {
+    const t = S.cur.specs.tiles.find((x) => x.name === nm());
+    const r = canvas.getBoundingClientRect();
+    const fx = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), fy = Math.min(1, Math.max(0, (e.clientY - r.top) / r.height));
+    return [t.x0 + fx * t.window[0], t.y0 + fy * t.window[1]];
+  };
+  const toCss = (p) => {
+    const t = S.cur.specs.tiles.find((x) => x.name === nm());
+    const r = canvas.getBoundingClientRect();
+    return [r.left + ((p[0] - t.x0) / t.window[0]) * r.width, r.top + ((p[1] - t.y0) / t.window[1]) * r.height];
+  };
+  const pick = (e) => {
+    if (!S.cur || S.busy || nm() === "overview") return null;
+    for (const hd of handlesFor(nm(), S.cur.quad)) {
+      const c = toCss(hd.p);
+      if (Math.hypot(e.clientX - c[0], e.clientY - c[1]) <= HIT) return hd;
+    }
+    return null;
+  };
+  canvas.addEventListener("pointerdown", (e) => {
+    if (!S.cur || e.button !== 0) return;
+    const hd = pick(e);
+    canvas.setPointerCapture(e.pointerId);
+    drag = { hd, start: toScan(e), q0: clone(S.cur.quad), moved: false, x: e.clientX, y: e.clientY };
+    e.preventDefault();
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    if (!S.cur) return;
+    if (!drag) { canvas.style.cursor = pick(e) ? "grab" : (isZoom ? "crosshair" : "zoom-in"); return; }
+    if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) > 3) drag.moved = true;
+    if (!drag.hd || !drag.moved) return;
+    const p = toScan(e), dx = p[0] - drag.start[0], dy = p[1] - drag.start[1];
+    const q = clone(drag.q0);
+    if (drag.hd.type === "corner") {
+      q[drag.hd.i] = [q[drag.hd.i][0] + dx, q[drag.hd.i][1] + dy];
+    } else {
+      const n = sideNormal(drag.q0, drag.hd.side), d = dx * n[0] + dy * n[1];
+      for (const i of SIDE_CORNERS[drag.hd.side]) q[i] = [q[i][0] + d * n[0], q[i][1] + d * n[1]];
+    }
+    S.cur.quad = clampQuad(q);
+    canvas.style.cursor = "grabbing";
+    drawAll();
+  });
+  const end = (e) => {
+    if (!drag) return;
+    const d = drag; drag = null;
+    if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
+    if (!d.hd && !d.moved && !isZoom && S.cur) openZoom(nm());   // plain click on the tile
+    canvas.style.cursor = "";
+  };
+  canvas.addEventListener("pointerup", end);
+  canvas.addEventListener("pointercancel", () => { drag = null; });
+}
+
+function clampQuad(q) {
+  const [w, h] = S.cur.specs.scan_px;
+  return q.map((p) => [Math.min(w, Math.max(0, p[0])), Math.min(h, Math.max(0, p[1]))]);
+}
+
+// ---------------------------------------------------------------- enlarged tile
+function openZoom(name) {
+  S.zoom = name;
+  $("zoom").style.display = "flex";
+  $("zname").textContent = name;
+  drawZoom(true);
+}
+function closeZoom() { S.zoom = null; $("zoom").style.display = "none"; }
+function drawZoom(resize) {
+  const t = S.cur.specs.tiles.find((x) => x.name === S.zoom);
+  const canvas = $("zcanvas");
+  if (resize || !canvas.style.width) {
+    const box = { w: Math.min(window.innerWidth - 40, 1100), h: window.innerHeight - 90 };
+    fitCanvas(canvas, box, t);
+  }
+  drawTile({ canvas, cap: document.createElement("div") }, S.zoom);
+  const q = S.cur.quad;
+  if (S.zoom in CORNER_IDX) {
+    const p = q[CORNER_IDX[S.zoom]];
+    $("zinfo").textContent = `(${p[0].toFixed(1)}, ${p[1].toFixed(1)})`;
+  } else if (S.zoom in SIDE_CORNERS) {
+    const n = sideNormal(S.cur.orig, S.zoom), m = mid(q, S.zoom), m0 = mid(S.cur.orig, S.zoom);
+    $("zinfo").textContent = `moved ${((m[0] - m0[0]) * n[0] + (m[1] - m0[1]) * n[1]).toFixed(1)} px (+ outward)`;
+  } else {
+    $("zinfo").textContent = "overview";
+  }
+}
+
+function nudge(dx, dy) {
+  const name = S.zoom;
+  if (!S.cur || S.busy || !name || name === "overview") return;
+  const q = clone(S.cur.quad);
+  if (name in CORNER_IDX) {
+    const i = CORNER_IDX[name];
+    q[i] = [q[i][0] + dx, q[i][1] + dy];
+  } else {
+    const n = sideNormal(q, name), d = dx * n[0] + dy * n[1];
+    if (Math.abs(d) < 0.5 * Math.max(Math.abs(dx), Math.abs(dy))) return;   // arrow along the side
+    const step = Math.sign(d) * Math.max(Math.abs(dx), Math.abs(dy));
+    for (const i of SIDE_CORNERS[name]) q[i] = [q[i][0] + step * n[0], q[i][1] + step * n[1]];
+  }
+  S.cur.quad = clampQuad(q);
+  drawAll();
+}
+
+document.addEventListener("keydown", (e) => {
+  if (!S.zoom) return;
+  if (e.key === "Escape") { closeZoom(); e.preventDefault(); return; }
+  const dir = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+  if (!dir) return;
+  const k = e.shiftKey ? 10 : 1;
+  nudge(dir[0] * k, dir[1] * k);
+  e.preventDefault();
+});
+$("zclose").onclick = closeZoom;
+$("zoom").addEventListener("pointerdown", (e) => { if (e.target === $("zoom")) closeZoom(); });
+attachPointer($("zcanvas"), () => S.zoom, true);
+
+// ---------------------------------------------------------------- scans
+async function loadScan(i) {
+  closeZoom();
+  S.idx = i;
+  const rec = S.scans[i];
+  S.cur = null;
+  renderSide();
+  renderList();
+  for (const name of NAMES) { cells[name].busy.textContent = "loading…"; }
+  let specs;
+  try { specs = await api(`/api/scans/${encodeURIComponent(rec.key)}/tiles`); }
+  catch (e) { showMsg(e.message); return; }
+  if (S.idx !== i) return;
+  const cur = { rec, specs, imgs: {}, quad: clone(rec.quad), orig: clone(rec.quad) };
+  S.cur = cur;
+  layout();
+  let pending = specs.tiles.length;
+  for (const t of specs.tiles) {
+    const img = new Image();
+    img.onload = img.onerror = () => {
+      if (S.cur !== cur) return;
+      cells[t.name].busy.textContent = img.naturalWidth ? "" : "tile failed";
+      drawTile(cells[t.name], t.name);
+      if (S.zoom === t.name) drawZoom();
+      if (--pending === 0) showMsg("");
+    };
+    img.src = t.url;
+    cur.imgs[t.name] = img;
+  }
+  updateButtons();
+}
+
+function renderSide() {
+  const rec = S.scans[S.idx];
+  $("pos").textContent = rec ? `${S.idx + 1} / ${S.scans.length}` : "";
+  $("name").textContent = rec ? rec.key : "";
+  const st = $("status");
+  st.textContent = rec ? rec.status : "";
+  st.className = "badge " + (rec ? rec.status : "");
+  $("source").textContent = rec ? `outline: ${rec.quad_source === "override" ? "manual" : "automatic"}` : "";
+  const rv = rec && rec.review;
+  $("reviewed").textContent = rv ? `${rv.action === "accept" ? "confirmed" : "corrected"} by ${rv.author}, ${rv.at.replace("T", " ").slice(0, 16)}` : "";
+  const ul = $("warns");
+  ul.textContent = "";
+  const warns = rec ? rec.warnings : [];
+  for (const w of warns) {
+    const li = document.createElement("li");
+    li.textContent = w;
+    if (w.startsWith("hint:")) li.className = "hint";
+    ul.append(li);
+  }
+  $("warnbox").style.display = warns.length ? "" : "none";
+}
+
+function renderList() {
+  const box = $("list");
+  box.textContent = "";
+  S.scans.forEach((rec, i) => {
+    const d = document.createElement("div");
+    if (i === S.idx) d.className = "cur";
+    const mark = document.createElement("span");
+    const m = S.marks[rec.key];
+    mark.className = "mark " + (m || "");
+    mark.textContent = m === "confirmed" ? "✓" : m === "fixed" ? "✎" : m === "skipped" ? "–" : "•";
+    const t = document.createElement("span");
+    t.className = "t";
+    t.textContent = rec.key;
+    t.title = rec.key;
+    d.append(mark, t);
+    d.onclick = () => go(i);
+    box.append(d);
+  });
+}
+
+function updateButtons() {
+  const has = !!S.cur, dirty = isDirty(), busy = S.busy;
+  $("confirm").disabled = !has || dirty || busy;
+  $("save").disabled = !has || !dirty || busy;
+  $("reset").disabled = !has || !dirty || busy;
+  $("skip").disabled = !has || busy;
+  $("prev").disabled = busy || S.idx <= 0;
+  $("next").disabled = busy || S.idx >= S.scans.length - 1;
+}
+
+function go(i) {
+  if (i < 0 || i >= S.scans.length || (i === S.idx && S.cur)) return;
+  if (isDirty() && !window.confirm("This scan has edits that are not saved. Leave without saving?")) return;
+  loadScan(i);
+}
+
+async function commit(kind) {
+  const cur = S.cur;
+  if (!cur || S.busy) return;
+  S.busy = true;
+  updateButtons();
+  showMsg(S.meta && S.meta.export ? "Saving and exporting…" : "Saving…", true);
+  const key = cur.rec.key;
+  try {
+    const body = kind === "confirm" ? {} : { corners: Object.fromEntries(Object.entries(CORNER_IDX).map(([n, i]) => [n, cur.quad[i].map((v) => Math.round(v * 100) / 100)])) };
+    const rec = await api(`/api/scans/${encodeURIComponent(key)}/${kind}`, body);
+    S.scans[S.idx] = rec;
+    S.marks[key] = kind === "confirm" ? "confirmed" : "fixed";
+    S.busy = false;
+    showMsg(kind === "confirm" ? `Confirmed ${key}` : `Saved ${key}${rec.exported ? " and exported" : ""}`, true);
+    if (kind === "confirm" && S.idx < S.scans.length - 1) loadScan(S.idx + 1);
+    else loadScan(S.idx);       // re-cut tiles at the stored outline
+  } catch (e) {
+    S.busy = false;
+    showMsg("Not saved: " + e.message);
+    updateButtons();
+  }
+}
+
+$("confirm").onclick = () => commit("confirm");
+$("save").onclick = () => commit("save");
+$("reset").onclick = () => { if (S.cur) { S.cur.quad = clone(S.cur.orig); drawAll(); } };
+$("skip").onclick = () => {
+  if (!S.cur) return;
+  if (!S.marks[S.cur.rec.key]) S.marks[S.cur.rec.key] = "skipped";
+  if (S.idx < S.scans.length - 1) go(S.idx + 1); else renderList();
+};
+$("prev").onclick = () => go(S.idx - 1);
+$("next").onclick = () => go(S.idx + 1);
+window.addEventListener("beforeunload", (e) => { if (isDirty()) { e.preventDefault(); e.returnValue = ""; } });
+window.addEventListener("resize", () => { if (S.cur) { layout(); if (S.zoom) drawZoom(true); } });
+
+(async function init() {
+  buildGrid();
+  try {
+    const data = await api("/api/scans");
+    S.meta = data;
+    S.scans = data.scans;
+    $("out").textContent = data.output;
+    $("out").title = data.output;
+    document.title = `Polaroid review – ${S.scans.length} scan${S.scans.length === 1 ? "" : "s"}`;
+  } catch (e) { showMsg(e.message); return; }
+  if (!S.scans.length) {
+    $("grid").style.display = "none";
+    const em = $("empty");
+    em.style.display = "block";
+    em.textContent = S.meta.all ? "The manifest has no scans with an outline." : "No scans need review. Start with --all to look at every scan.";
+    renderSide();
+    updateButtons();
+    return;
+  }
+  loadScan(0);
+})();
+</script>
+</body>
+</html>

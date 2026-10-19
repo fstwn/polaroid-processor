@@ -41,11 +41,17 @@ def _stretch(tile: np.ndarray) -> np.ndarray:
     return (v * 255).astype(np.uint8)
 
 
-def _tile(rgb: np.ndarray, centre: Tuple[float, float], window: int, zoom: int, quad: np.ndarray,
-          title: str, grid: int, stretch: str = "auto") -> np.ndarray:
-    """Full-resolution crop around ``centre`` with a coordinate grid and the quad drawn.
+def is_dark(tile: np.ndarray) -> bool:
+    """True when the tile is dark throughout (90th percentile of max RGB below 100)."""
+    return bool(np.percentile(tile.max(axis=2), 90) < 100)
 
-    ``stretch`` is "auto" (only tiles that are dark throughout), "on" or "off".
+
+def raw_tile(rgb: np.ndarray, centre: Tuple[float, float], window: int,
+             stretch: str = "auto") -> Tuple[np.ndarray, int, int, bool]:
+    """Full-resolution crop of ``window`` px around ``centre``, black outside the scan.
+
+    Returns (uint8 tile, x0, y0, stretched) where (x0, y0) is the scan coordinate of the tile's
+    top-left pixel. ``stretch`` is "auto" (only tiles that are dark throughout), "on" or "off".
     """
     h, w = rgb.shape[:2]
     cx, cy = int(round(centre[0])), int(round(centre[1]))
@@ -54,8 +60,17 @@ def _tile(rgb: np.ndarray, centre: Tuple[float, float], window: int, zoom: int, 
     xa, ya, xb, yb = max(0, x0), max(0, y0), min(w, x0 + window), min(h, y0 + window)
     if xb > xa and yb > ya:
         tile[ya - y0: yb - y0, xa - x0: xb - x0] = to_uint8(rgb[ya:yb, xa:xb])
-    if stretch == "on" or (stretch == "auto" and np.percentile(tile.max(axis=2), 90) < 100):
+    stretched = stretch == "on" or (stretch == "auto" and is_dark(tile))
+    if stretched:
         tile = _stretch(tile)
+    return tile, x0, y0, stretched
+
+
+def _tile(rgb: np.ndarray, centre: Tuple[float, float], window: int, zoom: int, quad: np.ndarray,
+          title: str, grid: int, stretch: str = "auto") -> np.ndarray:
+    """Full-resolution crop around ``centre`` with a coordinate grid and the quad drawn."""
+    tile, x0, y0, stretched = raw_tile(rgb, centre, window, stretch)
+    if stretched:
         title += " stretched"
     tile = cv2.resize(tile, (window * zoom, window * zoom), interpolation=cv2.INTER_NEAREST)
     # grid in absolute scan coordinates

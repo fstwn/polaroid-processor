@@ -135,6 +135,20 @@ def cmd_status(a) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------- review
+def cmd_review(a) -> int:
+    from .review import ReviewApp, serve
+
+    app = ReviewApp(a.output, show_all=a.all, author=a.author, export=a.export)
+    n = len(app.list_scans()["scans"])
+    if not n:
+        print("no scans need review (use --all to look at every scan)" if not a.all else "the manifest has no scans")
+        return 0
+    print(f"{n} scan(s) to review in {a.output}", file=sys.stderr)
+    serve(app, a.port, open_browser=not a.no_browser, announce=lambda m: print(m, file=sys.stderr))
+    return 0
+
+
 # --------------------------------------------------------------------------- parser
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="polaroid", description="Detect, crop and rectify scans of instant prints.")
@@ -206,6 +220,16 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--needs-review", action="store_true", help="only scans that need review")
     common(sp)
     sp.set_defaults(fn=cmd_status)
+
+    sp = sub.add_parser("review", help="local web page to drag outlines onto the print edge")
+    sp.add_argument("output", help="output folder holding the manifest")
+    sp.add_argument("--all", action="store_true", help="every scan, not only those that need review")
+    sp.add_argument("--port", type=int, default=0, help="port on 127.0.0.1 (default: any free port)")
+    sp.add_argument("--author", default="human", help="author recorded with each fix (default human)")
+    sp.add_argument("--export", action="store_true", help="re-export each scan right after it is saved")
+    sp.add_argument("--no-browser", action="store_true", help="do not open the page in the browser")
+    common(sp)
+    sp.set_defaults(fn=cmd_review)
     return p
 
 

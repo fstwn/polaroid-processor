@@ -109,6 +109,20 @@ polaroid fix OUTPUT NAME --reset
 
 Corners are `tl`, `tr`, `br`, `bl`; sides are `top`, `right`, `bottom`, `left`. `--shift` moves a side outward (positive) or inward (negative). `--accept` marks the current outline as reviewed. Every change is stored in the manifest with author (`--author`, default `human`), time, note and previous value. `--export` re-exports that scan right away; otherwise the next `process` run does it.
 
+### `review`
+
+```bash
+polaroid review OUTPUT [--all] [--port N] [--author NAME] [--export] [--no-browser]
+```
+
+Serves a local page (stdlib server on `127.0.0.1`, no network access, no extra dependencies) and opens it in the browser. By default it lists the scans of the manifest with status `needs_review`; `--all` lists every scan. Each scan is a 3x3 grid: the four corners and the four edge midpoints as 480 px tiles of the original pixels (contrast-stretched when dark), and an overview in the middle. The green line is the current outline.
+
+- Drag a magenta corner, or the green grip on an edge tile (moves the whole side), onto the print edge.
+- Click a tile to enlarge it; there the arrow keys move 1 px and `Shift` + arrow 10 px. `Esc` closes.
+- **Confirm** stores the current outline as reviewed (`fix --accept`) and goes to the next scan. **Save correction** stores the moved corners and cuts the tiles again at the new outline. **Reset** drops edits that are not saved yet. **Skip** goes on without writing.
+
+Saves go through the same code as `fix` (history with author, time, note and previous outline; author is `--author`, default `human`). With `--export`, each saved scan is re-exported right away; otherwise the next `process` run does it. Tiles are cut from the input scans, which are only read. `--port` defaults to any free port; the URL is printed.
+
 ### `status`
 
 ```bash
