@@ -49,7 +49,9 @@ Re-running the same command only processes new or changed scans and scans whose 
 1. **Detect** the print outline at reduced resolution. The holder is near-black and flat; every frame type has pixels brighter than the holder noise. Each edge is scanned from outside inward, averaged over long segments, and the edge is the first sharp step into a stable plateau. Holder rim lines, dust and flare-lit gaps are rejected. A consensus line fit per side gives the four corners. Where the holder rim touches the print, the side is refit on the print edge behind the rim so that it runs parallel to the opposite side.
 2. **Scale.** Pixels per millimetre come from `--ppi` / `--profile`, else from the TIFF tag if it gives a plausible print size, else from the median of all scans of the same scan size (assuming 88 x 107 mm).
 3. **Review rules** flag a scan `needs_review` when its size does not match a known format or the other scans of the batch, opposite sides are not parallel, or an edge is noisy, curved or inconsistent.
-4. **Export** with one perspective warp at full resolution, cropped by a margin in millimetres (default 0.2 mm). No other resampling, no colour changes.
+4. **Flatten** curled prints. Each side is traced every 0.5 mm at full resolution and fitted with a smooth curve. When a reliable side bends by 0.1 mm or more, the export maps the curved outline onto a rectangle (Coons patch), so all four sides come out straight; sides whose trace is not trustworthy (printed graphics, black glitter) stay straight. Manually fixed outlines are always straight. `--flatten off` keeps straight sides everywhere.
+5. **Export** with one warp at full resolution, cropped by a margin in millimetres (default 0.2 mm).
+6. **Remove edge shadows.** Near its edges a print darkens (3-18 % at 0.25 mm on white frames, reaching about 1.5 mm in). On plain frames the darkening is measured from the frame border itself and divided out. Printed, dark and glossy-gradient frames are left untouched. `--shadows off` keeps the tones exactly as scanned; no other colour changes are made.
 
 ## Commands
 
@@ -65,7 +67,9 @@ polaroid process INPUT... -o OUTPUT [options]
 | `--derivative NAME=SIZE[:FMT[:Q]]` | Derivative preset, repeatable. SIZE is a long edge in px or `x0.5`; FMT `jpg` or `png` |
 | `--no-derivatives` | Only the TIFF master |
 | `--ppi N` / `--profile NAME` | True scan resolution, directly or from a scanner profile |
-| `--overlay` | Also write `_overlays/<name>.jpg` with the detected outline |
+| `--flatten auto\|off` | Unwarp curled prints along their traced edges (default `auto`) |
+| `--shadows auto\|off` | Remove edge shadows on plain frames (default `auto`) |
+| `--overlay` | Also write `_overlays/<name>.jpg` with the detected outline (and the curved edges when flattened) |
 | `--strict` | Do not export scans that need review |
 | `--force` / `--redetect` | Re-export / re-detect even if up to date |
 | `--dry-run` | Detect and evaluate only, write nothing |
@@ -163,7 +167,9 @@ Warnings that set `needs_review`:
 | `edge_uncertain:<side>:<inliers>/<points>` | Less than 60 % of the edge points agree on one line |
 | `edge_inside:<side>:<mm>` | A stretch of the print edge lies further inside the outline than the crop margin, so holder would show in the export there (curved or concave edge) |
 
-Informational: `scale_inferred:<source>`, `size_unverified` (single scan, no scale reference), `edge_repaired:<side>` (the holder rim touched that side; the side was refit on the print edge behind it).
+Informational: `scale_inferred:<source>`, `size_unverified` (single scan, no scale reference), `edge_repaired:<side>` (the holder rim touched that side; the side was refit on the print edge behind it), `flattened:<sides>:<mm>` (the export follows these sides' curves; largest bend), `flatten_straight:<side>` (in a flattened print, this side's trace was not reliable and stays straight).
+
+For sides that follow a curve, the straight-line checks `not_parallel`, `edge_inside` and `edge_curved` do not apply. Each result also carries `flatten` (applied, sides, bend per side) and `shadows` (corrected sides, strongest darkening, share of each side that could be measured).
 
 Exit codes: `0` success (scans may still need review), `1` at least one scan failed, `2` usage error. Logs go to stderr (`-v` for progress).
 

@@ -15,6 +15,8 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 from . import __version__
+from . import flatten as flat
+from . import shading
 from .detection import DetectionError, DetectParams, detect, quad_size
 from .formats import match_format
 from .geometry import rectify
@@ -90,8 +92,13 @@ class Settings:
     workers: Optional[int] = None
     rules: ReviewRules = field(default_factory=ReviewRules)
     detect_params: DetectParams = field(default_factory=DetectParams)
+    flatten: str = "auto"  # "auto": unwarp curled prints along their traced edges; "off": straight sides
+    shadows: str = "auto"  # "auto": remove edge shadows on plain frames; "off"
+    flatten_params: flat.FlattenParams = field(default_factory=flat.FlattenParams)
+    shading_params: shading.ShadingParams = field(default_factory=shading.ShadingParams)
 
-    def export_key(self, quad: np.ndarray, scale: Scale) -> str:
+    def export_key(self, quad: np.ndarray, scale: Scale, curves: Optional[dict] = None,
+                   override: bool = False) -> str:
         payload = {
             "v": __version__,
             "margin_mm": self.margin_mm,
@@ -101,7 +108,11 @@ class Settings:
             "overlay": self.overlay,
             "quad": np.round(quad, 2).tolist(),
             "px_per_mm": round(scale.px_per_mm, 4),
+            "flatten": self.flatten,
+            "shadows": self.shadows,
         }
+        if self.flatten != "off" and curves and not override:
+            payload["curves"] = {s: [round(v, 3) for v in c["coef"]] for s, c in sorted(curves.items())}
         return hashlib.sha1(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
 
 
@@ -165,9 +176,39 @@ def bytes_per_worker(width: int, height: int, bits: int = 8) -> int:
 
 
 # --------------------------------------------------------------------------- workers
-def _export(rgb: np.ndarray, quad: np.ndarray, px_per_mm: float, icc: Optional[bytes], key: str, ex: dict) -> dict:
-    """Rectify and write master + derivatives (+ overlay). Returns outputs and their px/mm."""
-    img = rectify(rgb, quad, ex["margin_mm"] * px_per_mm, ex["interpolation"])
+def manual_outline(override_quad, detection: Optional[dict]) -> bool:
+    """True when a reviewer moved the outline; an accepted automatic outline is not manual."""
+    if override_quad is None:
+        return False
+    auto = (detection or {}).get("quad")
+    return auto is None or not np.allclose(np.asarray(override_quad, float), np.asarray(auto, float), atol=0.5)
+
+
+def flatten_plan(curves: Optional[dict], px_per_mm: float, mode: str, override: bool,
+                 params: flat.FlattenParams = flat.FlattenParams()) -> flat.FlattenPlan:
+    """Whether the export unwarps along curved sides. ``override`` = the outline was moved by a
+    reviewer (see :func:`manual_outline`); such outlines stay straight."""
+    if mode == "off" or override:
+        return flat.FlattenPlan(False, [], {}, {})
+    return flat.plan(flat.curves_from_dict(curves), px_per_mm, params)
+
+
+def _export(rgb: np.ndarray, quad: np.ndarray, px_per_mm: float, icc: Optional[bytes], key: str, ex: dict,
+            curves: Optional[dict] = None, override: bool = False) -> dict:
+    """Rectify (or unwarp), remove edge shadows, write master + derivatives (+ overlay).
+
+    Returns outputs, their px/mm and what was applied.
+    """
+    margin = ex["margin_mm"] * px_per_mm
+    fplan = flatten_plan(curves, px_per_mm, ex["flatten"], override, ex["flatten_params"])
+    sides = flat.curves_from_dict(curves) if fplan.apply else None
+    if sides:
+        img = flat.unwarp(rgb, sides, quad, margin, ex["interpolation"])
+    else:
+        img = rectify(rgb, quad, margin, ex["interpolation"])
+    shade = {"sides": []}
+    if ex["shadows"] != "off":
+        img, shade = shading.correct(img, px_per_mm, ex["shading_params"])
     stem = Path(key).stem
     out_dir = Path(ex["out_dir"])
     outputs, ppm = {}, {}
@@ -182,9 +223,11 @@ def _export(rgb: np.ndarray, quad: np.ndarray, px_per_mm: float, icc: Optional[b
         outputs[d["name"]], ppm[d["name"]] = str(p), px_per_mm * f
     if ex["overlay"]:
         p = out_dir / "_overlays" / f"{stem}.jpg"
-        write_derivative(str(p), overlay(rgb, quad), "jpg", 85, None)
+        pts = {"curves": flat.outline_points(sides, quad)} if sides else None
+        write_derivative(str(p), overlay(rgb, quad, points=pts), "jpg", 85, None)
         outputs["overlay"] = str(p)
-    return {"outputs": outputs, "output_ppm": ppm, "output_size_px": [int(img.shape[1]), int(img.shape[0])]}
+    return {"outputs": outputs, "output_ppm": ppm, "output_size_px": [int(img.shape[1]), int(img.shape[0])],
+            "flatten": fplan.to_dict(), "shadows": shade}
 
 
 def _job(job: dict) -> dict:
@@ -215,13 +258,20 @@ def _job(job: dict) -> dict:
                 return res
             res["detection"] = det
         quad = np.array(job["override"] if job.get("override") else det["quad"], dtype=np.float64)
+        ex = job["export_settings"]
+        if job.get("scale"):
+            px = job["scale"]
+        else:
+            s = scale_from_tag(meta.dpi_tag, quad_size(quad)) or scale_from_size(quad_size(quad))
+            px = s.px_per_mm
+        if job["detect"] and ex["flatten"] != "off":
+            curves = flat.trace(rgb, np.array(det["quad"], dtype=np.float64), px, det.get("speck_threshold") or 30,
+                                ex["flatten_params"])
+            det["curves"] = {k: c.to_dict() for k, c in curves.items()}
         if job["export"]:
-            if job.get("scale"):
-                px = job["scale"]
-            else:
-                s = scale_from_tag(meta.dpi_tag, quad_size(quad)) or scale_from_size(quad_size(quad))
-                px = s.px_per_mm
-            res.update(_export(rgb, quad, px, meta.icc_profile, job["key"], job["export_settings"]))
+            res.update(_export(rgb, quad, px, meta.icc_profile, job["key"], ex,
+                               curves=(det or {}).get("curves"),
+                               override=manual_outline(job.get("override"), det)))
             res["export_px_per_mm"] = px
     except Exception as e:  # noqa: BLE001
         res["error"] = f"{type(e).__name__}: {e}"
@@ -312,11 +362,24 @@ def resolve_scales(manifest: Manifest, keys: Sequence[str], settings: Settings) 
 
 def evaluate(entry: dict, scale: Scale, rules: ReviewRules,
              ref_size: Optional[Tuple[float, float]] = None,
-             margin_mm: float = 0.2) -> Tuple[str, List[str], Optional[dict]]:
+             margin_mm: float = 0.2, flatten: str = "auto",
+             flatten_params: flat.FlattenParams = flat.FlattenParams()) -> Tuple[str, List[str], Optional[dict]]:
     """Status and warnings for one scan. ``ref_size`` is the median print size of its scan-size group;
-    ``margin_mm`` is the crop margin, which hides edge points that lie at most that far inside."""
+    ``margin_mm`` is the crop margin, which hides edge points that lie at most that far inside.
+
+    When the export unwarps along traced curves, the straight-line checks (``not_parallel``,
+    ``edge_inside``, ``edge_curved``) do not apply to the sides that follow a curve.
+    """
     warnings: List[str] = []
     quad = Manifest.effective_quad(entry)
+    fplan = flatten_plan((entry.get("detection") or {}).get("curves"), scale.px_per_mm, flatten,
+                         manual_outline((entry.get("override") or {}).get("quad"), entry.get("detection")),
+                         flatten_params)
+    curved = set(fplan.sides)
+    if fplan.apply:
+        warnings.append(f"flattened:{','.join(fplan.sides)}:{max(fplan.bend_mm.values()):.2f}mm")
+        for side, reason in fplan.straight.items():
+            warnings.append(f"flatten_straight:{side}")  # informational: this side's trace was not reliable
     fm = match_format(quad_size(quad), scale.px_per_mm)
     fmt = None
     if fm:
@@ -334,6 +397,8 @@ def evaluate(entry: dict, scale: Scale, rules: ReviewRules,
     for name, (a0, a1, b0, b1) in (("top-bottom", (q[0], q[1], q[3], q[2])),
                                    ("left-right", (q[0], q[3], q[1], q[2]))):
         diff = abs(_side_angle_deg(a0, a1) - _side_angle_deg(b0, b1))
+        if set(name.split("-")) <= curved:
+            continue  # both sides follow their curves
         if diff > rules.parallel_deg:
             warnings.append(f"not_parallel:{name}:{diff:.2f}deg")
             review = review or not override
@@ -359,14 +424,16 @@ def evaluate(entry: dict, scale: Scale, rules: ReviewRules,
                 warnings.append(f"edge_noisy:{side}")
                 review = True
             inside = st.get("inside_px")
+            if side in curved:
+                continue  # the export follows this side's traced edge
             if inside is not None and inside / scale.px_per_mm > margin_mm:
                 warnings.append(f"edge_inside:{side}:{inside / scale.px_per_mm:.2f}mm")
                 review = True
             if abs(st["bow_px"]) / scale.px_per_mm > rules.edge_bow_mm:
                 warnings.append(f"edge_curved:{side}:{st['bow_px'] / scale.px_per_mm:+.2f}mm")
                 review = True
-    if any(w.startswith("edge_curved") for w in warnings):
-        warnings.append("hint:edge flattening (opt-in, planned) may help")
+    if any(w.startswith("edge_curved") for w in warnings) and flatten == "off":
+        warnings.append("hint:process with flatten on to unwarp curved edges")
     return ("needs_review" if review else "ok"), warnings, fmt
 
 
@@ -387,6 +454,8 @@ def result_record(manifest: Manifest, key: str, exported: bool = False) -> dict:
         "scale": e.get("scale"),
         "format": e.get("format"),
         "edges": det.get("edges"),
+        "flatten": e.get("flatten"),
+        "shadows": e.get("shadows"),
         "outputs": outputs,
         "exported": exported,
         "error": e.get("error"),
@@ -402,7 +471,9 @@ def _history_scales(manifest: Manifest) -> Dict[Tuple[int, int], Scale]:
 def _export_settings(settings: Settings, out_dir: Path) -> dict:
     return {"margin_mm": settings.margin_mm, "interpolation": settings.interpolation,
             "tiff_compression": settings.tiff_compression, "overlay": settings.overlay,
-            "derivatives": [asdict(d) for d in settings.derivatives], "out_dir": str(out_dir)}
+            "derivatives": [asdict(d) for d in settings.derivatives], "out_dir": str(out_dir),
+            "flatten": settings.flatten, "shadows": settings.shadows,
+            "flatten_params": settings.flatten_params, "shading_params": settings.shading_params}
 
 
 def _workers_for(manifest: Manifest, jobs: List[dict], settings: Settings) -> int:
@@ -439,7 +510,8 @@ def _store_job_result(manifest: Manifest, res: dict) -> None:
     if "outputs" in res:
         e.update(outputs={n: manifest.rel(p) for n, p in res["outputs"].items()},
                  output_ppm=res["output_ppm"], output_size_px=res["output_size_px"],
-                 export_px_per_mm=res["export_px_per_mm"], exported_at=now())
+                 export_px_per_mm=res["export_px_per_mm"], exported_at=now(),
+                 flatten=res.get("flatten"), shadows=res.get("shadows"))
 
 
 def run_batch(inputs: Sequence[str], out_dir: Optional[str], settings: Settings,
@@ -484,7 +556,8 @@ def run_batch(inputs: Sequence[str], out_dir: Optional[str], settings: Settings,
         e = manifest.get(key) or {}
         st = os.stat(f)
         unchanged = (e.get("detection") and e.get("size_bytes") == st.st_size
-                     and abs(e.get("mtime", 0) - st.st_mtime) < 1e-3)
+                     and abs(e.get("mtime", 0) - st.st_mtime) < 1e-3
+                     and (settings.flatten == "off" or "curves" in e["detection"]))
         if unchanged and not settings.redetect:
             continue
         prov = explicit or (history.get(_group(e)) if e else None)
@@ -508,7 +581,8 @@ def run_batch(inputs: Sequence[str], out_dir: Optional[str], settings: Settings,
     for k in keys:
         e = manifest.entry(k)
         if k in scales and (e.get("detection") or e.get("override")):
-            status, warnings, fmt = evaluate(e, scales[k], settings.rules, refs.get(_group(e)), settings.margin_mm)
+            status, warnings, fmt = evaluate(e, scales[k], settings.rules, refs.get(_group(e)), settings.margin_mm,
+                                             settings.flatten, settings.flatten_params)
             e.update(scale=scales[k].to_dict(), format=fmt, status=status, warnings=warnings, error=None)
 
     # ---- reconcile exports with the final scale ---------------------------------------
@@ -521,7 +595,8 @@ def run_batch(inputs: Sequence[str], out_dir: Optional[str], settings: Settings,
             continue
         quad = Manifest.effective_quad(e)
         final = scales[k]
-        xkey = settings.export_key(quad, final)
+        xkey = settings.export_key(quad, final, (e.get("detection") or {}).get("curves"),
+                                   manual_outline((e.get("override") or {}).get("quad"), e.get("detection")))
         outs = e.get("outputs") or {}
         missing = not outs or any(not manifest.abs(p).exists() for p in outs.values())
         if exported_now.get(k):
@@ -579,7 +654,8 @@ def run_batch(inputs: Sequence[str], out_dir: Optional[str], settings: Settings,
 
 
 # --------------------------------------------------------------------------- settings persistence
-PERSISTED = ("margin_mm", "interpolation", "tiff_compression", "overlay", "ppi", "profile", "profiles_file", "strict")
+PERSISTED = ("margin_mm", "interpolation", "tiff_compression", "overlay", "ppi", "profile", "profiles_file", "strict",
+             "flatten", "shadows")
 
 
 def settings_to_dict(s: Settings) -> dict:

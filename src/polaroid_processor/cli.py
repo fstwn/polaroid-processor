@@ -61,7 +61,7 @@ def _settings_from_args(a) -> Settings:
         margin_mm=a.margin_mm, derivatives=a.derivative, no_derivatives=a.no_derivatives,
         interpolation=a.interpolation, tiff_compression=a.tiff_compression, overlay=a.overlay,
         ppi=a.ppi, profile=a.profile, profiles=a.profiles, strict=a.strict, force=a.force,
-        redetect=a.redetect, dry_run=a.dry_run, workers=a.workers)
+        redetect=a.redetect, dry_run=a.dry_run, workers=a.workers, flatten=a.flatten, shadows=a.shadows)
 
 
 def cmd_process(a) -> int:
@@ -179,6 +179,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--force", action="store_true", help="re-export even if up to date")
     sp.add_argument("--redetect", action="store_true", help="re-run detection even if the scan is unchanged")
     sp.add_argument("--dry-run", action="store_true", help="detect and evaluate only; write nothing")
+    sp.add_argument("--flatten", choices=("auto", "off"), default="auto",
+                    help="auto: unwarp curled prints along their traced edges (default); off: straight sides")
+    sp.add_argument("--shadows", choices=("auto", "off"), default="auto",
+                    help="auto: remove edge shadows on plain frames (default); off: leave tones untouched")
     sp.add_argument("-j", "--workers", type=int, help="parallel workers (default: from free RAM and CPUs)")
     common(sp)
     sp.set_defaults(fn=cmd_process)

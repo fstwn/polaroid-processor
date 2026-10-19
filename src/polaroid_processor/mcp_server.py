@@ -65,6 +65,10 @@ TOOLS: List[Dict[str, Any]] = [
                 "force": {"type": "boolean", "default": False},
                 "redetect": {"type": "boolean", "default": False},
                 "dry_run": {"type": "boolean", "default": False, "description": "detect and evaluate only"},
+                "flatten": {"type": "string", "enum": ["auto", "off"], "default": "auto",
+                            "description": "unwarp curled prints along their traced edges"},
+                "shadows": {"type": "string", "enum": ["auto", "off"], "default": "auto",
+                            "description": "remove edge shadows on plain frames"},
                 "workers": {"type": "integer", "minimum": 1},
                 "details": {"type": "string", "enum": ["flagged", "all", "none"], "default": "flagged",
                             "description": "full records for flagged scans only (default), all scans, or none"},
@@ -152,7 +156,8 @@ TOOLS: List[Dict[str, Any]] = [
     },
 ]
 
-_BRIEF = ("file", "status", "warnings", "error", "quad", "quad_source", "size_px", "scale", "format", "outputs",
+_BRIEF = ("file", "status", "warnings", "error", "quad", "quad_source", "size_px", "scale", "format", "flatten",
+          "shadows", "outputs",
           "exported")
 
 
@@ -179,6 +184,7 @@ def tool_process(args: dict, progress: Callable[[int, int, str], None]) -> dict:
         no_derivatives=args.get("no_derivatives", False), overlay=args.get("overlay", False),
         ppi=args.get("ppi"), profile=args.get("profile"), strict=args.get("strict", False),
         force=args.get("force", False), redetect=args.get("redetect", False), dry_run=args.get("dry_run", False),
+        flatten=args.get("flatten", "auto"), shadows=args.get("shadows", "auto"),
         workers=args.get("workers"))
     recursive = args.get("recursive", False)
     total = len(collect_inputs(list(inputs), recursive))

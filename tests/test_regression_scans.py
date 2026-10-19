@@ -24,6 +24,16 @@ HOLDOUT = Path(__file__).parent / "data" / "labels_holdout.json"
 LIBRARY = Path(os.environ.get("POLAROID_LIBRARY", "D:/11_pictures/Pictures"))
 TOL_MM = 0.1
 HOLDOUT_TOL_MM = 0.2
+# input/ folders whose scans also live in the library with identical pixels (checked 2026-10-18)
+LIBRARY_COPIES = {"SICK_D3": "05_roller_roids/250729_SICKalps_L2_D3"}
+
+
+def _scan_path(rel: str) -> Path:
+    path = ROOT / "input" / rel
+    folder, _, name = rel.partition("/")
+    if not path.exists() and folder in LIBRARY_COPIES:
+        path = LIBRARY / LIBRARY_COPIES[folder] / name
+    return path
 
 
 def _labels(path: Path = LABELS):
@@ -43,7 +53,7 @@ def _corner_errors_mm(path: Path, label: dict) -> np.ndarray:
 @pytest.mark.scans
 @pytest.mark.parametrize("rel,label", _labels() or [pytest.param(None, None, marks=pytest.mark.skip("no labels"))])
 def test_corners_match_labels(rel, label, request):
-    path = ROOT / "input" / rel
+    path = _scan_path(rel)
     if not path.exists():
         pytest.skip(f"{rel} not present")
     if label.get("known_failure"):

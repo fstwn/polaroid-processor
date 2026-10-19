@@ -67,8 +67,11 @@ def raw_tile(rgb: np.ndarray, centre: Tuple[float, float], window: int,
 
 
 def _tile(rgb: np.ndarray, centre: Tuple[float, float], window: int, zoom: int, quad: np.ndarray,
-          title: str, grid: int, stretch: str = "auto") -> np.ndarray:
-    """Full-resolution crop around ``centre`` with a coordinate grid and the quad drawn."""
+          title: str, grid: int, stretch: str = "auto", outline: Optional[np.ndarray] = None) -> np.ndarray:
+    """Full-resolution crop around ``centre`` with a coordinate grid and the crop edge drawn.
+
+    The crop edge is ``outline`` (a curved, closed polyline) when given, else the quad; with an
+    outline the straight quad is drawn faintly for reference."""
     tile, x0, y0, stretched = raw_tile(rgb, centre, window, stretch)
     if stretched:
         title += " stretched"
@@ -83,7 +86,12 @@ def _tile(rgb: np.ndarray, centre: Tuple[float, float], window: int, zoom: int, 
         cv2.line(tile, (0, py), (tile.shape[1] - 1, py), (90, 90, 160), 1)
         cv2.putText(tile, str(gy), (2, py - 2), cv2.FONT_HERSHEY_PLAIN, 0.8, (160, 160, 255), 1, cv2.LINE_AA)
     q = np.round((quad - [x0, y0]) * zoom).astype(np.int32).reshape(-1, 1, 2)
-    cv2.polylines(tile, [q], True, GREEN, 1, cv2.LINE_AA)
+    if outline is not None:
+        cv2.polylines(tile, [q], True, (110, 110, 110), 1, cv2.LINE_AA)
+        o = np.round((outline - [x0, y0]) * zoom).astype(np.int32).reshape(-1, 1, 2)
+        cv2.polylines(tile, [o], True, GREEN, 1, cv2.LINE_AA)
+    else:
+        cv2.polylines(tile, [q], True, GREEN, 1, cv2.LINE_AA)
     for (x, y) in quad:
         px, py = int(round((x - x0) * zoom)), int(round((y - y0) * zoom))
         cv2.drawMarker(tile, (px, py), MAGENTA, cv2.MARKER_CROSS, 14, 1)
@@ -102,16 +110,18 @@ def inspect_points(quad: np.ndarray) -> List[Tuple[str, Tuple[float, float]]]:
 
 
 def inspect_sheet(rgb: np.ndarray, quad: np.ndarray, window: int = 360, zoom: int = 1, grid: int = 50,
-                  header: str = "", stretch: str = "auto") -> np.ndarray:
-    """Overview plus 8 full-resolution tiles (corners and edge midpoints), 4 per row."""
+                  header: str = "", stretch: str = "auto", outline: Optional[np.ndarray] = None) -> np.ndarray:
+    """Overview plus 8 full-resolution tiles (corners and edge midpoints), 4 per row.
+
+    ``outline``: the curved crop edge of a flattened print (drawn instead of the quad)."""
     tiles = []
     for name, p in inspect_points(quad):
         title = f"{name} ({p[0]:.0f}, {p[1]:.0f})"
-        tiles.append(_tile(rgb, p, window, zoom, quad, title, grid, stretch))
+        tiles.append(_tile(rgb, p, window, zoom, quad, title, grid, stretch, outline))
     ts = window * zoom
     rows = [np.concatenate(tiles[:4], axis=1), np.concatenate(tiles[4:], axis=1)]
     grid_img = np.concatenate([rows[0], np.full((4, ts * 4, 3), 40, np.uint8), rows[1]], axis=0)
-    ov = overlay(rgb, quad, long_edge=grid_img.shape[0])
+    ov = overlay(rgb, quad, long_edge=grid_img.shape[0], points={"outline": outline} if outline is not None else None)
     sheet_h = grid_img.shape[0]
     pad = np.full((sheet_h, ov.shape[1] + 8, 3), 40, np.uint8)
     pad[: ov.shape[0], 8:] = ov

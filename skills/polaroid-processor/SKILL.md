@@ -33,7 +33,7 @@ If `polaroid` is not found, it is installed in a Python environment that is not 
    - `hint:fix --shift <side>=-<px> ...`: the review rules found the likely fix. Apply it, then verify with inspect.
    - `size_outlier`, `not_parallel`, `edge_uncertain`, `edge_noisy`, `edge_curved`, `size_mismatch`: inspect first.
    - `edge_inside:<side>:<mm>`: part of that side's print edge lies inside the crop line, so holder would show. Shift the side inward by the reported amount minus the 0.2 mm margin (`shift` negative, in px; about 128 px per mm) if the rest of the side allows it; if the edge is visibly curved, escalate.
-   - `scale_inferred`, `size_unverified`, `edge_repaired`: informational, no action.
+   - `scale_inferred`, `size_unverified`, `edge_repaired`, `flattened`, `flatten_straight`: informational, no action. `flattened` means the export unwarps the curled print along its traced edges; in inspect the green crop line is then curved and the grey line is the straight outline.
 3. Inspect: `polaroid_inspect` with `scan` and `output`. The image has eight full-resolution tiles (corners `tl tr br bl`, edge midpoints `top right bottom left`) and an overview.
    - Grid labels are absolute scan pixel coordinates; the green line is the crop edge; magenta crosses are corners.
    - The print edge is where the print (white, gold, coloured or glittery area) meets the black holder. The grey fibrous band around the print is the holder rim, not the print.
@@ -50,5 +50,5 @@ If `polaroid` is not found, it is installed in a Python environment that is not 
 ## Notes
 
 - Scale: about 128 px/mm on the usual scanner setting, so 0.2 mm is about 25 px.
-- Many prints have slightly concave sides: corners may sit 20-60 px outside the line while the middle is on it. That is normal; do not chase it with corner nudges unless holder becomes visible inside the crop.
+- Curled prints have bowed sides. With `flatten` on (the default) the export follows the traced edges, so the corners are not trimmed. A manual fix (`set`, `nudge`, `shift`) turns flattening off for that scan, because the corrected outline has straight sides; `accept` on an automatic outline keeps it.
 - `fix` with export re-exports only that scan; `process` again re-exports anything whose outline or settings changed.

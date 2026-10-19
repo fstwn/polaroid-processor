@@ -10,15 +10,19 @@ from typing import Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
-from .detection import DetectionError, detect
+from . import flatten as flat
+from .detection import DetectionError, detect, quad_size
 from .imageio import load_rgb, write_derivative
 from .manifest import Manifest
-from .pipeline import Derivative, Settings, collect_inputs, result_record, run_batch, settings_from_dict
+from .pipeline import (Derivative, Settings, collect_inputs, flatten_plan, manual_outline, result_record,
+                       run_batch, settings_from_dict)
+from .scale import scale_from_size
 from .render import CORNERS, inspect_sheet, quad_summary
 
 SIDES = ("top", "right", "bottom", "left")
 INSPECT_HINT = ("Tiles show full-resolution pixels; grid labels are absolute scan coordinates. "
-                "The green line is the current crop edge; magenta crosses are corners. "
+                "The green line is the current crop edge (curved when the print is flattened; the grey "
+                "line is then the straight outline); magenta crosses are corners. "
                 "Tiles marked 'stretched' are contrast-enhanced.")
 
 
@@ -38,7 +42,8 @@ def make_settings(*, margin_mm: float = 0.2, derivatives: Optional[Sequence[str]
                   no_derivatives: bool = False, interpolation: str = "cubic", tiff_compression: str = "zlib",
                   overlay: bool = False, ppi: Optional[float] = None, profile: Optional[str] = None,
                   profiles: Optional[str] = None, strict: bool = False, force: bool = False,
-                  redetect: bool = False, dry_run: bool = False, workers: Optional[int] = None) -> Settings:
+                  redetect: bool = False, dry_run: bool = False, workers: Optional[int] = None,
+                  flatten: str = "auto", shadows: str = "auto") -> Settings:
     s = Settings()
     s.margin_mm = float(margin_mm)
     if derivatives is not None:
@@ -52,6 +57,10 @@ def make_settings(*, margin_mm: float = 0.2, derivatives: Optional[Sequence[str]
     s.interpolation, s.tiff_compression, s.overlay = interpolation, tiff_compression, overlay
     s.ppi, s.profile, s.profiles_file = ppi, profile, profiles
     s.strict, s.force, s.redetect, s.dry_run = strict, force, redetect, dry_run
+    for name, value in (("flatten", flatten), ("shadows", shadows)):
+        if value not in ("auto", "off"):
+            raise UsageError(f"{name} must be auto or off, not {value!r}")
+    s.flatten, s.shadows = flatten, shadows
     s.workers = workers
     return s
 
@@ -95,6 +104,10 @@ def resolve_scan(output: Optional[str], scan: str) -> Tuple[Optional[Manifest], 
     return None, None, scan
 
 
+def flatten_manual(entry: dict) -> bool:
+    return manual_outline((entry.get("override") or {}).get("quad"), entry.get("detection"))
+
+
 def inspect_scan(scan: str, output: Optional[str] = None, *, image: Optional[str] = None, write: bool = True,
                  window: int = 360, zoom: int = 1, grid: int = 50, stretch: str = "auto") -> Tuple[dict, np.ndarray]:
     """Render the review sheet of one scan. Returns (record, sheet RGB).
@@ -121,8 +134,16 @@ def inspect_scan(scan: str, output: Optional[str] = None, *, image: Optional[str
         img_path = Path.cwd() / f"{stem}.inspect.png"
     if img_path is not None and Path(path).resolve().parent == img_path.resolve().parent:
         raise UsageError("refusing to write the inspect image into the input folder; give another image path")
-    header = f"{stem}  quad={source}  grid={grid}px  window={window}px"
-    sheet = inspect_sheet(rgb, quad, window, zoom, grid, header, stretch)
+    outline = None
+    e = m.get(key) if m else None
+    if e and not flatten_manual(e):
+        px = (e.get("scale") or {}).get("px_per_mm") or scale_from_size(quad_size(quad)).px_per_mm
+        mode = (m.data.get("settings") or {}).get("flatten", "auto")
+        fplan = flatten_plan((e.get("detection") or {}).get("curves"), px, mode, False)
+        if fplan.apply:
+            outline = flat.outline_points(flat.curves_from_dict(e["detection"]["curves"]), quad)
+    header = f"{stem}  quad={source}{'  curved edges' if outline is not None else ''}  grid={grid}px  window={window}px"
+    sheet = inspect_sheet(rgb, quad, window, zoom, grid, header, stretch, outline)
     if img_path is not None:
         write_derivative(str(img_path), sheet, "png", 0, None)
     rec = {"type": "inspect", "file": Path(path).name, "image": str(img_path.resolve()) if img_path else None,

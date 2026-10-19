@@ -188,3 +188,13 @@ The user offered five more folders from the scan library (`D:/11_pictures/Pictur
 - 16 of the `ok` scans (olive, yellow, printed, gold, round window, white) were labelled by the user in a second review round and stored in `tests/data/labels_holdout.json`. They are used to measure, never to tune.
 - Detected minus label, outward positive: median 0.000 mm on every side, worst corner 0.12 mm (top edge of a printed frame, which sits 0.03-0.12 mm outside the print). 7 of 16 outlines were confirmed unchanged; 13 of 16 are within 0.1 mm, all within the 0.2 mm target. `test_corners_match_holdout_labels` checks them against 0.2 mm.
 - So the edge bias fix carries over to unseen prints. The remaining failure modes are the holder rim at the bottom edge and curled prints (M3 edge flattening).
+
+## M3 part 1: curled prints and edge shadows (2026-10-19)
+
+Both run by default in `process` (`--flatten off`, `--shadows off` to disable).
+
+- **Flattening** (`flatten.py`): each side is traced every 0.5 mm at full resolution (50 % crossing between holder and print, plateau check against the holder rim), fitted with a robust 4th-degree polynomial, and checked per side: at least 80 % of samples agree, no gap over 12 % of the side, scatter below 0.05 mm, bend below 1.6 mm. Reliable sides that bend 0.1 mm or more trigger a Coons-patch unwarp (coarse map every 16 px, 0.002 px error). Unreliable sides stay straight.
+- Measured on curled prints (95th-percentile deviation of an edge from straight, export extended 1.5 mm): D2_29 left 0.73 -> 0.04 mm, D2_28 right 0.47 -> 0.03 mm, D3_17 (gold) left 0.37 -> 0.04 mm, Scan_04 right 0.19 -> 0.02 mm. All sides within 0.042 mm after unwarping. Printed and black-glitter frames: most sides are not reliable and stay straight; tttacho_13-2 and Samsoe_04 are not flattened.
+- **Edge shadows** (`shading.py`): on white frames the border darkens 3-18 % at 0.25 mm from the edge (bottom strongest) and the effect reaches about 1.5 mm in. Measured per 1 mm window from the border, corrected only where the frame is plain, has no steep drop (graphic edge) and is flat from 1.5 mm inward, and only on sides measurable over at least half their length. White frames come out even (1.00 relative to 3 mm in, every side); gold, olive, printed and black frames are currently left untouched (their own gradients do not look like a shadow).
+- Cost: tracing about 1-2.5 s, unwarping about 3.6 s instead of about 1 s for the homography, shading about 1 s per scan.
+- Not done: shadow correction for gold and coloured frames; the slight darkening across a whole lifted area (about 3 %); flattening for manually fixed outlines (they stay straight).
