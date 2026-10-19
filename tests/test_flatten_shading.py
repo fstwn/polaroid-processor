@@ -6,9 +6,9 @@ import cv2
 from polaroid_processor import detect
 from polaroid_processor import flatten as flat
 from polaroid_processor import shading
-from polaroid_processor.geometry import rectify
+from polaroid_processor.geometry import homography, rectify
 
-from synth import PRINT_MM, PX_PER_MM, make_scan
+from synth import PX_PER_MM, make_scan
 
 BOW_MM = 0.9
 
@@ -73,21 +73,24 @@ def test_fade_straightens_the_side_and_leaves_the_inside_plain(bowed):
     ext, fade = 1.5 * PX_PER_MM, 5.0 * PX_PER_MM
     flattened = side_spread_mm(flat.unwarp(rgb, curves, det.quad, -ext, fade_px=fade), ext, det.speck_threshold)
     assert max(flattened.values()) < 0.1, flattened
-    # beyond the fade the map is the bilinear map between the corners: no curvature along rows
-    # or columns (Coons would carry the bow of the left side across the print)
+    # beyond the fade the map is the straight export's homography; a fade across the whole
+    # print (None) carries the bow of the left side inside
+    H, (w, h) = homography(det.quad)
+    k = int(fade) + 20
+    ys, xs = np.mgrid[k:h - k:50, k:w - k:50].astype(np.float64)
+    expected = cv2.perspectiveTransform(np.stack([xs, ys], -1).reshape(-1, 1, 2), np.linalg.inv(H)).reshape(xs.shape + (2,))
     for f, plain in ((fade, True), (None, False)):
-        mapx, mapy, _ = flat.coons_map(curves, det.quad, fade_px=f)
-        k = int(fade) + 20
-        inner_x, inner_y = mapx[k:-k:50, k:-k:50], mapy[k:-k:50, k:-k:50]
-        curv = max(np.abs(np.diff(inner_x, 2, axis=0)).max(), np.abs(np.diff(inner_y, 2, axis=1)).max())
-        assert (curv < 0.01) == plain, (f, curv)
+        mapx, mapy = flat.warp_map(curves, det.quad, fade_px=f)
+        got = np.stack([mapx[k:h - k:50, k:w - k:50], mapy[k:h - k:50, k:w - k:50]], -1)
+        err = np.abs(got - expected).max()
+        assert (err < 0.01) == plain, (f, err)
 
 
-def test_unwarp_keeps_the_print_size(bowed):
-    _, _, det, curves = bowed
-    W, H = flat.output_size(curves, det.quad)
-    assert W / PX_PER_MM == pytest.approx(PRINT_MM[0], abs=0.15)
-    assert H / PX_PER_MM == pytest.approx(PRINT_MM[1], abs=0.15)
+def test_unwarp_keeps_the_straight_export_size(bowed):
+    rgb, _, det, curves = bowed
+    m = 0.2 * PX_PER_MM
+    out = flat.unwarp(rgb, curves, det.quad, m, **flat.FlattenParams().warp_px(PX_PER_MM))
+    assert out.shape == rectify(rgb, det.quad, m).shape
 
 
 def test_straight_print_is_not_flattened():
@@ -152,6 +155,7 @@ def test_process_flattens_by_default_and_can_be_switched_off(tmp_path, capsys):
     rgb, _ = bowed_scan()
     tifffile.imwrite(str(src / "bowed.tif"), rgb, photometric="rgb")
     ppi = str(PX_PER_MM * 25.4)
+    shapes = {}
     for mode, expect in (("auto", True), ("off", False)):
         out = tmp_path / f"out_{mode}"
         rc = main(["process", str(src), "-o", str(out), "--ppi", ppi, "--no-derivatives", "-j", "1",
@@ -161,10 +165,8 @@ def test_process_flattens_by_default_and_can_be_switched_off(tmp_path, capsys):
         assert rc == 0
         assert any(w.startswith("flattened:") for w in r["warnings"]) is expect, r["warnings"]
         assert r["flatten"]["apply"] is expect
-        # a flattened export is the print's arc-length size, minus the margin on each side
-        if expect:
-            w_px = tifffile.TiffFile(r["outputs"]["tiff"]).pages[0].shape[1]
-            assert w_px / PX_PER_MM == pytest.approx(PRINT_MM[0] - 0.4, abs=0.2)
+        shapes[mode] = tifffile.TiffFile(r["outputs"]["tiff"]).pages[0].shape
+    assert shapes["auto"] == shapes["off"]  # flattening keeps the straight export's size
 
 
 def test_accept_keeps_flattening_and_a_manual_fix_turns_it_off(tmp_path, capsys):

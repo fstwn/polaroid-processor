@@ -141,7 +141,8 @@ def inspect_scan(scan: str, output: Optional[str] = None, *, image: Optional[str
         mode = (m.data.get("settings") or {}).get("flatten", "auto")
         fplan = flatten_plan((e.get("detection") or {}).get("curves"), px, mode, False)
         if fplan.apply:
-            outline = flat.outline_points(flat.curves_from_dict(e["detection"]["curves"]), quad)
+            outline = flat.outline_points(flat.curves_from_dict(e["detection"]["curves"]), quad,
+                                          **flat.FlattenParams().warp_px(px))
     header = f"{stem}  quad={source}{'  curved edges' if outline is not None else ''}  grid={grid}px  window={window}px"
     sheet = inspect_sheet(rgb, quad, window, zoom, grid, header, stretch, outline)
     if img_path is not None:

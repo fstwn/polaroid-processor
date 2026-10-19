@@ -113,7 +113,7 @@ class Settings:
         }
         if self.flatten != "off" and curves and not override:
             payload["curves"] = {s: [round(v, 3) for v in c["coef"]] for s, c in sorted(curves.items())}
-            payload["fade_mm"] = self.flatten_params.fade_mm
+            payload["warp"] = [self.flatten_params.fade_mm, self.flatten_params.end_skip_mm, "quad-base"]
         return hashlib.sha1(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
 
 
@@ -204,8 +204,7 @@ def _export(rgb: np.ndarray, quad: np.ndarray, px_per_mm: float, icc: Optional[b
     fplan = flatten_plan(curves, px_per_mm, ex["flatten"], override, ex["flatten_params"])
     sides = flat.curves_from_dict(curves) if fplan.apply else None
     if sides:
-        img = flat.unwarp(rgb, sides, quad, margin, ex["interpolation"],
-                          fade_px=ex["flatten_params"].fade_mm * px_per_mm)
+        img = flat.unwarp(rgb, sides, quad, margin, ex["interpolation"], **ex["flatten_params"].warp_px(px_per_mm))
     else:
         img = rectify(rgb, quad, margin, ex["interpolation"])
     shade = {"sides": []}
@@ -225,7 +224,7 @@ def _export(rgb: np.ndarray, quad: np.ndarray, px_per_mm: float, icc: Optional[b
         outputs[d["name"]], ppm[d["name"]] = str(p), px_per_mm * f
     if ex["overlay"]:
         p = out_dir / "_overlays" / f"{stem}.jpg"
-        pts = {"curves": flat.outline_points(sides, quad)} if sides else None
+        pts = {"curves": flat.outline_points(sides, quad, **ex["flatten_params"].warp_px(px_per_mm))} if sides else None
         write_derivative(str(p), overlay(rgb, quad, points=pts), "jpg", 85, None)
         outputs["overlay"] = str(p)
     return {"outputs": outputs, "output_ppm": ppm, "output_size_px": [int(img.shape[1]), int(img.shape[0])],

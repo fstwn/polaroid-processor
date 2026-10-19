@@ -6,10 +6,11 @@ module traces each side densely at full resolution, fits a smooth curve, and map
 curved outline onto a rectangle: the four sides become straight.
 
 Only the border is distorted. The photo window of a curled print stays straight (square
-windows) and round (round windows) in a plain rectification, so the correction of each side
-fades out within ``fade_mm`` of the edge; further in, the map is the bilinear map between
-the corners. With an unlimited fade this is transfinite (Coons) interpolation, which bends
-the photo window.
+windows) and round (round windows) in a plain rectification, so the inside maps exactly as
+in the straight export (the homography from the fitted lines), and each side's traced offset
+is added only near that side, fading out within ``fade_mm``. Near the corners, where the
+trace has no samples, the offset is held rather than extrapolated: corners extrapolated from
+the curves land up to 0.85 mm off and would skew the photo window.
 
 Each side is checked on its own; a side whose trace is not trustworthy (printed graphics or
 black glitter at the edge) stays straight. Coordinates are continuous scan pixels: pixel
@@ -22,6 +23,9 @@ from typing import Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
+
+from .detection import quad_size
+from .geometry import output_size
 
 SIDES = ("top", "right", "bottom", "left")
 # side -> (start corner, end corner) as indices into the quad (tl, tr, br, bl)
@@ -44,6 +48,10 @@ class FlattenParams:
     max_dev_mm: float = 1.6  # a curve that bends further than this is not trusted
     min_bend_mm: float = 0.1  # flatten only when a reliable side bends at least this much
     fade_mm: float = 5.0  # a side's correction fades to zero this far inward (photo window untouched)
+
+    def warp_px(self, px_per_mm: float) -> dict:
+        """``fade_px`` and ``hold_px`` for :func:`unwarp` and :func:`outline_points`."""
+        return {"fade_px": self.fade_mm * px_per_mm, "hold_px": self.end_skip_mm * px_per_mm}
 
 
 @dataclass
@@ -265,78 +273,71 @@ def corners(curves: Dict[str, SideCurve], quad: np.ndarray) -> np.ndarray:
     ])
 
 
-def _boundary(c: SideCurve, a: np.ndarray, b: np.ndarray, u: np.ndarray) -> np.ndarray:
-    """Points on curve ``c`` from corner a (u = 0) to corner b (u = 1), uniform along the side."""
-    sa, sb = float(np.dot(a - c.p0, c.t)), float(np.dot(b - c.p0, c.t))
-    return c.point(sa + np.asarray(u, float) * (sb - sa))
-
-
-def _arclen(c: SideCurve, a, b, n: int = 400) -> float:
-    pts = _boundary(c, a, b, np.linspace(0, 1, n))
-    return float(np.linalg.norm(np.diff(pts, axis=0), axis=1).sum())
-
-
-def output_size(curves: Dict[str, SideCurve], quad: np.ndarray) -> Tuple[float, float]:
-    """Print size (W, H) in px: mean arc length of opposite sides."""
-    tl, tr, br, bl = corners(curves, quad)
-    W = (_arclen(curves["top"], tl, tr) + _arclen(curves["bottom"], bl, br)) / 2
-    H = (_arclen(curves["left"], tl, bl) + _arclen(curves["right"], tr, br)) / 2
-    return W, H
-
-
 def _fade(d: np.ndarray, fade_px: Optional[float], extent: float) -> np.ndarray:
     """Weight of a side's correction at distance ``d`` (px) from it: 1 at the edge, 0 from
-    ``fade_px`` inward (raised cosine). None: linear across the print (Coons)."""
+    ``fade_px`` inward (raised cosine). None: linear across the print."""
     if fade_px is None:
-        return 1.0 - d / extent
+        return np.clip(1.0 - d / extent, 0.0, 1.0)
     x = np.clip(d / fade_px, 0.0, 1.0)
     return 0.5 * (1.0 + np.cos(np.pi * x))
 
 
-def coons_map(curves: Dict[str, SideCurve], quad: np.ndarray, margin_px: float = 0.0, grid: int = 16,
-              fade_px: Optional[float] = None):
-    """Source coordinates for every output pixel (float32 maps for cv2.remap) and the size (W, H).
+def to_source(curves: Dict[str, SideCurve], quad: np.ndarray, X: np.ndarray, Y: np.ndarray,
+              fade_px: Optional[float] = None, hold_px: float = 0.0) -> np.ndarray:
+    """Scan coordinates (continuous) of print coordinates (X, Y): (0, 0) is the top-left
+    corner of the straight outline, (w, h) its bottom-right, w and h its size.
 
-    Source point = bilinear map of the four corners + each side's deviation from its chord,
-    weighted by :func:`_fade` of the distance to that side. The deviation is zero at the
-    corners, so the sides map exactly onto the curves for any fade.
+    Base: the straight export's homography from the quad, so the inside of the print maps
+    exactly as without flattening. Each side then adds its traced offset along its outward
+    normal, weighted by :func:`_fade` of the distance to that side. Within ``hold_px`` of a
+    corner, where the trace has no samples, the offset is held instead of extrapolated.
+    """
+    w, h = quad_size(quad)
+    rect = np.array([[0, 0], [w, 0], [w, h], [0, h]], np.float32)
+    Hm = cv2.getPerspectiveTransform(rect, np.asarray(quad, np.float32))
+    X, Y = np.asarray(X, np.float64), np.asarray(Y, np.float64)
+    pts = np.stack([X, Y], axis=-1).reshape(-1, 1, 2)
+    P = cv2.perspectiveTransform(pts, Hm).reshape(X.shape + (2,))
+    along = {"top": (X / w, Y, h), "bottom": (X / w, h - Y, h), "left": (Y / h, X, w), "right": (Y / h, w - X, w)}
+    for side, (frac, d, extent) in along.items():
+        c = curves[side]
+        if not np.any(c.coef):
+            continue
+        s = np.clip(frac * c.length, hold_px, c.length - hold_px)
+        P += (_fade(d, fade_px, extent) * c.offset(s))[..., None] * c.n
+    return P
+
+
+def warp_map(curves: Dict[str, SideCurve], quad: np.ndarray, margin_px: float = 0.0, grid: int = 16,
+             fade_px: Optional[float] = None, hold_px: float = 0.0):
+    """Source coordinates for every output pixel (float32 maps for cv2.remap); the output has
+    the straight export's size (:func:`geometry.output_size`).
 
     The map is smooth, so it is evaluated on a coarse grid and resized; the error is about
     0.002 px. Coarse node k sits at output pixel ``k * grid + (grid - 1) / 2`` (k = -1 .. K),
     which is where cv2.resize by ``grid`` places it; the extra outer nodes keep the border
     interpolated rather than clamped.
     """
-    tl, tr, br, bl = corners(curves, quad)
-    W = (_arclen(curves["top"], tl, tr) + _arclen(curves["bottom"], bl, br)) / 2
-    H = (_arclen(curves["left"], tl, bl) + _arclen(curves["right"], tr, br)) / 2
     m = margin_px
-    ow, oh = max(1, int(round(W - 2 * m))), max(1, int(round(H - 2 * m)))
+    ow, oh = output_size(quad, m)
     kx, ky = np.arange(-1, ow // grid + 2), np.arange(-1, oh // grid + 2)
-    u = (kx * grid + (grid - 1) / 2 + 0.5 + m) / W
-    v = (ky * grid + (grid - 1) / 2 + 0.5 + m) / H
-    T, B = _boundary(curves["top"], tl, tr, u), _boundary(curves["bottom"], bl, br, u)
-    L, R = _boundary(curves["left"], tl, bl, v), _boundary(curves["right"], tr, br, v)
-    uu, vv = u[:, None], v[:, None]
-    dT, dB = T - ((1 - uu) * tl + uu * tr), B - ((1 - uu) * bl + uu * br)  # deviation from the chord
-    dL, dR = L - ((1 - vv) * tl + vv * bl), R - ((1 - vv) * tr + vv * br)
-    U, V = u[None, :, None], v[:, None, None]
-    P = ((1 - U) * (1 - V) * tl + U * (1 - V) * tr + (1 - U) * V * bl + U * V * br
-         + _fade(V * H, fade_px, H) * dT[None] + _fade((1 - V) * H, fade_px, H) * dB[None]
-         + _fade(U * W, fade_px, W) * dL[:, None] + _fade((1 - U) * W, fade_px, W) * dR[:, None])
+    X, Y = np.meshgrid(kx * grid + (grid - 1) / 2 + 0.5 + m, ky * grid + (grid - 1) / 2 + 0.5 + m)
+    P = to_source(curves, quad, X, Y, fade_px, hold_px) - 0.5
     size = (len(kx) * grid, len(ky) * grid)
-    mapx = cv2.resize((P[..., 0] - 0.5).astype(np.float32), size, interpolation=cv2.INTER_LINEAR)
-    mapy = cv2.resize((P[..., 1] - 0.5).astype(np.float32), size, interpolation=cv2.INTER_LINEAR)
-    return mapx[grid: grid + oh, grid: grid + ow], mapy[grid: grid + oh, grid: grid + ow], (W, H)
+    mapx = cv2.resize(P[..., 0].astype(np.float32), size, interpolation=cv2.INTER_LINEAR)
+    mapy = cv2.resize(P[..., 1].astype(np.float32), size, interpolation=cv2.INTER_LINEAR)
+    return mapx[grid: grid + oh, grid: grid + ow], mapy[grid: grid + oh, grid: grid + ow]
 
 
 INTERPOLATION = {"linear": cv2.INTER_LINEAR, "cubic": cv2.INTER_CUBIC, "lanczos": cv2.INTER_LANCZOS4}
 
 
 def unwarp(rgb: np.ndarray, curves: Dict[str, SideCurve], quad: np.ndarray, margin_px: float = 0.0,
-           interpolation: str = "cubic", strip_rows: int = 1024, fade_px: Optional[float] = None) -> np.ndarray:
-    """Map the curved outline onto a rectangle, cropped ``margin_px`` inside the edge; the side
-    corrections fade out within ``fade_px`` (None: Coons, linear across the print)."""
-    mapx, mapy, _ = coons_map(curves, quad, margin_px, fade_px=fade_px)
+           interpolation: str = "cubic", strip_rows: int = 1024, fade_px: Optional[float] = None,
+           hold_px: float = 0.0) -> np.ndarray:
+    """Map the curved outline onto the straight export's rectangle, cropped ``margin_px``
+    inside the edge (see :func:`to_source`)."""
+    mapx, mapy = warp_map(curves, quad, margin_px, fade_px=fade_px, hold_px=hold_px)
     out = np.empty(mapx.shape + rgb.shape[2:], rgb.dtype)
     for r0 in range(0, mapx.shape[0], strip_rows):
         sl = slice(r0, r0 + strip_rows)
@@ -345,13 +346,11 @@ def unwarp(rgb: np.ndarray, curves: Dict[str, SideCurve], quad: np.ndarray, marg
     return out
 
 
-def outline_points(curves: Dict[str, SideCurve], quad: np.ndarray, n: int = 200) -> np.ndarray:
-    """Closed outline (tl -> tr -> br -> bl) along the curves, for drawing."""
-    tl, tr, br, bl = corners(curves, quad)
+def outline_points(curves: Dict[str, SideCurve], quad: np.ndarray, n: int = 200, fade_px: Optional[float] = None,
+                   hold_px: float = 0.0) -> np.ndarray:
+    """Closed outline (tl -> tr -> br -> bl) of the flattened crop in scan coordinates, for drawing."""
+    w, h = quad_size(quad)
     u = np.linspace(0, 1, n)
-    return np.concatenate([
-        _boundary(curves["top"], tl, tr, u),
-        _boundary(curves["right"], tr, br, u),
-        _boundary(curves["bottom"], bl, br, u)[::-1],
-        _boundary(curves["left"], tl, bl, u)[::-1],
-    ])
+    X = np.concatenate([u * w, np.full(n, w), (1 - u) * w, np.zeros(n)])
+    Y = np.concatenate([np.zeros(n), u * h, np.full(n, h), (1 - u) * h])
+    return to_source(curves, quad, X, Y, fade_px, hold_px)
