@@ -170,7 +170,7 @@ Warnings that set `needs_review`:
 | `edge_uncertain:<side>:<inliers>/<points>` | Less than 60 % of the edge points agree on one line |
 | `edge_inside:<side>:<mm>` | A stretch of the print edge lies further inside the outline than the crop margin, so holder would show in the export there (curved or concave edge) |
 
-Informational: `scale_inferred:<source>`, `size_unverified` (single scan, no scale reference), `edge_repaired:<side>` (the holder rim touched that side; the side was refit on the print edge behind it), `flattened:<sides>:<mm>` (the export follows these sides' curves; largest bend), `flatten_straight:<side>` (in a flattened print, this side's trace was not reliable and stays straight).
+Informational: `scale_inferred:<source>`, `size_unverified` (single scan, no scale reference), `edge_repaired:<side>` (the holder rim touched that side; the side was refit on the print edge behind it), `flattened:<sides>:<mm>` (the export follows these sides' curves; largest bend), `flatten_straight:<side>` (in a flattened print, this side's trace was not reliable and stays straight), `rim_refit:<side>:<mm>` (the outline sat on the holder rim along that side; the batch showed the print oversized by exactly the distance to the print edge behind the rim, so the side was moved there; the original outline stays in the manifest as `quad_detected`).
 
 For sides that follow a curve, the straight-line checks `not_parallel`, `edge_inside` and `edge_curved` do not apply. Each result also carries `flatten` (applied, sides, bend per side) and `shadows` (corrected sides, strongest darkening, share of each side that could be measured).
 

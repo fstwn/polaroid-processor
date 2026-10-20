@@ -91,3 +91,21 @@ def test_corners_match_sample_labels(rel, label, request):
         request.applymarker(pytest.mark.xfail(reason=f"known detector failure: {label['known_failure']}"))
     err_mm = _corner_errors_mm(path, label)
     assert err_mm.max() <= label["tol_mm"], f"{rel}: corner errors (mm) {np.round(err_mm, 3).tolist()}"
+
+
+@pytest.mark.scans
+def test_rim_refit_in_a_batch_matches_the_label():
+    """D3_29 (2): the holder rim runs parallel to the bottom edge, so detection alone is 0.5 mm
+    too tall (known_failure above); in a batch the size proves it and the side is moved."""
+    from polaroid_processor.api import make_settings, process
+    folder = LIBRARY / LIBRARY_COPIES["SICK_D3"]
+    name = "250928_SICKalps_L2_D3_29 (2).tif"
+    if not (folder / name).exists():
+        pytest.skip("SICK_D3 library folder not present")
+    label = dict(_labels())["SICK_D3/" + name]
+    records = []
+    process([str(folder)], None, make_settings(dry_run=True), emit=records.append)
+    rec = [r for r in records if r.get("type") == "result" and r["file"] == name][0]
+    assert rec["status"] == "ok" and any(w.startswith("rim_refit:bottom") for w in rec["warnings"]), rec["warnings"]
+    err = np.linalg.norm(np.array(rec["quad"]) - np.array(label["quad"]), axis=1) / rec["scale"]["px_per_mm"]
+    assert err.max() <= TOL_MM, err

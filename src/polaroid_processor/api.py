@@ -12,6 +12,7 @@ import numpy as np
 
 from . import flatten as flat
 from .detection import DetectionError, detect, quad_size
+from .geometry import shift_side
 from .imageio import load_rgb, write_derivative
 from .manifest import Manifest
 from .pipeline import (Derivative, Settings, collect_inputs, flatten_plan, manual_outline, result_record,
@@ -166,16 +167,8 @@ def apply_fix(quad: np.ndarray, sets: Optional[Mapping[str, Sequence[float]]] = 
         q[idx[n]] = (x, y)
     for n, (dx, dy) in (nudges or {}).items():
         q[idx[n]] += (dx, dy)
-    side_corners = {"top": ("tl", "tr"), "right": ("tr", "br"), "bottom": ("br", "bl"), "left": ("bl", "tl")}
-    centre = q.mean(axis=0)
     for side, (d,) in (shifts or {}).items():
-        a, b = (idx[c] for c in side_corners[side])
-        t = q[b] - q[a]
-        n = np.array([-t[1], t[0]]) / np.linalg.norm(t)
-        if np.dot((q[a] + q[b]) / 2 - centre, n) < 0:
-            n = -n
-        q[a] += d * n
-        q[b] += d * n
+        q = shift_side(q, side, d)
     return q
 
 

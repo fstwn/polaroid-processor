@@ -17,6 +17,7 @@ import numpy as np
 
 from . import __version__
 from . import flatten as flat
+from . import refit
 from . import shading
 from .detection import DetectionError, DetectParams, detect, quad_size
 from .formats import classify, match_format
@@ -74,6 +75,7 @@ class ReviewRules:
     size_tolerance: float = 0.015  # against the nominal print format
     parallel_deg: float = 0.3  # opposite sides of the outline
     size_outlier_mm: float = 0.35  # against the median print of the same scan size (>= 5 scans)
+    rim_refit_mm: float = 0.15  # an inner line must explain an oversize this closely to be applied
 
 
 @dataclass
@@ -355,15 +357,58 @@ def _side_angle_deg(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.degrees(np.arctan2(v[1], v[0])))
 
 
-def _inner_hints(entry: dict, sides: Tuple[str, str], excess_px: float, tol_px: float) -> List[str]:
-    """Suggest moving a side onto its inner line when that explains an oversized print."""
+def _inner_candidates(entry: dict, sides: Tuple[str, str], excess_px: float, tol_px: float) -> List[Tuple[str, float]]:
+    """Sides whose inner line (a second line behind the edge) explains an oversized print."""
     edges = (entry.get("detection") or {}).get("edges", {})
-    hints = []
+    out = []
     for side in sides:
         depth = (edges.get(side) or {}).get("inner_px")
         if depth and abs(depth - excess_px) <= tol_px:
-            hints.append(f"hint:fix --shift {side}=-{depth:.0f} (holder rim parallel to the print)")
-    return hints
+            out.append((side, float(depth)))
+    return out
+
+
+def _inner_hints(entry: dict, sides: Tuple[str, str], excess_px: float, tol_px: float) -> List[str]:
+    """Suggest moving a side onto its inner line when that explains an oversized print."""
+    return [f"hint:fix --shift {side}=-{depth:.0f} (holder rim parallel to the print)"
+            for side, depth in _inner_candidates(entry, sides, excess_px, tol_px)]
+
+
+def size_refit(entry: dict, scale: Scale, ref_size: Optional[Tuple[float, float]], rules: "ReviewRules",
+               load_rgb_fn: Callable[[], np.ndarray]) -> Optional[Tuple[np.ndarray, dict]]:
+    """New quad and refit info when the outline sits on a holder rim along one side (see refit.py).
+
+    Only for automatic dark-background detections that are oversized along one axis against
+    the batch; ``load_rgb_fn`` is called only when the seam has to be looked up in the scan.
+    """
+    det = entry.get("detection") or {}
+    if entry.get("override") or not det or det.get("refit") or det.get("background", "dark") != "dark" or not ref_size:
+        return None
+    quad = np.array(det["quad"], dtype=np.float64)
+    over = refit.oversize(quad, ref_size, rules.size_outlier_mm * scale.px_per_mm)
+    if over is None:
+        return None
+    axis, excess = over
+    tol = rules.rim_refit_mm * scale.px_per_mm
+    found = refit.from_inner_line(det.get("edges", {}), quad, axis, excess, tol)
+    if found is None:
+        found = refit.from_seam(load_rgb_fn(), quad, axis, excess, scale.px_per_mm, tol)
+    return None if found is None else (found[1], found[2])
+
+
+def apply_refit(entry: dict, quad: np.ndarray, info: dict, rgb: Optional[np.ndarray], px_per_mm: float,
+                settings: "Settings") -> None:
+    """Store the refit outline in the detection (the original stays as ``quad_detected``); the
+    curves are traced again around it."""
+    det = entry["detection"]
+    det["quad_detected"] = det["quad"]
+    det["quad"] = np.round(quad, 2).tolist()
+    det["refit"] = info
+    det.pop("curves", None)
+    if rgb is not None and settings.flatten != "off":
+        curves = flat.trace(rgb, np.array(det["quad"], dtype=np.float64), px_per_mm,
+                            det.get("speck_threshold") or 30, settings.flatten_params)
+        det["curves"] = {k: c.to_dict() for k, c in curves.items()}
 
 
 def resolve_scales(manifest: Manifest, keys: Sequence[str], settings: Settings) -> Dict[str, Scale]:
@@ -451,6 +496,9 @@ def evaluate(entry: dict, scale: Scale, rules: ReviewRules,
                                                  dev * scale.px_per_mm, 0.15 * scale.px_per_mm))
     for side in (entry.get("detection") or {}).get("repaired", []):
         warnings.append(f"edge_repaired:{side}")  # informational: the outer candidate was the holder rim
+    moved = (entry.get("detection") or {}).get("refit")
+    if moved:  # informational: the side was moved off the holder rim (size_refit)
+        warnings.append(f"rim_refit:{moved['side']}:{moved['shift_px'] / scale.px_per_mm:+.2f}mm")
     if not override:
         edges = (entry.get("detection") or {}).get("edges", {})
         for side, st in edges.items():
@@ -619,8 +667,23 @@ def run_batch(inputs: Sequence[str], out_dir: Optional[str], settings: Settings,
     for k in keys:
         e = manifest.entry(k)
         if k in scales and (e.get("detection") or e.get("override")):
-            status, warnings, fmt = evaluate(e, scales[k], settings.rules, refs.get(_ref_group(e)), settings.margin_mm,
+            ref = refs.get(_ref_group(e))
+            status, warnings, fmt = evaluate(e, scales[k], settings.rules, ref, settings.margin_mm,
                                              settings.flatten, settings.flatten_params)
+            if status == "needs_review":
+                cache = {}
+
+                def scan_rgb(path=e["input"], cache=cache):
+                    if "rgb" not in cache:
+                        cache["rgb"] = load_rgb(path)
+                    return cache["rgb"]
+
+                fit = size_refit(e, scales[k], ref, settings.rules, scan_rgb)
+                if fit:
+                    apply_refit(e, fit[0], fit[1], scan_rgb() if settings.flatten != "off" else None,
+                                scales[k].px_per_mm, settings)
+                    status, warnings, fmt = evaluate(e, scales[k], settings.rules, ref, settings.margin_mm,
+                                                     settings.flatten, settings.flatten_params)
             e.update(scale=scales[k].to_dict(), format=fmt, status=status, warnings=warnings, error=None)
 
     # ---- reconcile exports with the final scale ---------------------------------------
