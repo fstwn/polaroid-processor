@@ -668,7 +668,9 @@ def detect(rgb: np.ndarray, params: DetectParams = DetectParams(), debug: bool =
         raise DetectionError("no plausible print outline at any threshold")
     noise = a.holder_noise(found[0])
     if noise is not None:
-        thr2 = int(noise + params.noise_margin)
+        # capped: a bright object on the holder (the white circle of a Go holder) pushes the
+        # percentile towards 255, and a threshold above the pixel range finds nothing
+        thr2 = min(int(noise + params.noise_margin), max(params.thresholds))
         if thr2 > thr:
             again = a.attempt(thr2)
             # a much smaller outline means the raised threshold ate into a dark frame: keep pass one

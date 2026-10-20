@@ -8,6 +8,7 @@ import os
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures.process import BrokenProcessPool
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
@@ -281,15 +282,39 @@ def _job(job: dict) -> dict:
     return res
 
 
+def _crashed(job: dict) -> dict:
+    return {"key": job["key"], "path": job["path"], "error": "worker process crashed on this scan"}
+
+
 def _run_pool(fn: Callable, jobs: List[dict], workers: int):
+    """Run ``fn`` on every job in worker processes, yielding results as they finish.
+
+    A worker that dies (a native crash in a decoder or OpenCV) breaks the whole pool. The
+    jobs left over then run one by one, each in a fresh process, so only the scan that
+    crashes fails (as an error result) and the batch goes on.
+    """
     if workers <= 1 or len(jobs) <= 1:
-        for j in jobs:
-            yield fn(j)
+        workers = 1
+    done = set()
+    try:
+        with ProcessPoolExecutor(max_workers=workers) as ex:
+            futs = {ex.submit(fn, j): i for i, j in enumerate(jobs)}
+            for fut in as_completed(futs):
+                res = fut.result()
+                done.add(futs[fut])
+                yield res
         return
-    with ProcessPoolExecutor(max_workers=workers) as ex:
-        futs = [ex.submit(fn, j) for j in jobs]
-        for fut in as_completed(futs):
-            yield fut.result()
+    except BrokenProcessPool:
+        log.warning("a worker process crashed; running the remaining scans one by one")
+    for i, j in enumerate(jobs):
+        if i in done:
+            continue
+        try:
+            with ProcessPoolExecutor(max_workers=1) as ex:
+                res = ex.submit(fn, j).result()
+        except BrokenProcessPool:
+            res = _crashed(j)
+        yield res
 
 
 # --------------------------------------------------------------------------- evaluation
