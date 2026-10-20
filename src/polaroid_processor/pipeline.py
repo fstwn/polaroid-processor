@@ -19,7 +19,7 @@ from . import __version__
 from . import flatten as flat
 from . import shading
 from .detection import DetectionError, DetectParams, detect, quad_size
-from .formats import match_format
+from .formats import classify, match_format
 from .geometry import rectify
 from .imageio import (SCAN_SUFFIXES, file_fingerprint, load_rgb, read_meta, resize_long_edge, set_resolution,
                       write_derivative, write_tiff)
@@ -333,10 +333,21 @@ def _sizes_by_group(manifest: Manifest) -> Dict[Tuple[int, int], List[Tuple[floa
     return sizes
 
 
-def reference_sizes(manifest: Manifest, min_scans: int = 5) -> Dict[Tuple[int, int], Tuple[float, float]]:
-    """Median print size in px per scan-size group, for groups with at least ``min_scans`` scans."""
-    return {g: tuple(float(v) for v in np.median(np.array(s), axis=0))
-            for g, s in _sizes_by_group(manifest).items() if len(s) >= min_scans}
+def _ref_group(e: dict) -> Tuple:
+    """Scan-size group and print format (by shape): the reference size compares like with like."""
+    q = Manifest.effective_quad(e)
+    return _group(e) + ((classify(quad_size(q)).name,) if q is not None else ())
+
+
+def reference_sizes(manifest: Manifest, min_scans: int = 5) -> Dict[Tuple, Tuple[float, float]]:
+    """Median print size in px per scan-size group and format, for groups with at least
+    ``min_scans`` scans."""
+    sizes: Dict[Tuple, List[Tuple[float, float]]] = {}
+    for _, e in manifest.items():
+        q = Manifest.effective_quad(e)
+        if q is not None:
+            sizes.setdefault(_ref_group(e), []).append(quad_size(q))
+    return {g: tuple(float(v) for v in np.median(np.array(s), axis=0)) for g, s in sizes.items() if len(s) >= min_scans}
 
 
 def _side_angle_deg(a: np.ndarray, b: np.ndarray) -> float:
@@ -607,7 +618,7 @@ def run_batch(inputs: Sequence[str], out_dir: Optional[str], settings: Settings,
     for k in keys:
         e = manifest.entry(k)
         if k in scales and (e.get("detection") or e.get("override")):
-            status, warnings, fmt = evaluate(e, scales[k], settings.rules, refs.get(_group(e)), settings.margin_mm,
+            status, warnings, fmt = evaluate(e, scales[k], settings.rules, refs.get(_ref_group(e)), settings.margin_mm,
                                              settings.flatten, settings.flatten_params)
             e.update(scale=scales[k].to_dict(), format=fmt, status=status, warnings=warnings, error=None)
 

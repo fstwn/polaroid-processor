@@ -3,7 +3,8 @@
 Precedence:
 1. explicit value (``--ppi`` or a named scanner profile),
 2. the TIFF resolution tag, when it yields a plausible print size,
-3. inference from the batch median, assuming the default format.
+3. inference from the print size: each outline's format is told by its aspect ratio
+   (:func:`formats.classify`), and a batch uses the median over its scans.
 """
 from __future__ import annotations
 
@@ -15,7 +16,7 @@ from typing import Dict, Iterable, Optional, Tuple
 
 import yaml
 
-from .formats import DEFAULT_FORMAT, FORMATS, PrintFormat, match_format
+from .formats import FORMATS, PrintFormat, classify, match_format
 
 MM_PER_INCH = 25.4
 TAG_TOLERANCE = 0.05  # tag accepted when the print matches a known format within 5 %
@@ -83,14 +84,19 @@ def scale_from_tag(dpi_tag: Optional[Tuple[float, float]], size_px: Tuple[float,
     return None
 
 
-def scale_from_size(size_px: Tuple[float, float], fmt: PrintFormat = DEFAULT_FORMAT,
+def scale_from_size(size_px: Tuple[float, float], fmt: Optional[PrintFormat] = None,
                     source: str = "single-scan") -> Scale:
+    """Scale that makes the outline its format's size; the format is classified by shape
+    when not given."""
+    fmt = fmt or classify(size_px)
     short_px, long_px = sorted(size_px)
     px_per_mm = (short_px / fmt.width_mm + long_px / fmt.height_mm) / 2
     return Scale(px_per_mm, source)
 
 
-def batch_median_scale(sizes_px: Iterable[Tuple[float, float]], fmt: PrintFormat = DEFAULT_FORMAT) -> Optional[Scale]:
+def batch_median_scale(sizes_px: Iterable[Tuple[float, float]], fmt: Optional[PrintFormat] = None) -> Optional[Scale]:
+    """Median of the per-scan scales; mixed batches (600 and Go) work, each outline is
+    classified by shape."""
     vals = [scale_from_size(s, fmt).px_per_mm for s in sizes_px]
     if not vals:
         return None
