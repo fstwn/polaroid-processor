@@ -266,7 +266,7 @@ def _job(job: dict) -> dict:
         else:
             s = scale_from_tag(meta.dpi_tag, quad_size(quad)) or scale_from_size(quad_size(quad))
             px = s.px_per_mm
-        if job["detect"] and ex["flatten"] != "off":
+        if job["detect"] and ex["flatten"] != "off" and det.get("background", "dark") == "dark":
             curves = flat.trace(rgb, np.array(det["quad"], dtype=np.float64), px, det.get("speck_threshold") or 30,
                                 ex["flatten_params"])
             det["curves"] = {k: c.to_dict() for k, c in curves.items()}
@@ -594,7 +594,8 @@ def run_batch(inputs: Sequence[str], out_dir: Optional[str], settings: Settings,
         st = os.stat(f)
         unchanged = (e.get("detection") and e.get("size_bytes") == st.st_size
                      and abs(e.get("mtime", 0) - st.st_mtime) < 1e-3
-                     and (settings.flatten == "off" or "curves" in e["detection"]))
+                     and (settings.flatten == "off" or "curves" in e["detection"]
+                          or e["detection"].get("background") == "light"))  # light: never traced
         if unchanged and not settings.redetect:
             continue
         prov = explicit or (history.get(_group(e)) if e else None)

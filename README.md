@@ -1,6 +1,6 @@
 # polaroid-processor
 
-Detects, crops and rectifies high-resolution flatbed scans of instant prints (Polaroid 600 / i-Type / SX-70 and Polaroid Go) lying in a black scanning holder. Works with white, black (incl. glitter), gold and printed special-edition frames. Built to run unattended, from the command line or by an agent.
+Detects, crops and rectifies high-resolution flatbed scans of instant prints (Polaroid 600 / i-Type / SX-70 and Polaroid Go) lying in a black scanning holder, and camera shots of white-framed prints on light paper. Works with white, black (incl. glitter), gold and printed special-edition frames. Built to run unattended, from the command line or by an agent.
 
 Scope and roadmap: [docs/SCOPE.md](docs/SCOPE.md).
 
@@ -49,6 +49,7 @@ Re-running the same command only processes new or changed scans and scans whose 
 ## How it works
 
 1. **Detect** the print outline at reduced resolution. The holder is near-black and flat; every frame type has pixels brighter than the holder noise. Each edge is scanned from outside inward, averaged over long segments, and the edge is the first sharp step into a stable plateau. Holder rim lines, dust and flare-lit gaps are rejected. A consensus line fit per side gives the four corners. Where the holder rim touches the print, the side is refit on the print edge behind the rim so that it runs parallel to the opposite side.
+   On a light background (the image border is bright: a print photographed on paper) a separate detector runs: the photo window is the strongest line in a texture map, and walking outward from it through the flat white frame, the print edge is where the brightness leaves the frame level. Plain white frames only. The holder path is unchanged.
 2. **Scale.** Pixels per millimetre come from `--ppi` / `--profile`, else from the TIFF tag if it gives a plausible print size, else from the median of all scans of the same scan size. Each outline's format is told by its shape (600: short/long side 0.819-0.824, Go: 0.808-0.812), so mixed batches of 600 and Go prints get one consistent scale.
 3. **Review rules** flag a scan `needs_review` when its size does not match a known format or the other scans of the batch, opposite sides are not parallel, or an edge is noisy, curved or inconsistent.
 4. **Flatten** curled prints. Each side is traced every 0.5 mm at full resolution and fitted with a smooth curve. When a reliable side bends by 0.1 mm or more, the export maps the curved outline onto a rectangle, so all four sides come out straight. Only the edge band is corrected (fading out within 5 mm); the inside and the output size are exactly those of the straight export, so the photo window keeps its shape; sides whose trace is not trustworthy (printed graphics, black glitter) stay straight. Manually fixed outlines are always straight. `--flatten off` keeps straight sides everywhere.

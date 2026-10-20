@@ -26,6 +26,8 @@ from typing import Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 
+from . import light
+
 SIDES = ("top", "right", "bottom", "left")
 
 
@@ -75,6 +77,7 @@ class DetectParams:
     rim_cells: int = 30  # an inner edge candidate lies at most this far inside the outer one (holder rim band)
     parallel_tol_deg: float = 0.25  # opposite sides of a print are parallel within this
     border_margin: float = 0.001  # quad must stay this far (fraction) from the scan border
+    background: str = "auto"  # "auto": light when the image border is bright; "dark"; "light"
 
 
 @dataclass
@@ -112,6 +115,7 @@ class Detection:
     time_s: float
     source: str = "auto"  # "auto" or "manual"
     repaired: Tuple[str, ...] = ()  # sides refit on inner candidates (holder rim touching the print)
+    background: str = "dark"  # "dark" (holder scan) or "light" (print on paper, see light.py)
 
     @property
     def aspect(self) -> float:
@@ -131,6 +135,7 @@ class Detection:
             "time_s": round(self.time_s, 2),
             "source": self.source,
             "repaired": list(self.repaired),
+            "background": self.background,
         }
 
     @classmethod
@@ -147,6 +152,7 @@ class Detection:
             time_s=d.get("time_s", 0.0),
             source=d.get("source", "auto"),
             repaired=tuple(d.get("repaired", ())),
+            background=d.get("background", "dark"),
         )
 
 
@@ -657,6 +663,8 @@ def detect(rgb: np.ndarray, params: DetectParams = DetectParams(), debug: bool =
     Raises :class:`DetectionError` when no plausible outline is found.
     """
     t0 = time.perf_counter()
+    if params.background == "light" or (params.background == "auto" and light.is_light_background(rgb)):
+        return _detect_light(rgb, t0, debug)
     a = _Analysis(rgb, params)
     found, thr = None, None
     for t in params.thresholds:
@@ -691,6 +699,23 @@ def detect(rgb: np.ndarray, params: DetectParams = DetectParams(), debug: bool =
     )
     if debug:
         return det, DetectionDebug(a.rgb_small, feat, pts)
+    return det
+
+
+def _detect_light(rgb: np.ndarray, t0: float, debug: bool):
+    try:
+        quad, stats, pts = light.detect_light(rgb)
+    except light.LightDetectionError as e:
+        raise DetectionError(f"light background: {e}") from e
+    h, w = rgb.shape[:2]
+    det = Detection(quad=quad, scan_size=(w, h), size_px=quad_size(quad), skew_deg=quad_skew_deg(quad),
+                    edges={s: EdgeStats(**v) for s, v in stats.items()}, speck_threshold=0, holder_noise=None,
+                    factor=1, time_s=time.perf_counter() - t0, background="light")
+    if debug:
+        small = cv2.resize(rgb, (w // 4, h // 4), interpolation=cv2.INTER_AREA)
+        if small.dtype != np.uint8:
+            small = (small >> 8).astype(np.uint8)
+        return det, DetectionDebug(small, np.zeros(small.shape[:2], np.uint8), pts)
     return det
 
 

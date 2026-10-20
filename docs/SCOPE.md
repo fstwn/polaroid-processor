@@ -10,7 +10,7 @@ A robust tool that crops and rectifies high-resolution flatbed scans of instant 
 
 - Exactly one print per scan.
 - v1: print lies in the black scanning holder (near-black, flat background). This is the precision path.
-- v2: "light background" mode (white/grey scanner lid). Auto-detected from the scan border, overridable by flag. Designed once sample scans exist.
+- Light background (print photographed or scanned on white paper): auto-detected from the image border since 2026-10-19 (`light.py`), white frames only.
 - Input files are never written, moved or renamed.
 
 ## Formats
@@ -69,7 +69,6 @@ The current scans are tagged 600 dpi but measure ~128 px/mm (~3250 ppi), so the 
 ## Not in v1
 
 - GUI (planned for v2: local web UI on localhost with batch run, review grid and corner dragging).
-- Light-background mode (v2).
 - Multiple prints per scan, phone photos, Instax formats.
 - Automatic colour grading.
 
@@ -209,3 +208,15 @@ Both run by default in `process` (`--flatten off`, `--shadows off` to disable).
 - Flattened 105 of 118; max bend per scan median 0.28 mm, 90th percentile 0.49 mm, largest 0.66 mm. Not flattened: 13 printed / glitter frames (Samsoe, tttacho_13, 14, 16, 21, Misc_03) whose sides are not reliable.
 - Shadows corrected on 89 scans: 82 on all four sides, 7 on two or three (one side measurable on only 13-45 % of its length, so that side keeps its shadow); 29 untouched. Largest darkening per side median 11.5 %, max 30 %.
 - Chords between the curve corners are not a usable parallelism check: curled prints show 0.3-0.4 deg between left and right chords because the curve ends are extrapolated into the rounded corners.
+
+## Samples: Go prints, special frames, camera shots (2026-10-19)
+
+The user added `E:/POLAROID_PROCESSOR_SAMPLES`: `scans/` (26 holder scans: four 600 prints with printed special frames, 22 Go prints placed loosely and rotated in a holder with a white circle) and `white_bg/` (42 camera shots, 3323 x 3908 px, of white-framed 600 prints on white paper with pencil corner marks). Read only; results in `.dev/samples`.
+
+- **Crash:** two Go scans killed their worker process and with it the whole batch (no results at all). The white circle on the holder raised the holder-noise percentile to ~251, the second-pass speck threshold to 257, and numpy 2.0.2 crashes comparing a strided uint8 view with an out-of-range int. Fixes: the second-pass threshold is capped at the highest first-pass threshold (70); a dying worker no longer breaks the batch (the remaining scans run one per process, the crashing scan fails alone with an error).
+- **Go format:** 20 Go prints measure 53.50 x 65.97 mm (sd 0.01 / 0.05 mm) against 600 prints in the same batch; the quoted 53.9 x 66.6 mm is ~1 % too large, `POLAROID_GO` is now 53.5 x 66.0. The scale was inferred assuming every print is a 600, so a Go batch came out at 77.6 instead of 126.7 px/mm and the 600 prints in it were flagged 63 % too large. Now each outline is classified by its aspect ratio (Go 0.808-0.812, 600 0.819-0.824 over all scans so far) and the batch scale is the median of the per-scan scales; the size reference for `size_outlier` is per format.
+- Result on `scans/`: all four 600 and 22 of 24 Go prints ok at 126.72 px/mm. Flagged: Go 37 (touches the white circle; outline right, bottom edge points scattered), Go 73 (black frame on the black holder: the photo area was found instead, flagged by a 21 % size mismatch).
+- **Light background** (`light.py`, auto when the median max(R,G,B) of the outer 2 % of the image is above 128; holder scans sit near 5-20): the photo window is found per side as the strongest ridge of a texture map (|luminance - blur|) at 1/4 scale; from that line each side walks outward through the frame (segments of 4 mm, median across the segment) and the edge is where the luminance leaves the flat frame plateau. All 42 shots ok: 87.8-88.15 x 106.97-107.15 mm, aspect 0.819-0.824 like the holder scans, edge fit RMS under 1.3 px. The holder path is untouched: 118 library and 26 sample scans give identical outlines.
+- Light shots are not flattened (the edge tracer needs the dark holder). Every side has a bright rim about 7 px (0.2 mm) outside the frame plateau (light around the print edge); counting it as print made the prints 0.5 mm too wide, so the edge is the plateau exit. Not handled: a soft shadow that matches the frame's brightness right at the edge (the edge lands up to the shadow width outward), printed or coloured frames on paper.
+- **Review (2026-10-20):** the user confirmed all 68 sample outlines on the review page (`tests/data/labels_samples.json`, test `test_corners_match_sample_labels`, tolerance per label). Go prints: all 22 within 0.094 mm of the reviewer. Camera shots: every correction was on the bottom side, outward by a median 0.21 mm. The frame ends there in a deep, narrow dark line (about 10 % below the frame), the print's own edge; at the top a shallow shadow (about 5 %) lies on the paper. The light detector now puts the edge at the darkest point of a dark line deeper than 7 % of the frame level, else where the frame ends: median 0.050 mm, max 0.175 mm against the reviewer (tolerance 0.2 mm at 32.8 px/mm). This threshold comes from one camera setup.
+- Printed-frame 600 prints in the holder (03, 04, 05): the reviewer put the top edge 0.14-0.21 mm further in (03 also the bottom, 0.30 mm). Their edge rises sharply to about half the frame level, then ramps slowly over ~0.2 mm; the detector's 50 % crossing sits in the sharp part, the reviewer at the end of the ramp. Not changed, because moving the holder detector's print-level sampling would move every holder scan (the library labels agree with it at 0.1 mm). 03 and 05 are marked `known_failure`, 04 passes at 0.2 mm, 73 (black Go on black) is a `known_failure`.

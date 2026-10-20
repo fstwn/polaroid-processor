@@ -5,6 +5,8 @@
   bias fix (2026-10-18).
 - tests/data/labels_holdout.json: scans from the user's library ($POLAROID_LIBRARY) that were
   never used for tuning; checked against the 0.2 mm target. Never tune parameters on them.
+- tests/data/labels_samples.json: Go prints and printed 600 frames in the holder, and camera
+  shots on white paper ($POLAROID_SAMPLES); each label carries its tolerance (tol_mm).
 
 Each test is skipped when its scans are not present.
 """
@@ -21,6 +23,8 @@ from polaroid_processor.formats import POLAROID_600
 ROOT = Path(__file__).resolve().parents[1]
 LABELS = Path(__file__).parent / "data" / "labels.json"
 HOLDOUT = Path(__file__).parent / "data" / "labels_holdout.json"
+SAMPLES = Path(__file__).parent / "data" / "labels_samples.json"
+SAMPLES_ROOT = Path(os.environ.get("POLAROID_SAMPLES", "E:/POLAROID_PROCESSOR_SAMPLES"))
 LIBRARY = Path(os.environ.get("POLAROID_LIBRARY", "D:/11_pictures/Pictures"))
 TOL_MM = 0.1
 HOLDOUT_TOL_MM = 0.2
@@ -75,3 +79,15 @@ def test_corners_match_holdout_labels(rel, label, request):
         request.applymarker(pytest.mark.xfail(reason=f"known detector failure: {label['known_failure']}"))
     err_mm = _corner_errors_mm(path, label)
     assert err_mm.max() <= HOLDOUT_TOL_MM, f"{rel}: corner errors (mm) {np.round(err_mm, 3).tolist()}"
+
+
+@pytest.mark.scans
+@pytest.mark.parametrize("rel,label", _labels(SAMPLES) or NO_LABELS)
+def test_corners_match_sample_labels(rel, label, request):
+    path = SAMPLES_ROOT / rel
+    if not path.exists():
+        pytest.skip(f"{rel} not present (set POLAROID_SAMPLES)")
+    if label.get("known_failure"):
+        request.applymarker(pytest.mark.xfail(reason=f"known detector failure: {label['known_failure']}"))
+    err_mm = _corner_errors_mm(path, label)
+    assert err_mm.max() <= label["tol_mm"], f"{rel}: corner errors (mm) {np.round(err_mm, 3).tolist()}"

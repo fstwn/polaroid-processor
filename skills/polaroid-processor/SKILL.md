@@ -1,6 +1,6 @@
 ---
 name: polaroid-processor
-description: Crop and rectify flatbed scans of instant prints (Polaroid 600, i-Type, SX-70, Go) lying in a black scanning holder, then review and fix flagged scans. Use when the user asks to process, crop, straighten or export Polaroid/instant-print scans, or to review scans that need review in a polaroid-manifest.json output folder.
+description: Crop and rectify flatbed scans of instant prints (Polaroid 600, i-Type, SX-70, Go) lying in a black scanning holder, or photographed on white paper, then review and fix flagged scans. Use when the user asks to process, crop, straighten or export Polaroid/instant-print scans, or to review scans that need review in a polaroid-manifest.json output folder.
 ---
 
 # Polaroid processor
