@@ -187,7 +187,7 @@ function warnItems(scan) {
 }
 
 function sig(scan) {
-  return JSON.stringify([scan.status, scan.preview && scan.preview.url, scan.stale, scan.warnings, scan.error, scan.exported, scan.quad_source]);
+  return JSON.stringify([scan.status, scan.preview && scan.preview.url, scan.stale, scan.warnings, scan.error, scan.export, scan.quad_source]);
 }
 
 function buildCard(scan) {
@@ -207,7 +207,9 @@ function buildCard(scan) {
   const tags = el("div", "tags");
   tags.append(el("span", "badge " + scan.status, scan.status.replace("_", " ")));
   if (scan.quad_source === "override") tags.append(el("span", "x", "fixed"));
-  if (scan.exported) tags.append(el("span", "x", "exported"));
+  if (scan.export === "done") tags.append(el("span", "x", "exported"));
+  else if (scan.export === "tags") tags.append(el("span", "x", "exported, tags to update"));
+  else if (scan.export === "outdated") tags.append(el("span", "x warnx", "export outdated"));
   meta.append(tags);
   const w = warnItems(scan);
   if (w.length) {
@@ -221,12 +223,25 @@ function buildCard(scan) {
   return card;
 }
 
-async function openScan(scan) {
+function openScan(scan) {
   if (!scan.size_px) { showMsg(scan.status === "failed" ? "No outline was found for this scan." : "This scan has not been detected yet.", true); return; }
-  const w = window.open("", "_blank");        // opened now, so the popup blocker lets it through
-  const r = await guarded(() => api("/api/project/review", { key: scan.key }));
-  if (r && w) w.location.href = r.url; else if (w) w.close();
+  showMsg("");
+  $("fixframe").src = "/fix#" + encodeURIComponent(scan.key);
+  $("fixview").hidden = false;
+  document.body.style.overflow = "hidden";
 }
+
+function closeFix() {
+  $("fixview").hidden = true;
+  $("fixframe").src = "about:blank";
+  document.body.style.overflow = "";
+  tick(true);
+}
+
+window.addEventListener("message", (e) => {
+  if (e.origin !== location.origin || !e.data) return;
+  if (e.data.type === "fix-saved" || e.data.type === "fix-close") closeFix();
+});
 
 function renderScans(data) {
   S.rev = data.rev;
@@ -256,28 +271,34 @@ function renderProgress(p) {
   const run = p.run;
   const bar = $("runbar");
   let text = "", frac = 0, cls = "";
+  const verb = { detect: "Detecting", export: "Exporting", all: "Detecting and exporting" };
   if (run) {
     const total = run.total;
     if (run.state === "running" || run.state === "cancelling") {
-      if (total === null) text = "Looking for scans to detect…";
-      else if (total === 0) { text = "Nothing to detect"; frac = 1; }
+      if (total === null) text = "Looking for scans…";
+      else if (total === 0) { text = "Nothing to do"; frac = 1; }
       else {
         frac = run.done / total;
-        text = `${run.done} / ${total}` + (run.eta !== null ? ` · ${fmtTime(run.eta)} left` : "") + (run.state === "cancelling" ? " · stopping after the scans in flight…" : "");
+        text = `${verb[run.mode] || "Working"} · ${run.done} / ${total}` + (run.eta !== null ? ` · ${fmtTime(run.eta)} left` : "") + (run.state === "cancelling" ? " · stopping after the scans in flight…" : "");
       }
       if (run.phase) text = (total ? `${run.done} / ${total} · ` : "") + `${run.phase}…`;
     } else if (run.state === "finished") {
       cls = "done"; frac = 1;
-      text = total ? `Detected ${plural(run.done, "scan")} in ${fmtTime(run.elapsed)}` + (run.errors ? ` · ${run.errors} failed` : "") : "Nothing new to detect";
+      const did = { detect: "Detected", export: "Exported", all: "Detected and exported" }[run.mode] || "Processed";
+      text = total ? `${did} ${plural(run.done, "scan")} in ${fmtTime(run.elapsed)}` + (run.errors ? ` · ${run.errors} failed` : "") : "Nothing new to do";
     } else if (run.state === "cancelled") {
       frac = total ? run.done / total : 0;
-      text = `Stopped at ${run.done} / ${total}. Detect again to continue.`;
+      text = `Stopped at ${run.done} / ${total}. Start it again to continue.`;
     } else if (run.state === "error") {
       cls = "error"; frac = 1; text = run.error;
     }
   }
   if (p.previews_pending && !(run && (run.state === "running" || run.state === "cancelling"))) {
     text = (text ? text + " · " : "") + `making previews, ${p.previews_pending} left`;
+  }
+  if (p.lock && !(run && (run.state === "running" || run.state === "cancelling"))) {
+    text = `Another process is working on this output folder (pid ${p.lock.pid}, ${p.lock.who}); runs wait until it ends.`;
+    cls = "locked";
   }
   bar.hidden = !text;
   bar.className = "panel runbar " + cls;
@@ -293,18 +314,30 @@ function renderActions(p) {
   actions.textContent = "";
   const c = p.counts;
   const started = c.ok + c.needs_review + c.failed + c.detected > 0;
+  const start = (mode) => async () => { await guarded(() => api(`/api/project/${mode}`, {})); tick(true); };
   if (running) {
     const b = el("button", "warn", "Cancel");
     b.disabled = run.state === "cancelling";
     b.onclick = () => guarded(() => api("/api/project/cancel", {}));
     actions.append(b);
   } else {
+    const locked = !!p.lock;
     const todo = c.pending > 0;
-    const b = el("button", "primary", !started ? "Detect" : todo ? "Resume detect" : "Detect again");
-    b.disabled = !p.can_run;
-    b.title = p.can_run ? "Find the print in every scan and store the outlines; nothing is exported" : "The input folder of this project is not known or not found";
-    b.onclick = async () => { await guarded(() => api("/api/project/detect", {})); tick(true); };
-    actions.append(b);
+    const d = el("button", started ? "" : "primary", !started ? "Detect" : todo ? "Resume detect" : "Detect again");
+    d.disabled = !p.can_run || locked;
+    d.title = p.can_run ? "Find the print in every scan and store the outlines; nothing is exported" : "The input folder of this project is not known or not found";
+    d.onclick = start("detect");
+    const n = c.to_export, t = c.to_retag;
+    const x = el("button", started ? "primary" : "", n ? `Export (${n})` : t ? `Update tags (${t})` : "Export");
+    x.disabled = !(n || t) || locked;
+    x.title = n ? "Export the detected scans that have no up to date export" + (t ? `; ${t} more only get new resolution tags` : "")
+      : t ? "Only the scale changed: the resolution tags of these exports are written again, nothing is encoded" : "Nothing to export";
+    x.onclick = start("export");
+    const all = el("button", null, "Detect + export");
+    all.disabled = !p.can_run || locked;
+    all.title = "Detect new scans and export everything in one go; for batches you trust";
+    all.onclick = start("all");
+    actions.append(d, x, all);
   }
   const back = el("button", null, "← Projects");
   back.onclick = leaveProject;
@@ -325,6 +358,7 @@ async function enterProject(p) {
 }
 
 async function leaveProject() {
+  if (!$("fixview").hidden) closeFix();
   const r = await guarded(() => api("/api/project/close", {}));
   S.project = null;
   await loadHome();

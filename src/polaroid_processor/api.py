@@ -14,6 +14,7 @@ from . import flatten as flat
 from .detection import DetectionError, detect, quad_size
 from .geometry import shift_side
 from .imageio import load_rgb, write_derivative
+from .lock import RunLocked
 from .manifest import Manifest
 from .pipeline import (Derivative, Settings, collect_inputs, flatten_plan, manual_outline, result_record,
                        run_batch, settings_from_dict)
@@ -229,7 +230,15 @@ def fix_scan(output: str, scan: str, *, sets=None, nudges=None, shifts=None, acc
     if export:
         settings = settings_from_dict(m.data.get("settings", {}))
         settings.workers = 1
-        summary = run_batch([m.get(key)["input"]], output, settings, emit=emit)
+        try:
+            summary = run_batch([m.get(key)["input"]], output, settings, emit=emit)
+        except RunLocked as e:       # the fix is stored; a retry would only add a second history entry
+            m2 = Manifest(output)
+            rec = result_record(m2, key)
+            rec["type"] = "fix"
+            rec["history"] = m2.history(key)[-3:]
+            rec["note"] = f"fix saved; export skipped: {e}"
+            return rec
     m2 = Manifest(output)
     rec = result_record(m2, key, exported=bool(summary and summary.get("exported")))
     rec["type"] = "fix"

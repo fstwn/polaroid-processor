@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Polaroid review</title>
+<!--polaroid-config-->
 <style>
 :root {
   --bg: #15161a; --panel: #1e2026; --line: #343740; --text: #e6e7ea; --dim: #9a9ea8;
@@ -81,6 +82,7 @@ kbd { background: #2b2e37; border: 1px solid var(--line); border-radius: 4px; pa
 </head>
 <body>
 <header>
+  <button id="back" hidden title="Back to the grid">&larr; Grid</button>
   <h1>Polaroid review</h1>
   <span class="out" id="out" title=""></span>
   <span class="pos" id="pos"></span>
@@ -136,6 +138,9 @@ kbd { background: #2b2e37; border: 1px solid var(--line); border-radius: 4px; pa
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
+const API = window.POLAROID_API || "/api";          // the app serves this page with its own prefix
+const EMBED = !!window.POLAROID_EMBED;              // inside the app: Grid button, back to the grid after a save
+const toApp = (msg) => window.parent.postMessage(msg, location.origin);
 const NAMES = ["tl", "top", "tr", "left", "overview", "right", "bl", "bottom", "br"];
 const CORNER_IDX = { tl: 0, tr: 1, br: 2, bl: 3 };
 const SIDE_CORNERS = { top: [0, 1], right: [1, 2], bottom: [2, 3], left: [3, 0] };
@@ -440,6 +445,7 @@ attachPointer($("zcanvas"), () => S.zoom, true);
 // ---------------------------------------------------------------- scans
 async function loadScan(i) {
   closeZoom();
+  S.changedElsewhere = false;
   S.idx = i;
   const rec = S.scans[i];
   S.cur = null;
@@ -447,7 +453,7 @@ async function loadScan(i) {
   renderList();
   for (const name of NAMES) { cells[name].busy.textContent = "loading…"; }
   let specs;
-  try { specs = await api(`/api/scans/${encodeURIComponent(rec.key)}/tiles`); }
+  try { specs = await api(`${API}/scans/${encodeURIComponent(rec.key)}/tiles`); }
   catch (e) { showMsg(e.message); return; }
   if (S.idx !== i) return;
   const cur = { rec, specs, imgs: {}, quad: clone(rec.quad), orig: clone(rec.quad) };
@@ -461,7 +467,7 @@ async function loadScan(i) {
       cells[t.name].busy.textContent = img.naturalWidth ? "" : "tile failed";
       drawTile(cells[t.name], t.name);
       if (S.zoom === t.name) drawZoom();
-      if (--pending === 0) showMsg("");
+      if (--pending === 0) { showMsg(S.note || "", true); S.note = null; }
     };
     img.src = t.url;
     cur.imgs[t.name] = img;
@@ -536,11 +542,12 @@ async function commit(kind) {
   const key = cur.rec.key;
   try {
     const body = kind === "confirm" ? {} : { corners: Object.fromEntries(Object.entries(CORNER_IDX).map(([n, i]) => [n, cur.quad[i].map((v) => Math.round(v * 100) / 100)])) };
-    const rec = await api(`/api/scans/${encodeURIComponent(key)}/${kind}`, body);
+    const rec = await api(`${API}/scans/${encodeURIComponent(key)}/${kind}`, body);
     S.scans[S.idx] = rec;
     S.marks[key] = kind === "confirm" ? "confirmed" : "fixed";
     S.busy = false;
     showMsg(kind === "confirm" ? `Confirmed ${key}` : `Saved ${key}${rec.exported ? " and exported" : ""}`, true);
+    if (EMBED) { toApp({ type: "fix-saved", key }); return; }
     if (kind === "confirm" && S.idx < S.scans.length - 1) loadScan(S.idx + 1);
     else loadScan(S.idx);       // re-cut tiles at the stored outline
   } catch (e) {
@@ -552,7 +559,12 @@ async function commit(kind) {
 
 $("confirm").onclick = () => commit("confirm");
 $("save").onclick = () => commit("save");
-$("reset").onclick = () => { if (S.cur) { S.cur.quad = clone(S.cur.orig); drawAll(); } };
+$("reset").onclick = () => {
+  if (!S.cur) return;
+  if (S.changedElsewhere) { loadScan(S.idx); return; }     // take over the outline stored meanwhile
+  S.cur.quad = clone(S.cur.orig); drawAll();
+};
+$("back").onclick = () => toApp({ type: "fix-close" });
 $("skip").onclick = () => {
   if (!S.cur) return;
   if (!S.marks[S.cur.rec.key]) S.marks[S.cur.rec.key] = "skipped";
@@ -566,7 +578,7 @@ window.addEventListener("resize", () => { if (S.cur) { layout(); if (S.zoom) dra
 (async function init() {
   buildGrid();
   try {
-    const data = await api("/api/scans");
+    const data = await api(`${API}/scans`);
     S.meta = data;
     S.scans = data.scans;
     $("out").textContent = data.output;
@@ -583,8 +595,46 @@ window.addEventListener("resize", () => { if (S.cur) { layout(); if (S.zoom) dra
     return;
   }
   const want = decodeURIComponent(location.hash.slice(1));   // #<file name> opens that scan
+  if (EMBED) $("back").hidden = false;
   loadScan(Math.max(0, S.scans.findIndex((s) => s.key === want)));
+  watch();
 })();
+
+// ---------------------------------------------------------------- live reload
+// The manifest changes under us (a run, the command line, an agent's fix): take the new records; an
+// open scan whose outline changed is reloaded, unless it has unsaved edits.
+let stamp = null;
+async function refreshScans() {
+  const data = await api(`${API}/scans`);
+  const key = S.cur ? S.cur.rec.key : (S.scans[S.idx] || {}).key;
+  S.meta = data;
+  S.scans = data.scans;
+  const i = S.scans.findIndex((s) => s.key === key);
+  if (i >= 0) S.idx = i;
+  renderList();
+  if (!S.cur || i < 0) { renderSide(); updateButtons(); return; }
+  const rec = S.scans[i];
+  if (rec.rev === S.cur.rec.rev && sameQuad(rec.quad, S.cur.rec.quad)) {
+    S.cur.rec = rec;
+    renderSide();
+  } else if (!isDirty()) {
+    S.note = "This scan was changed elsewhere; showing the new outline.";
+    loadScan(i);
+  } else {
+    S.changedElsewhere = true;
+    showMsg("This scan was changed elsewhere. Reset takes over the new outline and drops your edits.");
+  }
+  updateButtons();
+}
+const sameQuad = (a, b) => a.every((p, i) => dist(p, b[i]) < 0.005);
+async function watch() {
+  try {
+    const s = (await api(`${API}/stamp`)).stamp;
+    if (stamp !== null && s !== stamp && !S.busy) await refreshScans();
+    stamp = s;
+  } catch (e) { /* server busy or gone: try again */ }
+  setTimeout(watch, 2000);
+}
 </script>
 </body>
 </html>

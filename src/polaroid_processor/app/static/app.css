@@ -82,3 +82,8 @@ label { display: block; color: var(--dim); font-size: 12px; margin: 10px 0 4px; 
 .warns li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .warns li.hint { color: var(--amber); }
 .card.failed .warns { color: var(--red); }
+.tags .x.warnx { color: var(--amber); }
+.runbar.locked { border-color: var(--amber); }
+.runbar.locked .dim { color: var(--amber); }
+#fixview { position: fixed; inset: 0; z-index: 20; background: var(--bg); }
+#fixview iframe { width: 100%; height: 100%; border: 0; display: block; }

@@ -8,6 +8,7 @@ Routes::
 
     GET  /                                        the page
     GET  /api/scans                               scans with outline, status, warnings, review state
+    GET  /api/stamp                               changes when the manifest on disk does
     GET  /api/scans/<key>/tiles                   tile descriptors of one scan at its current outline
     GET  /api/scans/<key>/tile/<name>.png?rev=N   one tile (raw pixels; the overview is downscaled)
     POST /api/scans/<key>/confirm                 accept the current outline
@@ -18,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import time
 import webbrowser
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -30,7 +32,7 @@ import numpy as np
 
 from .. import api
 from ..imageio import load_rgb, read_meta, to_uint8
-from ..manifest import Manifest
+from ..manifest import MANIFEST_NAME, Manifest
 from ..render import CORNERS, _stretch, inspect_points, is_dark, quad_summary, raw_tile
 
 log = logging.getLogger("polaroid_processor.review")
@@ -50,11 +52,14 @@ class NotFound(LookupError):
 class ReviewApp:
     """State and operations of one review session (no HTTP in here)."""
 
+    api_prefix = "/api/scans"   # where the page finds the scans; a host that mounts the routes elsewhere changes it
+
     def __init__(self, output: str, *, show_all: bool = False, author: str = "human", export: bool = False):
         self.output = str(output)
         self.show_all = show_all
         self.author = author
         self.export = export
+        self._stamp = "0"
         self._lock = threading.RLock()   # manifest writes and the one cached scan
         self._cache: Tuple[Optional[tuple], Optional[np.ndarray]] = (None, None)
         if not Manifest(self.output).path.exists():
@@ -80,6 +85,19 @@ class ReviewApp:
             "rev": len(e.get("history", [])),
             "review": review,
         }
+
+    def stamp(self) -> str:
+        """Changes whenever the manifest file does; a page polls it to reload. Only the file's stamp is
+        read; while a writer swaps the file, the last stamp stands (no double reload)."""
+        path = Path(self.output) / MANIFEST_NAME
+        for _ in range(4):
+            try:
+                st = path.stat()
+                self._stamp = f"{st.st_mtime_ns}-{st.st_size}"
+                break
+            except OSError:
+                time.sleep(0.02)
+        return self._stamp
 
     def list_scans(self) -> dict:
         with self._lock:
@@ -133,7 +151,7 @@ class ReviewApp:
                 by_name[name] = {"x0": int(round(p[0])) - TILE_PX // 2, "y0": int(round(p[1])) - TILE_PX // 2,
                                  "window": [TILE_PX, TILE_PX], "size": [TILE_PX, TILE_PX]}
             by_name["overview"] = {"x0": 0, "y0": 0, "window": [w, h], "size": list(self._overview_size(w, h))}
-            tiles = [{"name": n, **by_name[n], "url": f"/api/scans/{quote(key)}/tile/{n}.png?rev={rev}"}
+            tiles = [{"name": n, **by_name[n], "url": f"{self.api_prefix}/{quote(key)}/tile/{n}.png?rev={rev}"}
                      for n in TILE_NAMES]
             return {"key": key, "rev": rev, "scan_px": [w, h], "tiles": tiles}
 
@@ -197,6 +215,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "SAMEORIGIN")
+        self.send_header("Content-Security-Policy", "frame-ancestors 'self'")
         self.end_headers()
         self.wfile.write(body)
 
@@ -238,6 +258,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, (STATIC_DIR / "index.html").read_bytes(), "text/html; charset=utf-8")
             if segs == ["api", "scans"]:
                 return self._json(app.list_scans())
+            if segs == ["api", "stamp"]:
+                return self._json({"stamp": app.stamp()})
             if len(segs) == 4 and segs[:2] == ["api", "scans"] and segs[3] == "tiles":
                 return self._json(app.tile_specs(segs[2]))
             if len(segs) == 5 and segs[:2] == ["api", "scans"] and segs[3] == "tile" and segs[4].endswith(".png"):

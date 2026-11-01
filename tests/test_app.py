@@ -320,41 +320,12 @@ def test_project_summary_of_a_missing_project(tmp_path):
     assert info["counts"]["total"] == 0
 
 
-def test_review_link_opens_the_nine_tile_page(app, src):
-    app.json("/api/project/open", {"input": str(src)})
-    app.json("/api/project/detect", {})
-    app.wait(finished)
-    status, data = app.json("/api/project/review", {"key": "a_white.tif"})
-    assert status == 200 and data["url"].endswith("/#a_white.tif")
-    with urllib.request.urlopen(data["url"].split("#")[0] + "api/scans") as r:
-        assert "a_white.tif" in [s["key"] for s in json.load(r)["scans"]]
-
-
 # --------------------------------------------------------------------------- review follow-ups
 def fake_running(project):
     """Make a project look as if a run is going (no thread behind it)."""
     from polaroid_processor.app.project import Run
     project.run = Run()
     return project.run
-
-
-def test_review_page_is_refused_during_a_run(app, src):
-    app.json("/api/project/open", {"input": str(src)})
-    app.json("/api/project/detect", {})
-    app.wait(finished)
-    status, data = app.json("/api/project/review", {"key": "a_white.tif"})
-    assert status == 200
-    review_url = data["url"].split("#")[0]
-    run = fake_running(app.state.project)
-    status, data = app.json("/api/project/review", {"key": "a_white.tif"})
-    assert status == 400 and "wait until detection finishes" in data["error"]
-    # starting a run takes the open review page away: a fix saved during a run would be lost
-    run.state = "finished"
-    app.json("/api/project/review", {"key": "a_white.tif"})
-    assert app.json("/api/project/detect", {})[0] == 200
-    with pytest.raises(OSError):
-        urllib.request.urlopen(review_url + "api/scans", timeout=3)
-    app.wait(finished)
 
 
 def test_close_and_reopen_during_a_run(app, src, tmp_path):

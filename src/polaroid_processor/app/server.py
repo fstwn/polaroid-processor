@@ -13,9 +13,13 @@ mapping come from the review server). Routes::
     GET  /api/project/progress                  run state, counts and the manifest stamp (poll this)
     GET  /api/project/scans                     every scan with status, warnings and preview
     POST /api/project/detect                    start (or resume) the detect run
+    POST /api/project/export                    export the detected scans that have no up to date export
+    POST /api/project/all                       detect new scans and export everything
     POST /api/project/cancel                    stop after the scans in flight
     GET  /api/project/preview/<key>.jpg         the crop preview of a scan
-    POST /api/project/review                    body {"key"}: URL of the review page at that scan
+    GET  /fix                                   the drag-to-fix page (the review page, bound to the project)
+    ...  /api/fix/...                           that page's API: the review server's routes (stamp, scans,
+                                                scans/<key>/tiles, tile/<name>.png, confirm, save)
 """
 from __future__ import annotations
 
@@ -28,16 +32,19 @@ from http import HTTPStatus
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable, List, Optional
-from urllib.parse import quote
 
 from .. import api
-from ..review.server import Handler, NotFound, ReviewApp, make_server as make_review_server
+from ..review.server import Handler, NotFound
+from .fix import FixApp
 from .project import Project, load_manifest, input_folder_of, list_inputs, project_summary
 from .store import Store, same_path
 
 log = logging.getLogger("polaroid_processor.app")
 
 STATIC_DIR = Path(__file__).parent / "static"
+REVIEW_STATIC = Path(__file__).parent.parent / "review" / "static"
+FIX_CONFIG = '<script>window.POLAROID_API = "/api/fix"; window.POLAROID_EMBED = true;</script>'
+
 CONTENT_TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
                  ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml"}
 
@@ -69,7 +76,6 @@ class AppState:
         self.picker = picker
         self.project: Optional[Project] = None
         self._closing: List[Project] = []      # closed projects whose run is still stopping
-        self._review: Optional[tuple] = None   # (server, url) of the review page of the open project
         self._lock = threading.RLock()
 
     # ---- home ---------------------------------------------------------------
@@ -127,14 +133,7 @@ class AppState:
             self.project.kick_previews()
             return self.project.record()
 
-    def _close_review(self) -> None:
-        if self._review:
-            self._review[0].shutdown()
-            self._review[0].server_close()
-            self._review = None
-
     def _close_current(self) -> None:
-        self._close_review()
         if self.project:
             if not self.project.close():
                 self._closing.append(self.project)
@@ -146,14 +145,9 @@ class AppState:
             self._closing = [p for p in self._closing if p.running]
             return {"ok": True, "stopping": bool(self._closing)}
 
-    def start_detect(self) -> dict:
-        """Start the run; the review page goes away first, because a fix saved during a run would be lost."""
-        p = self.need_project()
-        with self._lock:
-            if p.running:
-                raise api.UsageError("a run is already going")
-            self._close_review()
-            return p.start_detect()
+    def start_run(self, mode: str) -> dict:
+        """Start a run of the open project; the state lock is not held while the preview keeper winds down."""
+        return self.need_project().start(mode)
 
     def forget(self, output: str) -> dict:
         self.store.forget_project(output)
@@ -164,19 +158,14 @@ class AppState:
             raise api.UsageError("no project is open")
         return self.project
 
-    # ---- review page -------------------------------------------------------------
-    def review_url(self, key: str) -> dict:
-        """The review page (a second local server) at the 9-tile view of ``key``. Until the drag view
-        lives in the app, this is the way to fix an outline."""
+    # ---- drag-to-fix ---------------------------------------------------------------
+    def fixer(self) -> FixApp:
+        """The review backend of the open project (it keeps the decoded scan the tiles are cut from)."""
         p = self.need_project()
         with self._lock:
-            if p.running:
-                raise api.UsageError("wait until detection finishes before fixing outlines")
-            if self._review is None:
-                srv = make_review_server(ReviewApp(p.output, show_all=True), 0)
-                threading.Thread(target=srv.serve_forever, daemon=True, name="polaroid-review").start()
-                self._review = (srv, f"http://127.0.0.1:{srv.server_address[1]}/")
-            return {"url": self._review[1] + "#" + quote(key)}
+            if p.fixer is None:
+                p.fixer = FixApp(p)
+            return p.fixer
 
     def shutdown(self) -> None:
         with self._lock:
@@ -195,6 +184,12 @@ class AppHandler(Handler):
                 return self._static("index.html")
             if len(segs) == 2 and segs[0] == "static":
                 return self._static(segs[1])
+            if segs == ["fix"]:
+                page = (REVIEW_STATIC / "index.html").read_text(encoding="utf-8")
+                return self._send(200, page.replace("<!--polaroid-config-->", FIX_CONFIG).encode("utf-8"),
+                                  "text/html; charset=utf-8")
+            if segs[:2] == ["api", "fix"]:
+                return self._fix(method, segs[2:])
             if segs == ["api", "home"]:
                 return self._json(st.home())
             if segs == ["api", "project"]:
@@ -211,6 +206,8 @@ class AppHandler(Handler):
                     raise NotFound(f"preview of {e}") from None
                 return self._send(200, path.read_bytes(), "image/jpeg")
         elif method == "POST":
+            if segs[:2] == ["api", "fix"]:
+                return self._fix(method, segs[2:])
             body = self._body()
             if segs == ["api", "browse"]:
                 return self._json(st.browse(str(body.get("initial") or "")))
@@ -220,13 +217,30 @@ class AppHandler(Handler):
                 return self._json(st.forget(str(body.get("output") or "")))
             if segs == ["api", "project", "close"]:
                 return self._json(st.close_project())
-            if segs == ["api", "project", "detect"]:
-                return self._json(st.start_detect())
+            if len(segs) == 3 and segs[:2] == ["api", "project"] and segs[2] in ("detect", "export", "all"):
+                return self._json(st.start_run(segs[2]))
             if segs == ["api", "project", "cancel"]:
                 return self._json(st.need_project().cancel())
-            if segs == ["api", "project", "review"]:
-                return self._json(st.review_url(str(body.get("key") or "")))
         raise NotFound("/".join(segs))
+
+    def _fix(self, method: str, rest: List[str]) -> None:
+        """The review server's routes, served for the open project."""
+        fx = self.state.fixer()
+        if method == "GET":
+            if rest == ["stamp"]:
+                return self._json({"stamp": fx.stamp()})
+            if rest == ["scans"]:
+                return self._json(fx.list_scans())
+            if len(rest) == 3 and rest[0] == "scans" and rest[2] == "tiles":
+                return self._json(fx.tile_specs(rest[1]))
+            if len(rest) == 4 and rest[0] == "scans" and rest[2] == "tile" and rest[3].endswith(".png"):
+                return self._send(200, fx.tile_png(rest[1], rest[3][:-4]), "image/png")
+        elif len(rest) == 3 and rest[0] == "scans" and rest[2] in ("confirm", "save"):
+            body = self._body()
+            if rest[2] == "confirm":
+                return self._json(fx.confirm(rest[1]))
+            return self._json(fx.save(rest[1], body.get("corners")))
+        raise NotFound("/".join(rest))
 
     def _static(self, name: str) -> None:
         path = STATIC_DIR / name

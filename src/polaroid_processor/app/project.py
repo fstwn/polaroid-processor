@@ -1,12 +1,13 @@
 """One project of the app: an input folder and its output folder (with the manifest).
 
-Reads the manifest for the grid and the counts, runs the detect pass in a background thread,
-and keeps the crop previews up to date. No HTTP in here.
+Reads the manifest for the grid and the counts, runs detect and export passes in a background
+thread, keeps the crop previews up to date, and re-evaluates a scan after a fix. No HTTP in here.
 """
 from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import time
 from pathlib import Path
@@ -16,8 +17,9 @@ from urllib.parse import quote
 from .. import api
 from ..detection import quad_size
 from ..imageio import load_rgb
+from ..lock import holder
 from ..manifest import MANIFEST_NAME, Manifest
-from ..pipeline import collect_inputs, manual_outline, settings_from_dict
+from ..pipeline import collect_inputs, manual_outline, reevaluate, resolve_scales, retag_ok, settings_from_dict
 from ..preview import LONG_EDGE, PREVIEW_DIR, preview_key, write_preview
 from ..scale import scale_from_size
 
@@ -59,18 +61,63 @@ def entry_status(e: Optional[dict]) -> str:
     return "detected" if e.get("detection") else "pending"
 
 
-def count_scans(m: Optional[Manifest], names: List[str]) -> Dict[str, int]:
-    """Scans per status over the manifest and the input folder, plus ``exported`` and ``total``."""
+def export_plan(m: Manifest, settings) -> Dict[str, tuple]:
+    """Per scan what a run would give its export now: ``(key, base, tags_ok)`` (see ``Settings.export_key``,
+    ``export_base``, ``retag_ok``), the same test the export pass uses to decide what to export again."""
+    keys = [k for k, e in m.items() if Manifest.effective_quad(e) is not None]
+    scales = resolve_scales(m, keys, settings)
+    out = {}
+    for k in keys:
+        e = m.get(k)
+        if k in scales and e.get("status") != "failed":
+            quad, curves, manual = Project._quad_curves(e)
+            out[k] = (settings.export_key(quad, scales[k], curves, manual),
+                      settings.export_base(quad, scales[k], curves, manual),
+                      retag_ok(e, scales[k], settings, curves, manual))
+    return out
+
+
+def export_state(m: Manifest, e: Optional[dict], plan: Optional[tuple], settings) -> Optional[str]:
+    """"done" (exported as a run would now), "tags" (only the scale differs: a run patches the resolution
+    tags, nothing is encoded again), "outdated" (exported, but outline, curves or settings changed since),
+    "none" (nothing exported, or files missing), None (nothing to export)."""
+    if not e or e.get("status") == "failed" or Manifest.effective_quad(e) is None:
+        return None
+    outs = e.get("outputs") or {}
+    if not outs or any(not m.abs(p).exists() for p in outs.values()):
+        return "none"
+    if plan is None:
+        return "outdated"
+    xkey, xbase, tags_ok = plan
+    if e.get("export_key") == xkey:
+        return "done"
+    if e.get("export_base") == xbase and tags_ok:
+        return "tags"
+    return "outdated"
+
+
+def count_scans(m: Optional[Manifest], names: List[str], plans: Optional[Dict[str, tuple]] = None,
+                settings=None) -> Dict[str, int]:
+    """Scans per status over the manifest and the input folder, plus ``exported``, ``total`` and, when
+    ``plans`` (see :func:`export_plan`) is given, ``to_export`` (detected scans without an up to date
+    export) and ``to_retag`` (exports that need only new resolution tags)."""
     keys = set(names)
     if m:
         keys |= set(m.scans)
     counts = {s: 0 for s in STATUSES}
-    exported = 0
+    exported = to_export = to_retag = 0
     for k in keys:
         e = m.get(k) if m else None
         counts[entry_status(e)] += 1
         exported += bool(e and e.get("outputs"))
-    return {**counts, "exported": exported, "total": len(keys)}
+        if plans is not None and m:
+            state = export_state(m, e, plans.get(k), settings)
+            to_export += state in ("none", "outdated")
+            to_retag += state == "tags"
+    out = {**counts, "exported": exported, "total": len(keys)}
+    if plans is not None:
+        out["to_export"], out["to_retag"] = to_export, to_retag
+    return out
 
 
 def _file_sig(path: Path) -> Optional[Tuple[int, int]]:
@@ -102,9 +149,10 @@ def project_summary(input_dir: Optional[str], output: str) -> dict:
 
 # --------------------------------------------------------------------------- the run
 class Run:
-    """State of one detect pass (written by the run thread, read by the poller)."""
+    """State of one run (written by the run thread, read by the poller)."""
 
-    def __init__(self):
+    def __init__(self, mode: str = "detect"):
+        self.mode = mode         # detect, export or all (detect and export)
         self.state = "running"   # running, cancelling, finished, cancelled, error
         self.total: Optional[int] = None
         self.done = 0
@@ -122,7 +170,7 @@ class Run:
         eta = None
         if self.state in ("running", "cancelling") and self.done and self.total:
             eta = elapsed / self.done * max(0, self.total - self.done)
-        return {"state": self.state, "total": self.total, "done": self.done, "errors": self.errors,
+        return {"mode": self.mode, "state": self.state, "total": self.total, "done": self.done, "errors": self.errors,
                 "elapsed": round(elapsed, 1), "eta": None if eta is None else round(eta, 1), "error": self.error,
                 "current": self.current, "phase": self.phase if self.state in ("running", "cancelling") else None}
 
@@ -138,6 +186,7 @@ class Project:
         self._keeper: Optional[threading.Thread] = None
         self._stop_keeper = threading.Event()
         self._closed = False
+        self.fixer = None                # FixApp of this project, made by AppState.fixer
         self._bad: set = set()           # (key, preview key) that failed to render: not tried again
         self._sig = None
         self._snap: Optional[dict] = None
@@ -153,13 +202,17 @@ class Project:
         manual = manual_outline((e.get("override") or {}).get("quad"), det)
         return Manifest.effective_quad(e), det.get("curves"), manual
 
-    def _record(self, key: str, e: Optional[dict], margin: float, flatten: str) -> dict:
+    def _record(self, m: Optional[Manifest], key: str, e: Optional[dict], margin: float, flatten: str,
+                plans: Dict[str, tuple], settings) -> dict:
         status = entry_status(e)
         quad = Manifest.effective_quad(e) if e else None
         rec = {"key": key, "status": status, "warnings": (e or {}).get("warnings", []),
                "error": (e or {}).get("error"), "exported": bool(e and e.get("outputs")),
                "quad_source": "override" if e and e.get("override") else ("auto" if quad is not None else None),
-               "format": ((e or {}).get("format") or {}).get("name"), "preview": None, "stale": False}
+               "format": ((e or {}).get("format") or {}).get("name"), "preview": None, "stale": False,
+               "export": None, "rev": len((e or {}).get("history", []))}
+        if m and e and e.get("outputs"):
+            rec["export"] = export_state(m, e, plans.get(key), settings)
         if quad is not None:
             w, h = quad_size(quad)
             rec["size_px"] = [round(w), round(h)]
@@ -189,11 +242,19 @@ class Project:
             m = load_manifest(self.output)
             names = list_inputs(self.input)
             margin, flatten = self._settings(m)
+            plans: Dict[str, tuple] = {}
+            settings = settings_from_dict(m.data.get("settings") or {}) if m else None
+            if m:
+                # a scan fixed by hand (here, on the command line, by an agent) is judged again, in memory only
+                fixed = [k for k, e in m.items() if e.get("override") and e.get("status") == "needs_review"]
+                if fixed:
+                    reevaluate(m, fixed, settings)
+                plans = export_plan(m, settings)
             keys = sorted(set(names) | set(m.scans if m else {}))
-            scans = [self._record(k, m.get(k) if m else None, margin, flatten) for k in keys]
+            scans = [self._record(m, k, m.get(k) if m else None, margin, flatten, plans, settings) for k in keys]
             self._sig = sig
             self._snap = {"rev": f"{sig[0][0] if sig[0] else 0}-{sig[1][0] if sig[1] else 0}", "scans": scans,
-                          "counts": count_scans(m, names),
+                          "counts": count_scans(m, names, plans if m else None, settings),
                           "stale": sum(1 for r in scans if r["stale"] and "_want" in r and (r["key"], r["_want"]) not in self._bad)}
             return self._snap
 
@@ -208,31 +269,55 @@ class Project:
         snap = self.snapshot()
         if run is None or run["state"] not in ("running", "cancelling"):
             self.kick_previews()
+        other = holder(self.output)
+        if other and other["pid"] == os.getpid() and run and run["state"] in ("running", "cancelling"):
+            other = None     # our own run
         return {"rev": snap["rev"], "counts": snap["counts"], "run": run, "previews_pending": snap["stale"],
-                "can_run": bool(self.input and Path(self.input).is_dir())}
+                "can_run": bool(self.input and Path(self.input).is_dir()), "lock": other}
 
     def record(self) -> dict:
         return {"input": self.input, "output": self.output, "name": self.name}
 
-    # ---- the detect run -------------------------------------------------
+    # ---- runs -----------------------------------------------------------
     @property
     def running(self) -> bool:
         return bool(self.run and self.run.state in ("running", "cancelling"))
 
-    def start_detect(self) -> dict:
-        if not self.input or not Path(self.input).is_dir():
+    def _export_inputs(self) -> List[str]:
+        m = load_manifest(self.output)
+        paths = [e["input"] for _, e in sorted(m.items()) if m and e.get("detection") and e.get("status") != "failed"
+                 and e.get("input") and Path(e["input"]).is_file()] if m else []
+        if not paths:
+            raise api.UsageError("no detected scans to export; detect first")
+        return paths
+
+    def start(self, mode: str = "detect") -> dict:
+        """Start a run in the background: ``detect`` (outlines only), ``export`` (the detected scans without an
+        up to date export) or ``all`` (detect new scans and export everything)."""
+        if mode not in ("detect", "export", "all"):
+            raise api.UsageError(f"unknown run mode {mode!r}")
+        if mode != "export" and (not self.input or not Path(self.input).is_dir()):
             raise api.UsageError("the input folder of this project is not known or not found")
+        other = holder(self.output)
+        if other and other["pid"] != os.getpid():
+            raise api.UsageError(f"another run is working on this output folder (pid {other['pid']}, {other['who']}); "
+                                 "wait until it ends")
+        inputs = self._export_inputs() if mode == "export" else [self.input]
         with self._lock:
             if self._closed:
                 raise api.UsageError("this project is closed")
             if self.running:
                 raise api.UsageError("a run is already going")
-            self.run = run = Run()       # first, so that the preview keeper does not start again
+            self.run = run = Run(mode)       # first, so that the preview keeper does not start again
         self._pause_previews()
         with self._lock:
-            self._thread = threading.Thread(target=self._detect, args=(run,), daemon=True, name="polaroid-detect")
+            self._thread = threading.Thread(target=self._work, args=(run, inputs), daemon=True,
+                                            name=f"polaroid-{mode}")
             self._thread.start()
             return run.record()
+
+    def start_detect(self) -> dict:
+        return self.start("detect")
 
     def cancel(self) -> dict:
         with self._lock:
@@ -243,15 +328,17 @@ class Project:
             self.run.cancel.set()
             return self.run.record()
 
-    def _detect(self, run: Run) -> None:
+    def _work(self, run: Run, inputs: List[str]) -> None:
         def progress(key: str, what: str) -> None:
             run.done += 1
+            run.phase = None
             run.current = key
-            if what != "detected":
+            if what not in ("detected", "exported"):
                 run.errors += 1
 
         def on_jobs(n: int) -> None:
-            run.total = n
+            run.total = (run.total or 0) + n
+            run.phase = None
 
         def on_phase(text: str) -> None:
             run.phase = text
@@ -260,13 +347,13 @@ class Project:
         try:
             m = load_manifest(self.output)
             settings = settings_from_dict((m.data.get("settings") if m else None) or {})
-            settings.export, settings.previews = False, True
-            summary = api.process([self.input], self.output, settings, progress=progress, cancel=run.cancel.is_set,
+            settings.export, settings.previews = run.mode != "detect", run.mode != "export"
+            summary = api.process(inputs, self.output, settings, progress=progress, cancel=run.cancel.is_set,
                                   on_jobs=on_jobs, on_phase=on_phase)
             if summary.get("cancelled") and run.done < (run.total or 0):
                 state = "cancelled"
         except Exception as e:  # noqa: BLE001  (shown in the page)
-            log.exception("detect run failed")
+            log.exception("%s run failed", run.mode)
             state, error = "error", f"{type(e).__name__}: {e}"
         with self._lock:        # one step, so that a cancel arriving now cannot leave "cancelling" behind
             run.state, run.error, run.ended = state, error, time.time()
@@ -307,7 +394,17 @@ class Project:
                 log.exception("preview of %s failed", nxt[0])
                 self._bad.add(nxt)
 
-    def make_preview(self, key: str) -> None:
+    def after_fix(self, key: str, rgb=None) -> None:
+        """A scan was fixed or accepted: judge it again and renew its preview (from ``rgb``, the decoded scan,
+        when the caller has it)."""
+        m = load_manifest(self.output)
+        if m and m.get(key):
+            reevaluate(m, [key], settings_from_dict(m.data.get("settings") or {}))
+            m.save()
+        self.make_preview(key, rgb)
+        self._sig = None
+
+    def make_preview(self, key: str, rgb=None) -> None:
         """Render the preview of one scan at its current outline and record it in the manifest."""
         m = load_manifest(self.output)
         e = m.get(key) if m else None
@@ -317,7 +414,7 @@ class Project:
         margin, flatten = self._settings(m)
         px = (e.get("scale") or {}).get("px_per_mm") or scale_from_size(quad_size(quad)).px_per_mm
         path = self.out_dir / PREVIEW_DIR / f"{Path(key).stem}.jpg"
-        info = write_preview(load_rgb(e["input"]), quad, px, curves, manual,
+        info = write_preview(rgb if rgb is not None else load_rgb(e["input"]), quad, px, curves, manual,
                              {"margin_mm": margin, "flatten": flatten, "long_edge": LONG_EDGE}, path)
         m = load_manifest(self.output)          # fresh: keep what happened in the meantime
         m.entry(key)["preview"] = {**info, "file": m.rel(info["file"])}

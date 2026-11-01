@@ -24,6 +24,7 @@ from .formats import classify, match_format
 from .geometry import rectify, shift_side
 from .imageio import (SCAN_SUFFIXES, file_fingerprint, load_rgb, read_meta, resize_long_edge, set_resolution,
                       write_derivative, write_tiff)
+from .lock import RunLock
 from .manifest import Manifest, now, scan_key
 from .preview import LONG_EDGE, PREVIEW_DIR, write_preview
 from .render import overlay
@@ -105,6 +106,20 @@ class Settings:
 
     def export_key(self, quad: np.ndarray, scale: Scale, curves: Optional[dict] = None,
                    override: bool = False) -> str:
+        """Identity of an export: outline, curves, settings and scale."""
+        return self._key(quad, curves, override, round(scale.px_per_mm, 4))
+
+    def export_base(self, quad: np.ndarray, scale: Scale, curves: Optional[dict] = None, override: bool = False) -> str:
+        """The export key without the scale value: two exports with the same base differ only by the scale
+        a batch inferred (its median moved). An explicit scale (``ppi``, a profile, a TIFF tag) is part of it,
+        so a deliberate change of scale is always a new export."""
+        inferred = scale.source in ("batch-median", "single-scan")
+        return self._key(quad, curves, override, None,
+                         ["inferred" if inferred else scale.source, None if inferred else self.ppi,
+                          None if inferred else self.profile])
+
+    def _key(self, quad: np.ndarray, curves: Optional[dict], override: bool, px_per_mm: Optional[float],
+             scale_kind: Optional[list] = None) -> str:
         payload = {
             "v": __version__,
             "margin_mm": self.margin_mm,
@@ -113,10 +128,13 @@ class Settings:
             "tiff_compression": self.tiff_compression,
             "overlay": self.overlay,
             "quad": np.round(quad, 2).tolist(),
-            "px_per_mm": round(scale.px_per_mm, 4),
             "flatten": self.flatten,
             "shadows": self.shadows,
         }
+        if px_per_mm is not None:
+            payload["px_per_mm"] = px_per_mm
+        if scale_kind is not None:
+            payload["scale_kind"] = scale_kind
         if self.flatten != "off" and curves and not override:
             payload["curves"] = {s: [round(v, 3) for v in c["coef"]] for s, c in sorted(curves.items())}
             payload["warp"] = [self.flatten_params.fade_mm, self.flatten_params.end_skip_mm, "quad-base"]
@@ -550,6 +568,40 @@ def evaluate(entry: dict, scale: Scale, rules: ReviewRules,
     return ("needs_review" if review else "ok"), warnings, fmt
 
 
+def reevaluate(manifest: Manifest, keys: Sequence[str], settings: Settings) -> None:
+    """Status and warnings of ``keys`` again, from the manifest alone (no image is read, and an outline
+    moved by a reviewer is never refitted). Used after a fix; nothing is saved."""
+    scales = resolve_scales(manifest, keys, settings)
+    refs = reference_sizes(manifest)
+    for k in keys:
+        e = manifest.get(k)
+        if k in scales and e and (e.get("detection") or e.get("override")):
+            status, warnings, fmt = evaluate(e, scales[k], settings.rules, refs.get(_ref_group(e)), settings.margin_mm,
+                                             settings.flatten, settings.flatten_params)
+            e.update(scale=scales[k].to_dict(), format=fmt, status=status, warnings=warnings, error=None)
+
+
+class _Saver:
+    """Saves the manifest at most every ``every`` seconds while jobs finish (saving costs time in
+    proportion to the scans), and judges again what someone else fixed in the meantime."""
+
+    def __init__(self, manifest: Manifest, settings: Settings, every: float = 1.5):
+        self.manifest, self.settings, self.every = manifest, settings, every
+        self.last = time.monotonic()
+
+    def tick(self) -> None:
+        if time.monotonic() - self.last >= self.every:
+            self.flush()
+
+    def flush(self) -> None:
+        self.manifest.save()
+        fixed = self.manifest.take_fixed()
+        if fixed:      # a fix from outside: its status must come from the fixed outline, not from this run
+            reevaluate(self.manifest, fixed, self.settings)
+            self.manifest.save()
+        self.last = time.monotonic()
+
+
 def result_record(manifest: Manifest, key: str, exported: bool = False) -> dict:
     e = manifest.get(key) or {}
     det = e.get("detection") or {}
@@ -625,8 +677,32 @@ def _store_job_result(manifest: Manifest, res: dict) -> None:
     if "outputs" in res:
         e.update(outputs={n: manifest.rel(p) for n, p in res["outputs"].items()},
                  output_ppm=res["output_ppm"], output_size_px=res["output_size_px"],
-                 export_px_per_mm=res["export_px_per_mm"], exported_at=now(),
+                 export_px_per_mm=res["export_px_per_mm"], export_geom_ppm=res["export_px_per_mm"],
+                 exported_at=now(),
                  flatten=res.get("flatten"), shadows=res.get("shadows"))
+
+
+def retag_ok(e: dict, final: Scale, settings: Settings, curves: Optional[dict] = None, manual: bool = False) -> bool:
+    """An export that differs from what a run would write only by an inferred scale can keep its pixels when
+    the scale it was cut at is within 0.5 % of the new one (the margin and the widths of the unwarp and the
+    shading move by a fraction of a pixel) and the unwarp decision (flatten or not) comes out the same."""
+    geom = e.get("export_geom_ppm")
+    if not geom or abs(geom - final.px_per_mm) / final.px_per_mm >= 0.005:
+        return False
+    plan = flatten_plan(curves, final.px_per_mm, settings.flatten, manual, settings.flatten_params)
+    return plan.apply == bool((e.get("flatten") or {}).get("apply"))
+
+
+def retag(manifest: Manifest, e: dict, final: Scale) -> None:
+    """Write the resolution of ``final`` into the tags of the outputs, in place (nothing is encoded again)."""
+    px_p = e.get("export_px_per_mm") or final.px_per_mm
+    if abs(px_p - final.px_per_mm) > 1e-6:
+        ppm = e.get("output_ppm") or {}
+        for name, rel in (e.get("outputs") or {}).items():
+            if name in ppm:
+                set_resolution(str(manifest.abs(rel)), final.px_per_mm * ppm[name] / px_p)
+        e["output_ppm"] = {n: final.px_per_mm * v / px_p for n, v in ppm.items()}
+        e["export_px_per_mm"] = final.px_per_mm
 
 
 def run_batch(inputs: Sequence[str], out_dir: Optional[str], settings: Settings,
@@ -638,11 +714,11 @@ def run_batch(inputs: Sequence[str], out_dir: Optional[str], settings: Settings,
     """Process scans into ``out_dir``. Emits one result record per scan and returns a summary.
 
     ``progress(key, what)`` is called as each worker job finishes ("detected", "exported" or
-    an error message); scans that are up to date produce no call. ``on_jobs(n)`` is called
-    with the number of scans that need detection before the first one starts; ``on_phase(text)``
-    says what the batch does after the scans are detected ("checking sizes", a scan being refitted). When ``cancel()``
-    turns true, the scans not yet started are left out (the summary says ``cancelled``) and
-    nothing is exported.
+    an error message); scans that are up to date produce no call. ``on_jobs(n)`` adds ``n`` jobs
+    to the total: the scans that need detection (before the first one starts; also when 0), then
+    the scans to export. ``on_phase(text)`` says what the batch does after the scans are detected
+    ("checking sizes", a scan being refitted). When ``cancel()`` turns true, the scans not yet
+    started are left out (the summary says ``cancelled``); scans that are not exported yet stay so.
 
     With ``settings.export`` off the run only detects: outlines, curves, status and warnings go
     into the manifest, no scan is exported, and a later run exports from the stored detections.
@@ -651,7 +727,17 @@ def run_batch(inputs: Sequence[str], out_dir: Optional[str], settings: Settings,
     the same worker with a provisional scale. Once every scan is measured, the final scale
     is resolved per scan-size group; outputs whose scale changed get their resolution
     metadata patched, or are re-exported when the crop margin would move by >= 0.5 px.
+
+    One batch works on an output folder at a time (:class:`RunLock`; a second one raises
+    :class:`RunLocked`). A fix saved by someone else during the run is merged in, not overwritten.
     """
+    if out_dir and not settings.dry_run:
+        with RunLock(out_dir):
+            return _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_jobs, on_phase)
+    return _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_jobs, on_phase)
+
+
+def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_jobs, on_phase) -> dict:
     t0 = time.perf_counter()
     files = collect_inputs(inputs, recursive)
     if not files:
@@ -677,6 +763,7 @@ def run_batch(inputs: Sequence[str], out_dir: Optional[str], settings: Settings,
                "flatten": settings.flatten, "flatten_params": settings.flatten_params
                } if manifest.persist and settings.previews else None
     exported_now: Dict[str, bool] = {}
+    saver = _Saver(manifest, settings)
 
     # ---- pass A: detect new or changed scans, export them from the same decode ----------
     jobs = []
@@ -704,19 +791,29 @@ def run_batch(inputs: Sequence[str], out_dir: Optional[str], settings: Settings,
             log.info("%s: %s in %.1fs", res["key"], res.get("error") or "done", res["time_s"])
             if progress:
                 progress(res["key"], res.get("error") or "detected")
-            manifest.save()
+            saver.tick()
+        saver.flush()
 
     # ---- scale and review --------------------------------------------------------------
+    manifest.refresh()   # fixes saved by someone else during detection (every scan is judged below)
     scales = resolve_scales(manifest, keys, settings)
     refs = reference_sizes(manifest)
     if on_phase:
         on_phase("checking sizes")
+    last_refresh = time.monotonic()
     for k in keys:
         e = manifest.entry(k)
         if k in scales and (e.get("detection") or e.get("override")):
             ref = refs.get(_ref_group(e))
             status, warnings, fmt = evaluate(e, scales[k], settings.rules, ref, settings.margin_mm,
                                              settings.flatten, settings.flatten_params)
+            if status == "needs_review":      # fixed meanwhile? (a refresh parses the file: at most once a second)
+                if time.monotonic() - last_refresh >= 1.0:
+                    manifest.refresh()
+                    last_refresh = time.monotonic()
+                if k in manifest.fixed:
+                    status, warnings, fmt = evaluate(e, scales[k], settings.rules, ref, settings.margin_mm,
+                                                     settings.flatten, settings.flatten_params)
             if status == "needs_review":
                 cache = {}
 
@@ -735,68 +832,81 @@ def run_batch(inputs: Sequence[str], out_dir: Optional[str], settings: Settings,
             e.update(scale=scales[k].to_dict(), format=fmt, status=status, warnings=warnings, error=None)
 
     # ---- reconcile exports with the final scale ---------------------------------------
+    manifest.refresh()
+    fixed = manifest.take_fixed()     # fixes made while the sizes were checked, also of scans judged by now
+    if fixed:
+        reevaluate(manifest, fixed, settings)
     pass_b = []
+    retagged = 0
     for k in keys:
         e = manifest.entry(k)
         if e.get("status") == "failed" or k not in scales or not manifest.persist or not settings.export:
             continue
         if cancel and cancel():
+            pass_b = []
             break
         if settings.strict and e.get("status") == "needs_review":
             continue
         quad = Manifest.effective_quad(e)
         final = scales[k]
-        xkey = settings.export_key(quad, final, (e.get("detection") or {}).get("curves"),
-                                   manual_outline((e.get("override") or {}).get("quad"), e.get("detection")))
+        curves = (e.get("detection") or {}).get("curves")
+        manual = manual_outline((e.get("override") or {}).get("quad"), e.get("detection"))
+        xkey = settings.export_key(quad, final, curves, manual)
+        xbase = settings.export_base(quad, final, curves, manual)
         outs = e.get("outputs") or {}
         missing = not outs or any(not manifest.abs(p).exists() for p in outs.values())
         if exported_now.get(k):
             px_p = e.get("export_px_per_mm") or final.px_per_mm
             if abs(px_p - final.px_per_mm) * settings.margin_mm < 0.5:
-                if abs(px_p - final.px_per_mm) > 1e-6:
-                    ppm = e.get("output_ppm") or {}
-                    for name, rel in outs.items():
-                        if name in ppm:
-                            set_resolution(str(manifest.abs(rel)), final.px_per_mm * ppm[name] / px_p)
-                    e["output_ppm"] = {n: final.px_per_mm * v / px_p for n, v in ppm.items()}
-                    e["export_px_per_mm"] = final.px_per_mm
-                e["export_key"] = xkey
+                retag(manifest, e, final)
+                e["export_key"], e["export_base"] = xkey, xbase
                 continue
+        elif (not settings.force and not missing and e.get("export_key") != xkey and e.get("export_base") == xbase
+              and retag_ok(e, final, settings, curves, manual)):
+            retag(manifest, e, final)       # only the scale moved (the batch median): tags, no new pixels
+            e["export_key"] = xkey
+            retagged += 1
+            continue
         elif not (settings.force or e.get("export_key") != xkey or missing):
             continue
         pass_b.append({"key": k, "path": e["input"], "detect": False, "detection": e.get("detection"),
                        "override": e["override"]["quad"] if e.get("override") else None, "export": True,
                        "scale": final.px_per_mm, "export_settings": ex_settings,
-                       "detect_params": settings.detect_params, "xkey": xkey})
+                       "detect_params": settings.detect_params, "xkey": xkey, "xbase": xbase})
     if pass_b:
+        if on_jobs:
+            on_jobs(len(pass_b))
         workers = _workers_for(manifest, pass_b, settings)
         log.info("exporting %d scan(s) with %d worker(s)", len(pass_b), workers)
-        xkeys = {j["key"]: j["xkey"] for j in pass_b}
-        for res in _run_pool(_job, pass_b, workers):
+        xkeys = {j["key"]: (j["xkey"], j["xbase"]) for j in pass_b}
+        for res in _run_pool(_job, pass_b, workers, cancel):
             _store_job_result(manifest, res)
             e = manifest.entry(res["key"])
             if "error" in res:
                 e["error"] = f"export failed: {res['error']}"
             else:
-                e["export_key"] = xkeys[res["key"]]
+                e["export_key"], e["export_base"] = xkeys[res["key"]]
                 exported_now[res["key"]] = True
             log.info("%s: exported in %.1fs", res["key"], res["time_s"])
             if progress:
                 progress(res["key"], res.get("error") or "exported")
-            manifest.save()
+            saver.tick()
+        saver.flush()
 
+    saver.flush()      # takes in fixes made during the export: the summary shows their status
     for k in keys:
         emit(result_record(manifest, k, exported=exported_now.get(k, False)))
     counts: Dict[str, int] = {}
     for k in keys:
         st = manifest.entry(k).get("status", "pending")
         counts[st] = counts.get(st, 0) + 1
-    manifest.save()
+    saver.flush()
     return {
         "type": "summary",
         "scans": len(keys),
         "counts": counts,
         "exported": sum(1 for k in keys if exported_now.get(k)),
+        "retagged": retagged,
         "needs_review": sorted(k for k in keys if manifest.entry(k).get("status") == "needs_review"),
         "failed": sorted(k for k in keys if manifest.entry(k).get("status") == "failed"),
         "manifest": str(manifest.path) if manifest.persist else None,
