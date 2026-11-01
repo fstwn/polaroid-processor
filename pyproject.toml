@@ -30,6 +30,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "polaroid_processor.review" = ["static/*"]
+"polaroid_processor.app" = ["static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

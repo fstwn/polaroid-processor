@@ -44,7 +44,8 @@ def make_settings(*, margin_mm: float = 0.1, derivatives: Optional[Sequence[str]
                   overlay: bool = False, ppi: Optional[float] = None, profile: Optional[str] = None,
                   profiles: Optional[str] = None, strict: bool = False, force: bool = False,
                   redetect: bool = False, dry_run: bool = False, workers: Optional[int] = None,
-                  flatten: str = "auto", shadows: str = "auto") -> Settings:
+                  flatten: str = "auto", shadows: str = "auto", export: bool = True,
+                  previews: bool = False) -> Settings:
     s = Settings()
     s.margin_mm = float(margin_mm)
     if derivatives is not None:
@@ -63,16 +64,25 @@ def make_settings(*, margin_mm: float = 0.1, derivatives: Optional[Sequence[str]
             raise UsageError(f"{name} must be auto or off, not {value!r}")
     s.flatten, s.shadows = flatten, shadows
     s.workers = workers
+    s.export, s.previews = export, previews
     return s
 
 
 def process(inputs: Sequence[str], output: Optional[str], settings: Settings, *, recursive: bool = False,
-            emit: Emit = _ignore, progress: Optional[Callable[[str, str], None]] = None) -> dict:
+            emit: Emit = _ignore, progress: Optional[Callable[[str, str], None]] = None,
+            cancel: Optional[Callable[[], bool]] = None, on_jobs: Optional[Callable[[int], None]] = None,
+            on_phase: Optional[Callable[[str], None]] = None) -> dict:
     """Run a batch. ``emit`` gets one result record per scan at the end, ``progress`` one call
-    per finished job; returns the summary record."""
+    per finished job, ``on_jobs`` the number of scans to detect before the first one starts;
+    ``cancel()`` turning true stops the scans not yet started, ``on_phase`` the step after detection.
+    Returns the summary record.
+
+    With ``settings.export`` off, the detections are stored in the manifest and nothing is exported.
+    """
     if output is None and not settings.dry_run:
         raise UsageError("process needs an output folder (or dry_run to only detect)")
-    return run_batch(list(inputs), output, settings, emit=emit, recursive=recursive, progress=progress)
+    return run_batch(list(inputs), output, settings, emit=emit, recursive=recursive, progress=progress,
+                     cancel=cancel, on_jobs=on_jobs, on_phase=on_phase)
 
 
 def detect_scans(inputs: Sequence[str], *, recursive: bool = False, emit: Emit = _ignore) -> List[dict]:

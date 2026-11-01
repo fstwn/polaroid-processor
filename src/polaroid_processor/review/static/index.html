@@ -582,7 +582,8 @@ window.addEventListener("resize", () => { if (S.cur) { layout(); if (S.zoom) dra
     updateButtons();
     return;
   }
-  loadScan(0);
+  const want = decodeURIComponent(location.hash.slice(1));   // #<file name> opens that scan
+  loadScan(Math.max(0, S.scans.findIndex((s) => s.key === want)));
 })();
 </script>
 </body>

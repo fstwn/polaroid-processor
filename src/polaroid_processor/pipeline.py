@@ -25,6 +25,7 @@ from .geometry import rectify, shift_side
 from .imageio import (SCAN_SUFFIXES, file_fingerprint, load_rgb, read_meta, resize_long_edge, set_resolution,
                       write_derivative, write_tiff)
 from .manifest import Manifest, now, scan_key
+from .preview import LONG_EDGE, PREVIEW_DIR, write_preview
 from .render import overlay
 from .scale import Scale, batch_median_scale, explicit_scale, scale_from_size, scale_from_tag
 
@@ -92,6 +93,8 @@ class Settings:
     force: bool = False
     redetect: bool = False
     dry_run: bool = False
+    export: bool = True  # False: detect and store the outlines in the manifest, export nothing
+    previews: bool = False  # write a small straightened preview per newly detected scan (_previews/)
     workers: Optional[int] = None
     rules: ReviewRules = field(default_factory=ReviewRules)
     detect_params: DetectParams = field(default_factory=DetectParams)
@@ -272,6 +275,13 @@ def _job(job: dict) -> dict:
             curves = flat.trace(rgb, np.array(det["quad"], dtype=np.float64), px, det.get("speck_threshold") or 30,
                                 ex["flatten_params"])
             det["curves"] = {k: c.to_dict() for k, c in curves.items()}
+        if job.get("preview"):
+            try:  # a preview that fails must not fail the scan
+                res["preview"] = write_preview(rgb, quad, px, (det or {}).get("curves"),
+                                               manual_outline(job.get("override"), det), job["preview"],
+                                               Path(job["preview"]["dir"]) / f"{Path(job['key']).stem}.jpg")
+            except Exception as e:  # noqa: BLE001
+                log.warning("preview of %s failed: %s", job["key"], e)
         if job["export"]:
             res.update(_export(rgb, quad, px, meta.icc_profile, job["key"], ex,
                                curves=(det or {}).get("curves"),
@@ -288,8 +298,10 @@ def _crashed(job: dict) -> dict:
     return {"key": job["key"], "path": job["path"], "error": "worker process crashed on this scan"}
 
 
-def _run_pool(fn: Callable, jobs: List[dict], workers: int):
+def _run_pool(fn: Callable, jobs: List[dict], workers: int, cancel: Optional[Callable[[], bool]] = None):
     """Run ``fn`` on every job in worker processes, yielding results as they finish.
+
+    When ``cancel()`` turns true the jobs not yet started are dropped; the ones in flight finish.
 
     A worker that dies (a native crash in a decoder or OpenCV) breaks the whole pool. The
     jobs left over then run one by one, each in a fresh process, so only the scan that
@@ -301,16 +313,25 @@ def _run_pool(fn: Callable, jobs: List[dict], workers: int):
     try:
         with ProcessPoolExecutor(max_workers=workers) as ex:
             futs = {ex.submit(fn, j): i for i, j in enumerate(jobs)}
+            stopped = False
             for fut in as_completed(futs):
+                if fut.cancelled():
+                    continue
                 res = fut.result()
                 done.add(futs[fut])
                 yield res
+                if cancel and not stopped and cancel():
+                    stopped = True
+                    for f in futs:
+                        f.cancel()
         return
     except BrokenProcessPool:
         log.warning("a worker process crashed; running the remaining scans one by one")
     for i, j in enumerate(jobs):
         if i in done:
             continue
+        if cancel and cancel():
+            break
         try:
             with ProcessPoolExecutor(max_workers=1) as ex:
                 res = ex.submit(fn, j).result()
@@ -599,6 +620,8 @@ def _store_job_result(manifest: Manifest, res: dict) -> None:
         e.update(status="failed", error=res["error"], warnings=[])
         return
     e["error"] = None
+    if "preview" in res:
+        e["preview"] = {**res["preview"], "file": manifest.rel(res["preview"]["file"])}
     if "outputs" in res:
         e.update(outputs={n: manifest.rel(p) for n, p in res["outputs"].items()},
                  output_ppm=res["output_ppm"], output_size_px=res["output_size_px"],
@@ -608,11 +631,21 @@ def _store_job_result(manifest: Manifest, res: dict) -> None:
 
 def run_batch(inputs: Sequence[str], out_dir: Optional[str], settings: Settings,
               emit: Callable[[dict], None] = lambda r: None, recursive: bool = False,
-              progress: Optional[Callable[[str, str], None]] = None) -> dict:
+              progress: Optional[Callable[[str, str], None]] = None,
+              cancel: Optional[Callable[[], bool]] = None,
+              on_jobs: Optional[Callable[[int], None]] = None,
+              on_phase: Optional[Callable[[str], None]] = None) -> dict:
     """Process scans into ``out_dir``. Emits one result record per scan and returns a summary.
 
     ``progress(key, what)`` is called as each worker job finishes ("detected", "exported" or
-    an error message); scans that are up to date produce no call.
+    an error message); scans that are up to date produce no call. ``on_jobs(n)`` is called
+    with the number of scans that need detection before the first one starts; ``on_phase(text)``
+    says what the batch does after the scans are detected ("checking sizes", a scan being refitted). When ``cancel()``
+    turns true, the scans not yet started are left out (the summary says ``cancelled``) and
+    nothing is exported.
+
+    With ``settings.export`` off the run only detects: outlines, curves, status and warnings go
+    into the manifest, no scan is exported, and a later run exports from the stored detections.
 
     Each scan is decoded once: detection (if the scan is new or changed) and export run in
     the same worker with a provisional scale. Once every scan is measured, the final scale
@@ -639,7 +672,10 @@ def run_batch(inputs: Sequence[str], out_dir: Optional[str], settings: Settings,
     explicit = explicit_scale(settings.ppi, settings.profile, settings.profiles_file)
     history = _history_scales(manifest)
     ex_settings = _export_settings(settings, out_path)
-    export_now = manifest.persist and not settings.strict  # strict needs the final status first
+    export_now = manifest.persist and settings.export and not settings.strict  # strict needs the final status first
+    preview = {"dir": str(out_path / PREVIEW_DIR), "long_edge": LONG_EDGE, "margin_mm": settings.margin_mm,
+               "flatten": settings.flatten, "flatten_params": settings.flatten_params
+               } if manifest.persist and settings.previews else None
     exported_now: Dict[str, bool] = {}
 
     # ---- pass A: detect new or changed scans, export them from the same decode ----------
@@ -656,11 +692,13 @@ def run_batch(inputs: Sequence[str], out_dir: Optional[str], settings: Settings,
         prov = explicit or (history.get(_group(e)) if e else None)
         jobs.append({"key": key, "path": str(f), "detect": True, "detection": None,
                      "override": None, "export": export_now, "scale": prov.px_per_mm if prov else None,
-                     "export_settings": ex_settings, "detect_params": settings.detect_params})
+                     "export_settings": ex_settings, "detect_params": settings.detect_params, "preview": preview})
+    if on_jobs:
+        on_jobs(len(jobs))
     if jobs:
         workers = _workers_for(manifest, jobs, settings)
         log.info("processing %d new or changed scan(s) with %d worker(s)", len(jobs), workers)
-        for res in _run_pool(_job, jobs, workers):
+        for res in _run_pool(_job, jobs, workers, cancel):
             _store_job_result(manifest, res)
             exported_now[res["key"]] = "outputs" in res
             log.info("%s: %s in %.1fs", res["key"], res.get("error") or "done", res["time_s"])
@@ -671,6 +709,8 @@ def run_batch(inputs: Sequence[str], out_dir: Optional[str], settings: Settings,
     # ---- scale and review --------------------------------------------------------------
     scales = resolve_scales(manifest, keys, settings)
     refs = reference_sizes(manifest)
+    if on_phase:
+        on_phase("checking sizes")
     for k in keys:
         e = manifest.entry(k)
         if k in scales and (e.get("detection") or e.get("override")):
@@ -685,6 +725,8 @@ def run_batch(inputs: Sequence[str], out_dir: Optional[str], settings: Settings,
                         cache["rgb"] = load_rgb(path)
                     return cache["rgb"]
 
+                if on_phase:
+                    on_phase(f"checking {k}")
                 fit = size_refit(e, scales[k], ref, settings.rules, scan_rgb)
                 if fit:
                     apply_refit(e, fit[0], fit[1], scan_rgb(), scales[k].px_per_mm, settings)
@@ -696,8 +738,10 @@ def run_batch(inputs: Sequence[str], out_dir: Optional[str], settings: Settings,
     pass_b = []
     for k in keys:
         e = manifest.entry(k)
-        if e.get("status") == "failed" or k not in scales or not manifest.persist:
+        if e.get("status") == "failed" or k not in scales or not manifest.persist or not settings.export:
             continue
+        if cancel and cancel():
+            break
         if settings.strict and e.get("status") == "needs_review":
             continue
         quad = Manifest.effective_quad(e)
@@ -756,6 +800,7 @@ def run_batch(inputs: Sequence[str], out_dir: Optional[str], settings: Settings,
         "needs_review": sorted(k for k in keys if manifest.entry(k).get("status") == "needs_review"),
         "failed": sorted(k for k in keys if manifest.entry(k).get("status") == "failed"),
         "manifest": str(manifest.path) if manifest.persist else None,
+        "cancelled": bool(cancel and cancel()),
         "time_s": round(time.perf_counter() - t0, 1),
     }
 

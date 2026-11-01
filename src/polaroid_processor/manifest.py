@@ -7,6 +7,8 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import os
+import threading
+import time
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
@@ -47,10 +49,18 @@ class Manifest:
         self.out_dir.mkdir(parents=True, exist_ok=True)
         self.data["tool"] = f"polaroid-processor {__version__}"
         self.data["updated_at"] = now()
-        tmp = self.path.with_name(self.path.name + ".part")
+        tmp = self.path.with_name(f"{self.path.name}.{os.getpid()}.{threading.get_ident()}.part")
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(self.data, f, indent=1, ensure_ascii=False)
-        os.replace(tmp, self.path)
+        for attempt in range(40):  # Windows refuses the swap while a reader (the app) has the file open
+            try:
+                os.replace(tmp, self.path)
+                return
+            except PermissionError:
+                if attempt == 39:
+                    tmp.unlink(missing_ok=True)
+                    raise
+                time.sleep(0.05)
 
     # ---- access ------------------------------------------------------
     @property

@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Polaroid</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header>
+  <h1 id="title">Polaroid</h1>
+  <span id="where" class="where"></span>
+  <span class="spacer"></span>
+  <span id="actions"></span>
+</header>
+<div id="msg" role="alert"></div>
+
+<section id="home" hidden>
+  <div class="panel">
+    <h2>New project</h2>
+    <label for="in-path">Input folder (the scans)</label>
+    <div class="row">
+      <input id="in-path" type="text" spellcheck="false" placeholder="D:\scans\roll_01" autocomplete="off">
+      <button id="in-browse">Browse&hellip;</button>
+    </div>
+    <div id="recent-inputs" class="chips"></div>
+    <label for="out-path">Output folder</label>
+    <div class="row">
+      <input id="out-path" type="text" spellcheck="false" placeholder="next to the input, named after it with _processed" autocomplete="off">
+      <button id="out-browse">Browse&hellip;</button>
+    </div>
+    <div class="row end"><button id="create" class="primary">Create project</button></div>
+  </div>
+  <div class="panel">
+    <h2>Open an output folder</h2>
+    <p class="dim">Any folder with a <code>polaroid-manifest.json</code>, also one made on the command line.</p>
+    <div class="row">
+      <input id="open-path" type="text" spellcheck="false" placeholder="D:\scans\roll_01_processed" autocomplete="off">
+      <button id="open-browse">Browse&hellip;</button>
+      <button id="open-go">Open</button>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Recent projects</h2>
+    <div id="projects"></div>
+  </div>
+</section>
+
+<section id="project" hidden>
+  <div id="runbar" class="panel runbar">
+    <div class="row">
+      <div class="bar"><div id="bar-fill"></div></div>
+      <span id="bar-text" class="dim"></span>
+    </div>
+  </div>
+  <div id="filters" class="chips filters"></div>
+  <div id="empty" class="empty" hidden></div>
+  <div id="grid"></div>
+</section>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
