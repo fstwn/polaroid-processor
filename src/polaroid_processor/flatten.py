@@ -24,7 +24,7 @@ from typing import Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 
-from .detection import quad_size
+from .detection import band_end, quad_size
 from .geometry import output_size
 
 SIDES = ("top", "right", "bottom", "left")
@@ -48,6 +48,14 @@ class FlattenParams:
     max_dev_mm: float = 1.6  # a curve that bends further than this is not trusted
     min_bend_mm: float = 0.1  # flatten only when a reliable side bends at least this much
     fade_mm: float = 5.0  # a side's correction fades to zero this far inward (photo window untouched)
+    # top and bottom: the edge sits at the inner end of the grey band, as in detection.band_shift
+    band_sides: Tuple[str, ...] = ("top", "bottom")
+    band_level_mm: Tuple[float, float] = (0.5, 1.0)  # behind the crossing: print level (median)
+    band_max_mm: float = 0.5  # the band end lies at most this far behind the crossing
+    band_near_mm: Tuple[float, float] = (0.1, 0.25)  # behind the crossing: level that must show the band
+    band_near_min: float = 0.65
+    band_knee: float = 2.0
+    band_min_share: float = 0.5  # share of samples that must show a band
 
     def warp_px(self, px_per_mm: float) -> dict:
         """``fade_px`` and ``hold_px`` for :func:`unwarp` and :func:`outline_points`."""
@@ -187,19 +195,33 @@ def trace(rgb: np.ndarray, quad: np.ndarray, px_per_mm: float, thr: int = 30,
     d_out = d_in = int(p.search_mm * px_per_mm)
     plateau = max(2, int(p.plateau_mm * px_per_mm))
     skip = p.end_skip_mm * px_per_mm
+    band_win = (int(p.band_level_mm[0] * px_per_mm), int(p.band_level_mm[1] * px_per_mm))
+    band_max = int(p.band_max_mm * px_per_mm)
+    band_near = (int(p.band_near_mm[0] * px_per_mm), int(p.band_near_mm[1] * px_per_mm))
     curves = {}
     for side, (p0, t, n, length) in _side_frames(quad).items():
+        edge_band = side in p.band_sides
         ss = np.arange(skip, length - skip, step)
         strip = _side_strip(mx, p0, t, n, length, d_out, d_in)
         prof_mx = _window_means(strip.astype(np.float32), ss, band)
         prof_sp = _window_means((strip > thr).astype(np.float32), ss, band)
         ds = np.full(len(ss), np.nan)
+        bands = []
         for i in range(len(ss)):
             pos = _find_edge(prof_mx[:, i], plateau, p.contrast)
-            if pos is None:
+            if pos is not None and edge_band:
+                pm = prof_mx[:, i]
+                end = band_end(pm, pos, float(np.percentile(pm[: max(8, len(pm) // 8)], 10)), band_win,
+                               band_max, band_near, p.band_near_min, p.band_knee)
+                if end is not None:
+                    bands.append(end - pos)
+            elif pos is None:
                 pos = _find_edge(prof_sp[:, i], plateau, 0.05)
             if pos is not None:
                 ds[i] = d_out - pos
+        # one shift per side, as in detection: a band found at some samples only must not bend the curve
+        if bands and len(bands) >= p.band_min_share * np.isfinite(ds).sum():
+            ds -= float(np.median(bands))
         coef, inl = _robust_poly(ss / length, ds, p.degree, p.floor_mm * px_per_mm)
         curve = SideCurve(p0, t, n, length, np.zeros(p.degree + 1))
         share = float(inl.sum()) / max(1, len(ss))

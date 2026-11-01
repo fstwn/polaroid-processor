@@ -19,9 +19,9 @@ from . import __version__
 from . import flatten as flat
 from . import refit
 from . import shading
-from .detection import DetectionError, DetectParams, detect, quad_size
+from .detection import DetectionError, DetectParams, band_shift, detect, quad_size
 from .formats import classify, match_format
-from .geometry import rectify
+from .geometry import rectify, shift_side
 from .imageio import (SCAN_SUFFIXES, file_fingerprint, load_rgb, read_meta, resize_long_edge, set_resolution,
                       write_derivative, write_tiff)
 from .manifest import Manifest, now, scan_key
@@ -399,8 +399,15 @@ def size_refit(entry: dict, scale: Scale, ref_size: Optional[Tuple[float, float]
 def apply_refit(entry: dict, quad: np.ndarray, info: dict, rgb: Optional[np.ndarray], px_per_mm: float,
                 settings: "Settings") -> None:
     """Store the refit outline in the detection (the original stays as ``quad_detected``); the
-    curves are traced again around it."""
+    curves are traced again around it. A refit top or bottom moves on onto the end of its edge
+    band, as in detection."""
     det = entry["detection"]
+    side = info.get("side")
+    if rgb is not None and side in settings.detect_params.band_sides:
+        d = band_shift(flat.max_rgb_u8(rgb), quad, side, settings.detect_params, det.get("factor") or 4)
+        if d is not None:
+            quad = shift_side(quad, side, -d)
+            info = {**info, "band_px": round(d, 1)}
     det["quad_detected"] = det["quad"]
     det["quad"] = np.round(quad, 2).tolist()
     det["refit"] = info
@@ -680,8 +687,7 @@ def run_batch(inputs: Sequence[str], out_dir: Optional[str], settings: Settings,
 
                 fit = size_refit(e, scales[k], ref, settings.rules, scan_rgb)
                 if fit:
-                    apply_refit(e, fit[0], fit[1], scan_rgb() if settings.flatten != "off" else None,
-                                scales[k].px_per_mm, settings)
+                    apply_refit(e, fit[0], fit[1], scan_rgb(), scales[k].px_per_mm, settings)
                     status, warnings, fmt = evaluate(e, scales[k], settings.rules, ref, settings.margin_mm,
                                                      settings.flatten, settings.flatten_params)
             e.update(scale=scales[k].to_dict(), format=fmt, status=status, warnings=warnings, error=None)

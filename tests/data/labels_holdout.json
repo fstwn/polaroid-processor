@@ -1,23 +1,23 @@
 {
- "note": "Held-out labels: human-reviewed print corners (tl, tr, br, bl) in full-resolution scan pixels, continuous coordinates, on scans the detector was not tuned on. Use to measure, never to tune. Paths are relative to the scan library root ($POLAROID_LIBRARY, default D:/11_pictures/Pictures).",
+ "note": "Held-out labels: human-reviewed print corners (tl, tr, br, bl) in full-resolution scan pixels, continuous coordinates, on scans the detector was not tuned on. Use to measure, never to tune. Paths are relative to the scan library root ($POLAROID_LIBRARY, default D:/11_pictures/Pictures). Edge convention since 2026-11-01: the grey band at the top and bottom edge (the print's rounded edge seen from above, 0.05-0.35 mm) is not print; the edge sits at the inner end of the band. Left and right edges stay on the middle of the soft transition. quad_v1 holds the earlier outline.",
  "scans": {
   "05_roller_roids/250728_SICKalps_L2_D2/250728_SICKalps_L2_D2_02.tif": {
    "quad": [
     [
-     198,
-     458.4
+     198.03,
+     471.27
     ],
     [
-     11352.5,
-     430.5
+     11352.53,
+     443.37
     ],
     [
-     11381.3,
-     14007.6
+     11381.2,
+     13981.88
     ],
     [
-     238.2,
-     14052.6
+     238.1,
+     14026.88
     ]
    ],
    "author": "fstwn",
@@ -25,7 +25,7 @@
    "frame": "Round window",
    "decision": "correct",
    "note": "",
-   "reviewed_at": "2026-10-18T18:27:16.407Z",
+   "reviewed_at": "2026-11-01T12:46:18+01:00",
    "auto_quad": [
     [
      198.0,
@@ -44,25 +44,44 @@
      14052.6
     ]
    ],
-   "px_per_mm": 126.795
+   "px_per_mm": 126.795,
+   "quad_v1": [
+    [
+     198,
+     458.4
+    ],
+    [
+     11352.5,
+     430.5
+    ],
+    [
+     11381.3,
+     14007.6
+    ],
+    [
+     238.2,
+     14052.6
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "05_roller_roids/250728_SICKalps_L2_D2/250728_SICKalps_L2_D2_10.tif": {
    "quad": [
     [
-     151.3,
-     491.9
+     151.39,
+     511.72
     ],
     [
-     11297.6,
-     443.6
+     11297.69,
+     463.42
     ],
     [
-     11348.4,
-     14007
+     11348.32,
+     13991.19
     ],
     [
-     183.2,
-     14064.7
+     183.12,
+     14048.89
     ]
    ],
    "author": "fstwn",
@@ -70,7 +89,7 @@
    "frame": "White",
    "decision": "correct",
    "note": "",
-   "reviewed_at": "2026-10-18T18:28:11.870Z",
+   "reviewed_at": "2026-11-01T12:46:37+01:00",
    "auto_quad": [
     [
      151.3,
@@ -89,25 +108,44 @@
      14064.7
     ]
    ],
-   "px_per_mm": 126.795
+   "px_per_mm": 126.795,
+   "quad_v1": [
+    [
+     151.3,
+     491.9
+    ],
+    [
+     11297.6,
+     443.6
+    ],
+    [
+     11348.4,
+     14007
+    ],
+    [
+     183.2,
+     14064.7
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "05_roller_roids/250728_SICKalps_L2_D2/250728_SICKalps_L2_D2_17.tif": {
    "quad": [
     [
-     269.3,
-     448.7
+     269.41,
+     459.59
     ],
     [
-     11422.5,
-     338.4
+     11425.57,
+     349.26
     ],
     [
-     11532.1,
-     13893.0
+     11534.89,
+     13875.18
     ],
     [
-     412.3,
-     14001.8
+     412.13,
+     13984.01
     ]
    ],
    "author": "fstwn",
@@ -115,7 +153,7 @@
    "frame": "Gold",
    "decision": "confirm",
    "note": "",
-   "reviewed_at": "2026-10-18T18:26:26.109Z",
+   "reviewed_at": "2026-11-01T12:47:05+01:00",
    "auto_quad": [
     [
      269.3,
@@ -134,25 +172,44 @@
      14001.8
     ]
    ],
-   "px_per_mm": 126.795
+   "px_per_mm": 126.795,
+   "quad_v1": [
+    [
+     269.3,
+     448.7
+    ],
+    [
+     11422.5,
+     338.4
+    ],
+    [
+     11532.1,
+     13893.0
+    ],
+    [
+     412.3,
+     14001.8
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "05_roller_roids/250728_SICKalps_L2_D2/250728_SICKalps_L2_D2_21.tif": {
    "quad": [
     [
-     225.3,
-     402.8
+     225.37,
+     412.76
     ],
     [
-     11379.7,
-     323.9
+     11379.77,
+     333.86
     ],
     [
-     11455.2,
-     13880.1
+     11455.13,
+     13870.2
     ],
     [
-     278.6,
-     13961.5
+     278.53,
+     13951.6
     ]
    ],
    "author": "fstwn",
@@ -160,7 +217,7 @@
    "frame": "Gold",
    "decision": "confirm",
    "note": "",
-   "reviewed_at": "2026-10-18T18:26:41.926Z",
+   "reviewed_at": "2026-11-01T12:47:18+01:00",
    "auto_quad": [
     [
      225.3,
@@ -179,25 +236,44 @@
      13961.5
     ]
    ],
-   "px_per_mm": 126.795
+   "px_per_mm": 126.795,
+   "quad_v1": [
+    [
+     225.3,
+     402.8
+    ],
+    [
+     11379.7,
+     323.9
+    ],
+    [
+     11455.2,
+     13880.1
+    ],
+    [
+     278.6,
+     13961.5
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "05_roller_roids/250729_SICKalps_L2_D3/250928_SICKalps_L2_D3_03.tif": {
    "quad": [
     [
-     290.6,
-     343.8
+     290.65,
+     356.67
     ],
     [
-     11454.4,
-     302.5
+     11454.45,
+     315.37
     ],
     [
-     11491.5,
-     13862.4
+     11491.37,
+     13838.65
     ],
     [
-     359.6,
-     13921.3
+     359.47,
+     13897.55
     ]
    ],
    "author": "fstwn",
@@ -205,7 +281,7 @@
    "frame": "Round window",
    "decision": "confirm",
    "note": "",
-   "reviewed_at": "2026-10-18T18:27:26.386Z",
+   "reviewed_at": "2026-11-01T12:47:35+01:00",
    "auto_quad": [
     [
      290.6,
@@ -224,25 +300,44 @@
      13921.3
     ]
    ],
-   "px_per_mm": 126.734
+   "px_per_mm": 126.734,
+   "quad_v1": [
+    [
+     290.6,
+     343.8
+    ],
+    [
+     11454.4,
+     302.5
+    ],
+    [
+     11491.5,
+     13862.4
+    ],
+    [
+     359.6,
+     13921.3
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "05_roller_roids/250729_SICKalps_L2_D3/250928_SICKalps_L2_D3_14.tif": {
    "quad": [
     [
-     181.6,
-     389.9
+     181.65,
+     399.8
     ],
     [
-     11341.6,
-     334.5
+     11341.65,
+     344.4
     ],
     [
-     11372.0,
-     13890.1
+     11371.91,
+     13871.31
     ],
     [
-     221.0,
-     13940.6
+     220.91,
+     13921.81
     ]
    ],
    "author": "fstwn",
@@ -250,7 +345,7 @@
    "frame": "Gold",
    "decision": "confirm",
    "note": "",
-   "reviewed_at": "2026-10-18T18:26:53.008Z",
+   "reviewed_at": "2026-11-01T12:47:49+01:00",
    "auto_quad": [
     [
      181.6,
@@ -269,25 +364,44 @@
      13940.6
     ]
    ],
-   "px_per_mm": 126.734
+   "px_per_mm": 126.734,
+   "quad_v1": [
+    [
+     181.6,
+     389.9
+    ],
+    [
+     11341.6,
+     334.5
+    ],
+    [
+     11372.0,
+     13890.1
+    ],
+    [
+     221.0,
+     13940.6
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "02_polaroid/259999_Polaroids_Misc/250628_Polaroid_Garten_0.tif": {
    "quad": [
     [
-     310.4,
-     426.9
+     310.46,
+     449.65
     ],
     [
-     11411.5,
-     397.5
+     11411.56,
+     420.25
     ],
     [
-     11482.0,
-     13941.6
+     11481.97,
+     13935.66
     ],
     [
-     337.9,
-     13998.5
+     337.87,
+     13992.56
     ]
    ],
    "author": "fstwn",
@@ -295,7 +409,7 @@
    "frame": "White",
    "decision": "confirm",
    "note": "",
-   "reviewed_at": "2026-10-18T18:27:35.611Z",
+   "reviewed_at": "2026-11-01T12:45:56+01:00",
    "auto_quad": [
     [
      310.4,
@@ -314,25 +428,44 @@
      13998.5
     ]
    ],
-   "px_per_mm": 126.562
+   "px_per_mm": 126.562,
+   "quad_v1": [
+    [
+     310.4,
+     426.9
+    ],
+    [
+     11411.5,
+     397.5
+    ],
+    [
+     11482.0,
+     13941.6
+    ],
+    [
+     337.9,
+     13998.5
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "02_polaroid/259999_Polaroids_Misc/259999_Misc_16.tif": {
    "quad": [
     [
-     298,
-     309.5
+     298.01,
+     317.42
     ],
     [
-     11430,
-     293
+     11430.01,
+     300.92
     ],
     [
-     11417.3,
-     13874.9
+     11417.26,
+     13843.23
     ],
     [
-     264,
-     13888.2
+     263.96,
+     13856.53
     ]
    ],
    "author": "fstwn",
@@ -340,7 +473,7 @@
    "frame": "Olive frame",
    "decision": "correct",
    "note": "",
-   "reviewed_at": "2026-10-18T18:23:54.437Z",
+   "reviewed_at": "2026-11-01T12:52:41+01:00",
    "auto_quad": [
     [
      298.0,
@@ -359,25 +492,44 @@
      13884.5
     ]
    ],
-   "px_per_mm": 126.62
+   "px_per_mm": 126.62,
+   "quad_v1": [
+    [
+     298,
+     309.5
+    ],
+    [
+     11430,
+     293
+    ],
+    [
+     11417.3,
+     13874.9
+    ],
+    [
+     264,
+     13888.2
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "02_polaroid/259999_Polaroids_Misc/259999_Misc_18.tif": {
    "quad": [
     [
-     169.2,
-     385.5
+     169.26,
+     398.38
     ],
     [
-     11301.2,
-     330.9
+     11301.26,
+     343.78
     ],
     [
-     11357.4,
-     13905.0
+     11357.31,
+     13885.22
     ],
     [
-     205.4,
-     13957.0
+     205.31,
+     13937.22
     ]
    ],
    "author": "fstwn",
@@ -385,7 +537,7 @@
    "frame": "Yellow frame",
    "decision": "confirm",
    "note": "",
-   "reviewed_at": "2026-10-18T18:24:07.610Z",
+   "reviewed_at": "2026-11-01T12:52:59+01:00",
    "auto_quad": [
     [
      169.2,
@@ -404,25 +556,44 @@
      13957.0
     ]
    ],
-   "px_per_mm": 126.62
+   "px_per_mm": 126.62,
+   "quad_v1": [
+    [
+     169.2,
+     385.5
+    ],
+    [
+     11301.2,
+     330.9
+    ],
+    [
+     11357.4,
+     13905.0
+    ],
+    [
+     205.4,
+     13957.0
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "02_polaroid/259999_Polaroids_Misc/259999_Misc_21.tif": {
    "quad": [
     [
-     316.6,
-     378.3
+     316.64,
+     391.18
     ],
     [
-     11432.9,
-     340.4
+     11432.94,
+     353.28
     ],
     [
-     11462.8,
-     13881.4
+     11462.76,
+     13871.49
     ],
     [
-     348.5,
-     13931.4
+     348.46,
+     13921.49
     ]
    ],
    "author": "fstwn",
@@ -430,7 +601,7 @@
    "frame": "White",
    "decision": "correct",
    "note": "",
-   "reviewed_at": "2026-10-18T18:28:01.104Z",
+   "reviewed_at": "2026-11-01T12:53:18+01:00",
    "auto_quad": [
     [
      314.6,
@@ -449,25 +620,44 @@
      13931.4
     ]
    ],
-   "px_per_mm": 126.62
+   "px_per_mm": 126.62,
+   "quad_v1": [
+    [
+     316.6,
+     378.3
+    ],
+    [
+     11432.9,
+     340.4
+    ],
+    [
+     11462.8,
+     13881.4
+    ],
+    [
+     348.5,
+     13931.4
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "02_polaroid/260226_Polaroids_Samsoe/260315_Polaroids_Samsoe_01.tif": {
    "quad": [
     [
-     425.8,
-     464.6
+     425.9,
+     484.37
     ],
     [
-     11543.5,
-     407.1
+     11543.6,
+     426.87
     ],
     [
-     11619.8,
-     13955.9
+     11619.76,
+     13948.97
     ],
     [
-     486.4,
-     14028
+     486.36,
+     14021.07
     ]
    ],
    "author": "fstwn",
@@ -475,7 +665,7 @@
    "frame": "Round window",
    "decision": "correct",
    "note": "",
-   "reviewed_at": "2026-10-18T18:27:04.033Z",
+   "reviewed_at": "2026-11-01T12:53:29+01:00",
    "auto_quad": [
     [
      425.8,
@@ -494,12 +684,31 @@
      14028.0
     ]
    ],
-   "px_per_mm": 126.622
+   "px_per_mm": 126.622,
+   "quad_v1": [
+    [
+     425.8,
+     464.6
+    ],
+    [
+     11543.5,
+     407.1
+    ],
+    [
+     11619.8,
+     13955.9
+    ],
+    [
+     486.4,
+     14028
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "02_polaroid/260226_Polaroids_Samsoe/260315_Polaroids_Samsoe_03.tif": {
    "quad": [
     [
-     412,
+     412.0,
      506.7
     ],
     [
@@ -520,7 +729,7 @@
    "frame": "Printed",
    "decision": "correct",
    "note": "",
-   "reviewed_at": "2026-10-18T18:25:01.453Z",
+   "reviewed_at": "2026-11-01T12:54:23+01:00",
    "auto_quad": [
     [
      412.0,
@@ -539,25 +748,44 @@
      14047.6
     ]
    ],
-   "px_per_mm": 126.622
+   "px_per_mm": 126.622,
+   "quad_v1": [
+    [
+     412,
+     506.7
+    ],
+    [
+     11565.4,
+     458.3
+    ],
+    [
+     11562.9,
+     13981.7
+    ],
+    [
+     432.4,
+     14034.5
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "02_polaroid/260226_Polaroids_Samsoe/260315_Polaroids_Samsoe_04.tif": {
    "quad": [
     [
-     303.8,
-     480.5
+     303.81,
+     482.51
     ],
     [
-     11425.1,
-     423.7
+     11425.11,
+     425.71
     ],
     [
-     11513,
-     13983.9
+     11512.83,
+     13952.22
     ],
     [
-     330.8,
-     14044.9
+     330.63,
+     14013.22
     ]
    ],
    "author": "fstwn",
@@ -565,7 +793,7 @@
    "frame": "Printed",
    "decision": "correct",
    "note": "",
-   "reviewed_at": "2026-10-18T18:25:31.389Z",
+   "reviewed_at": "2026-11-01T12:54:37+01:00",
    "auto_quad": [
     [
      303.8,
@@ -584,25 +812,45 @@
      14044.9
     ]
    ],
-   "px_per_mm": 126.622
+   "px_per_mm": 126.622,
+   "quad_v1": [
+    [
+     303.8,
+     480.5
+    ],
+    [
+     11425.1,
+     423.7
+    ],
+    [
+     11513,
+     13983.9
+    ],
+    [
+     330.8,
+     14044.9
+    ]
+   ],
+   "relabel": "2026-11-01 band convention",
+   "known_failure": "printed frame: bottom band not found, detector 0.25 mm outward"
   },
   "02_polaroid/260226_Polaroids_Samsoe/260315_Polaroids_Samsoe_10.tif": {
    "quad": [
     [
-     317.7,
-     458
+     317.73,
+     462.97
     ],
     [
-     11442.3,
-     398.7
+     11442.33,
+     403.67
     ],
     [
-     11557.6,
-     13969.5
+     11557.45,
+     13932.88
     ],
     [
-     370.9,
-     14015.8
+     370.75,
+     13979.18
     ]
    ],
    "author": "fstwn",
@@ -610,7 +858,7 @@
    "frame": "Printed",
    "decision": "correct",
    "note": "",
-   "reviewed_at": "2026-10-18T18:26:00.650Z",
+   "reviewed_at": "2026-11-01T12:55:00+01:00",
    "auto_quad": [
     [
      317.7,
@@ -629,25 +877,44 @@
      14015.8
     ]
    ],
-   "px_per_mm": 126.622
+   "px_per_mm": 126.622,
+   "quad_v1": [
+    [
+     317.7,
+     458
+    ],
+    [
+     11442.3,
+     398.7
+    ],
+    [
+     11557.6,
+     13969.5
+    ],
+    [
+     370.9,
+     14015.8
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "02_polaroid/260226_Polaroids_Samsoe/260315_Polaroids_Samsoe_11.tif": {
    "quad": [
     [
-     430,
-     515.5
+     430.02,
+     519.52
     ],
     [
-     11542.5,
-     472.1
+     11542.52,
+     476.12
     ],
     [
-     11557,
-     14034.7
+     11556.91,
+     14004.01
     ],
     [
-     446.1,
-     14068.3
+     446.01,
+     14037.61
     ]
    ],
    "author": "fstwn",
@@ -655,7 +922,7 @@
    "frame": "Printed",
    "decision": "correct",
    "note": "",
-   "reviewed_at": "2026-10-18T18:26:16.332Z",
+   "reviewed_at": "2026-11-01T12:55:13+01:00",
    "auto_quad": [
     [
      430.0,
@@ -674,25 +941,44 @@
      14068.3
     ]
    ],
-   "px_per_mm": 126.622
+   "px_per_mm": 126.622,
+   "quad_v1": [
+    [
+     430,
+     515.5
+    ],
+    [
+     11542.5,
+     472.1
+    ],
+    [
+     11557,
+     14034.7
+    ],
+    [
+     446.1,
+     14068.3
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "05_roller_roids/260328_tttacho_IGNITION/260328_RollerRoids_tttacho_23.tif": {
    "quad": [
     [
-     405.5,
-     431.9
+     405.52,
+     450.71
     ],
     [
-     11538.9,
-     419.1
+     11538.92,
+     437.91
     ],
     [
      11549.8,
-     13974.7
+     13963.81
     ],
     [
      418.8,
-     13975.4
+     13964.51
     ]
    ],
    "author": "fstwn",
@@ -700,7 +986,7 @@
    "frame": "White",
    "decision": "correct",
    "note": "",
-   "reviewed_at": "2026-10-18T18:28:23.659Z",
+   "reviewed_at": "2026-11-01T12:57:12+01:00",
    "auto_quad": [
     [
      399.8,
@@ -719,7 +1005,26 @@
      13975.4
     ]
    ],
-   "px_per_mm": 126.701
+   "px_per_mm": 126.701,
+   "quad_v1": [
+    [
+     405.5,
+     431.9
+    ],
+    [
+     11538.9,
+     419.1
+    ],
+    [
+     11549.8,
+     13974.7
+    ],
+    [
+     418.8,
+     13975.4
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   }
  }
 }

@@ -14,13 +14,16 @@ does not threshold brightness; it asks "is there anything at all here":
 6. Robust (trimmed) line fit per side, moved to the middle third of the side (concave prints);
    corners are the line intersections.
 7. Second pass with the threshold raised above the measured holder noise.
+8. Top and bottom: the print's rounded edge shows as a grey band behind the 50 % crossing.
+   The side moves inward onto the band's inner end (knee of a two-line fit, median over the
+   side); a grey holder rim in front of the print is not taken for a band.
 
 Coordinates are full-resolution pixels, continuous, pixel ``i`` spanning ``[i, i+1)``.
 """
 from __future__ import annotations
 
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Dict, List, Optional, Tuple
 
 import cv2
@@ -68,6 +71,17 @@ class DetectParams:
     refine_frac: float = 0.5  # crossing level between holder and print
     refine_contrast: float = 20.0  # min print - holder level (max RGB, 8 bit); below: speck density profile
     refine_density: float = 0.02  # min density contrast (pixel share); below: keep the cell point
+    # top and bottom edges: the print's rounded edge shows as a grey band behind the 50 % crossing;
+    # after the fit, each of these sides moves inward to the band's inner end (median over stations)
+    band_sides: Tuple[str, ...] = ("top", "bottom")
+    band_stations: int = 15  # profiles across the side, spread over its middle (corner_skip excluded)
+    band_level: Tuple[int, int] = (16, 32)  # cells behind the crossing that give the print level (median)
+    band_max: int = 16  # the band end lies at most this many cells behind the crossing
+    # just behind the crossing (refine_in) the band already reaches this share of the print level;
+    # a grey holder rim in front of the print stays far below it
+    band_near_min: float = 0.65
+    band_knee: float = 2.0  # the band rises at least this many times faster than what follows it
+    band_min_share: float = 0.5  # share of stations that must show a band
     ahead_window: int = 8  # a sparse plateau followed this soon by a bright one is a holder gap
     ahead_ratio: float = 6.0
     corner_skip: float = 0.08  # fraction of each side ignored near the corners
@@ -97,6 +111,21 @@ class EdgeStats:
     # how far a run of edge points (3 consecutive segments, outliers included) lies inside
     # the outline; holder shows in the crop there when this exceeds the crop margin
     inside_px: Optional[float] = None
+    # how far the side was moved inward from the fitted crossing line onto the edge band's inner end
+    band_px: Optional[float] = None
+
+    def moved_inward(self, d: float) -> "EdgeStats":
+        """These statistics after the outline moved ``d`` px inward (onto the edge band's end)."""
+        out = replace(self, band_px=d)
+        if self.inner_px is not None:
+            out.inner_px = self.inner_px - d
+        if self.inside_px is not None:
+            out.inside_px = self.inside_px - d
+        if self.flare_start_px is not None:
+            out.flare_start_px = self.flare_start_px + d
+        if self.flare_end_px is not None:
+            out.flare_end_px = self.flare_end_px + d
+        return out
 
     def to_dict(self) -> dict:
         return {k: (round(v, 1) if isinstance(v, float) else v) for k, v in asdict(self).items()}
@@ -264,6 +293,58 @@ def _angle_diff_deg(l1, l2) -> float:
     return float(np.degrees(np.arccos(min(1.0, c))))
 
 
+def _knee(prof: np.ndarray, j0: int, end: int, last: int, ratio: float) -> Optional[float]:
+    """Knee of a two-line least-squares fit to ``prof[j0:end]`` with the break at most at ``last``.
+
+    Returns where the two lines meet (pixel-edge coordinates), or None when the first line does
+    not rise at least ``ratio`` times faster than the second.
+    """
+    x = np.arange(j0, end, dtype=np.float64) + 0.5
+    y = prof[j0:end].astype(np.float64)
+    best = None
+    for b in range(j0 + 3, min(last, end - 3) + 1):
+        k = b - j0
+        f1, r1 = np.polyfit(x[:k], y[:k], 1, full=True)[:2]
+        f2, r2 = np.polyfit(x[k:], y[k:], 1, full=True)[:2]
+        sse = float(r1[0] if r1.size else 0.0) + float(r2[0] if r2.size else 0.0)
+        if best is None or sse < best[0]:
+            best = (sse, f1, f2, b)
+    if best is None:
+        return None
+    _, (m1, c1), (m2, c2), b = best
+    if m1 <= 0 or m1 < ratio * max(m2, 1e-6):
+        return None
+    xk = (c2 - c1) / (m1 - m2)
+    return float(np.clip(xk, j0 + 0.5, b + 0.5))
+
+
+def band_end(prof: np.ndarray, t: float, level0: float, level_win: Tuple[int, int], max_shift: int,
+             near_win: Tuple[int, int], near_min: float, knee: float) -> Optional[float]:
+    """Inner end of the grey edge band in an outside-first profile, or None when there is none.
+
+    ``t`` is the 50 % crossing (pixel-edge coordinates, sample k centred at k + 0.5). The band
+    ends at the knee where its rise gives way to the flatter print (:func:`_knee`), at most
+    ``max_shift`` behind the crossing. A band rises without a dip and already reaches
+    ``near_min`` of the print level (median of ``level_win`` behind the crossing) within
+    ``near_win``; a grey holder rim in front of the print does neither.
+    """
+    j0 = int(np.floor(t + 0.5))
+    a, b = j0 + level_win[0], j0 + level_win[1]
+    if j0 < 1 or b > len(prof):
+        return None
+    level1 = float(np.median(prof[a:b]))
+    near = float(np.median(prof[j0 + near_win[0]: j0 + near_win[1]]))
+    if level1 <= level0 or near - level0 < near_min * (level1 - level0):
+        return None
+    xk = _knee(prof, j0, b, j0 + max_shift, knee)
+    if xk is None:
+        return None
+    i = int(np.floor(xk + 0.5))
+    if prof[j0:i].min(initial=np.inf) < prof[j0] - 0.05 * (level1 - level0):  # dip: seam behind a rim
+        return None
+    return max(t, xk)
+
+
 def _consensus_offset(pts: np.ndarray, d: np.ndarray, tol: float) -> np.ndarray:
     """Inlier mask of the densest band of width ``2 * tol`` along the normal of direction ``d``."""
     nrm = np.array([-d[1], d[0]]) / np.hypot(*d)
@@ -273,6 +354,45 @@ def _consensus_offset(pts: np.ndarray, d: np.ndarray, tol: float) -> np.ndarray:
     i = int(np.argmax(hi - np.arange(len(so))))
     centre = np.median(so[i: hi[i]])
     return np.abs(off - centre) <= tol
+
+
+def band_shift(mx: np.ndarray, quad: np.ndarray, side: str, p: DetectParams = DetectParams(),
+               f: int = 4) -> Optional[float]:
+    """Median distance (px) from the 50 % crossing to the inner end of the edge band, measured
+    at ``band_stations`` profiles across ``side`` (top or bottom) of ``quad`` in ``mx``
+    (max(R, G, B), 8 bit); ``f`` is the cell factor. None without a band."""
+    a, b = {"top": (0, 1), "bottom": (3, 2)}[side]
+    p0, p1 = quad[a], quad[b]
+    length = float(np.linalg.norm(p1 - p0))
+    t = (p1 - p0) / length
+    n = np.array([-t[1], t[0]])
+    if np.dot((p0 + p1) / 2 - quad.mean(axis=0), n) > 0:
+        n = -n  # inward
+    wo, ia, ib = p.refine_out * f, p.refine_in[0] * f, p.refine_in[1] * f
+    reach = (p.refine_in[0] + p.band_level[1] + 4) * f
+    seg = max(8, int(length * (1 - 2 * p.corner_skip) / p.band_stations))
+    d = np.arange(-wo, reach, dtype=np.float32) + 0.5
+    along = np.arange(seg, dtype=np.float32) - seg / 2
+    shifts = []
+    for frac in np.linspace(p.corner_skip, 1 - p.corner_skip, p.band_stations):
+        c = p0 + (p1 - p0) * frac
+        X = (c[0] + along[None, :] * t[0] + d[:, None] * n[0] - 0.5).astype(np.float32)
+        Y = (c[1] + along[None, :] * t[1] + d[:, None] * n[1] - 0.5).astype(np.float32)
+        prof = cv2.remap(mx, X, Y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE).mean(axis=1)
+        level0 = float(prof[:wo].min())
+        below = np.flatnonzero(prof[: wo + ib] < level0 + 0.5 * (float(np.median(prof[wo + ia: wo + ib])) - level0))
+        if not below.size or float(np.median(prof[wo + ia: wo + ib])) - level0 < p.refine_contrast:
+            continue
+        j = int(below[-1]) + 1
+        half = level0 + 0.5 * (float(np.median(prof[wo + ia: wo + ib])) - level0)
+        t50 = j - 0.5 + (half - prof[j - 1]) / max(1e-9, float(prof[j] - prof[j - 1]))
+        end = band_end(prof, t50, level0, (p.band_level[0] * f, p.band_level[1] * f), p.band_max * f,
+                       (ia, ib), p.band_near_min, p.band_knee)
+        if end is not None:
+            shifts.append(end - t50)
+    if len(shifts) < p.band_min_share * p.band_stations:
+        return None
+    return float(np.median(shifts))
 
 
 class _Analysis:
@@ -617,6 +737,9 @@ class _Analysis:
         wq, hq = quad_size(quad)
         return 0.5 < wq / hq < 2.0
 
+    def band_shift(self, quad: np.ndarray, side: str) -> Optional[float]:
+        return band_shift(self.mx, quad, side, self.p, self.f)
+
     def attempt(self, thr: int):
         feat, _ = self.feature(thr)
         blob = self.blob(feat)
@@ -685,6 +808,12 @@ def detect(rgb: np.ndarray, params: DetectParams = DetectParams(), debug: bool =
             if again is not None and np.prod(quad_size(again[0])) >= 0.9 * np.prod(quad_size(found[0])):
                 found, thr = again, thr2
     quad, edges, pts, feat, repaired = found
+    from .geometry import shift_side  # geometry imports this module
+    for side in params.band_sides:
+        shift = a.band_shift(quad, side)
+        if shift is not None and side in edges:
+            quad = shift_side(quad, side, -shift)
+            edges[side] = edges[side].moved_inward(shift)
     det = Detection(
         quad=quad,
         scan_size=a.scan_size,

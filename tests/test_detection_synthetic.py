@@ -64,6 +64,6 @@ def test_rim_band_touching_the_print_is_repaired(frame):
     err = np.linalg.norm(det.quad - truth, axis=1).max() / PX_PER_MM
     assert det.repaired == ("bottom",)
     assert err <= 0.2, err
-    # without the repair the bottom follows the band
-    plain = detect(rgb, DetectParams(parallel_tol_deg=90))
+    # without the repair the bottom follows the band (the edge-band shift off, it would walk part of the way)
+    plain = detect(rgb, DetectParams(parallel_tol_deg=90, band_sides=()))
     assert np.linalg.norm(plain.quad - truth, axis=1).max() / PX_PER_MM > 0.3

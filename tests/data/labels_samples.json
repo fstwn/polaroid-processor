@@ -1,28 +1,28 @@
 {
- "note": "Sample labels: human-reviewed print corners (tl, tr, br, bl) in full-resolution pixels, continuous coordinates, confirmed on the review page on 2026-10-20. scans/: holder scans of Go prints (placed loosely, rotated) and 600 prints with printed frames; white_bg/: camera shots of white-framed 600 prints on paper (light-background detector). The light detector's dark-line rule was set from these shots. Paths are relative to $POLAROID_SAMPLES (default E:/POLAROID_PROCESSOR_SAMPLES). tol_mm: corner tolerance.",
+ "note": "Sample labels: human-reviewed print corners (tl, tr, br, bl) in full-resolution pixels, continuous coordinates, confirmed on the review page on 2026-10-20. scans/: holder scans of Go prints (placed loosely, rotated) and 600 prints with printed frames; white_bg/: camera shots of white-framed 600 prints on paper (light-background detector). The light detector's dark-line rule was set from these shots. Paths are relative to $POLAROID_SAMPLES (default E:/POLAROID_PROCESSOR_SAMPLES). tol_mm: corner tolerance. Edge convention since 2026-11-01: the grey band at the top and bottom edge (the print's rounded edge seen from above, 0.05-0.35 mm) is not print; the edge sits at the inner end of the band. Left and right edges stay on the middle of the soft transition. quad_v1 holds the earlier outline.",
  "scans": {
   "scans/269999_Polaroid_03.tif": {
    "quad": [
     [
-     403.08,
-     513.72
+     403.12,
+     517.66
     ],
     [
-     11556.19,
-     446.08
+     11557.2,
+     450.02
     ],
     [
-     11587.1,
-     13976.24
+     11588.09,
+     13978.22
     ],
     [
-     459.7,
-     14038.98
+     459.72,
+     14040.95
     ]
    ],
    "author": "fstwn",
    "status": "confirmed",
-   "reviewed_at": "2026-10-20T07:42:01+02:00",
+   "reviewed_at": "2026-11-01T12:40:51+01:00",
    "auto_quad": [
     [
      400.02,
@@ -45,30 +45,48 @@
    "format": "polaroid-600",
    "background": "dark",
    "tol_mm": 0.1,
-   "known_failure": "printed frame with a soft top and bottom edge: detector 0.14-0.30 mm outward of the reviewer"
+   "quad_v1": [
+    [
+     403.08,
+     513.72
+    ],
+    [
+     11556.19,
+     446.08
+    ],
+    [
+     11587.1,
+     13976.24
+    ],
+    [
+     459.7,
+     14038.98
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "scans/269999_Polaroid_04.tif": {
    "quad": [
     [
-     361.52,
-     482.36
+     362.51,
+     483.36
     ],
     [
-     11513.85,
-     436.85
+     11516.82,
+     437.85
     ],
     [
-     11516.88,
-     13998.18
+     11519.7,
+     13953.93
     ],
     [
-     383.99,
-     14034.95
+     384.83,
+     13990.7
     ]
    ],
    "author": "fstwn",
    "status": "confirmed",
-   "reviewed_at": "2026-10-20T07:42:28+02:00",
+   "reviewed_at": "2026-11-01T12:41:33+01:00",
    "auto_quad": [
     [
      361.43,
@@ -90,30 +108,50 @@
    "px_per_mm": 126.724,
    "format": "polaroid-600",
    "background": "dark",
-   "tol_mm": 0.2
+   "tol_mm": 0.2,
+   "quad_v1": [
+    [
+     361.52,
+     482.36
+    ],
+    [
+     11513.85,
+     436.85
+    ],
+    [
+     11516.88,
+     13998.18
+    ],
+    [
+     383.99,
+     14034.95
+    ]
+   ],
+   "relabel": "2026-11-01 band convention",
+   "known_failure": "printed frame: bottom band not found, detector 0.35 mm outward"
   },
   "scans/269999_Polaroid_05.tif": {
    "quad": [
     [
-     459.08,
-     437.42
+     459.06,
+     431.52
     ],
     [
-     11620.2,
-     394.27
+     11621.16,
+     388.37
     ],
     [
-     11610.32,
-     13910.69
+     11611.25,
+     13900.8
     ],
     [
-     472.54,
-     13982.4
+     472.48,
+     13972.51
     ]
    ],
    "author": "fstwn",
    "status": "confirmed",
-   "reviewed_at": "2026-10-20T07:42:53+02:00",
+   "reviewed_at": "2026-11-01T12:42:11+01:00",
    "auto_quad": [
     [
      458.98,
@@ -136,7 +174,26 @@
    "format": "polaroid-600",
    "background": "dark",
    "tol_mm": 0.1,
-   "known_failure": "soft top edge (slow ramp over 0.2 mm): detector 0.21 mm outward of the reviewer"
+   "known_failure": "bottom band knee lands in the edge shadow: detector 0.11 mm inward",
+   "quad_v1": [
+    [
+     459.08,
+     437.42
+    ],
+    [
+     11620.2,
+     394.27
+    ],
+    [
+     11610.32,
+     13910.69
+    ],
+    [
+     472.54,
+     13982.4
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "scans/269999_Polaroid_06.tif": {
    "quad": [
@@ -149,17 +206,17 @@
      404.6
     ],
     [
-     11503.55,
-     13933.79
+     11503.52,
+     13926.85
     ],
     [
-     364.03,
-     13984.62
+     364.0,
+     13977.68
     ]
    ],
    "author": "fstwn",
    "status": "confirmed",
-   "reviewed_at": "2026-10-20T07:43:32+02:00",
+   "reviewed_at": "2026-11-01T12:57:19+01:00",
    "auto_quad": [
     [
      309.51,
@@ -181,30 +238,49 @@
    "px_per_mm": 126.724,
    "format": "polaroid-600",
    "background": "dark",
-   "tol_mm": 0.1
+   "tol_mm": 0.1,
+   "quad_v1": [
+    [
+     309.54,
+     458.66
+    ],
+    [
+     11465.67,
+     404.6
+    ],
+    [
+     11503.55,
+     13933.79
+    ],
+    [
+     364.03,
+     13984.62
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "scans/269999_Polaroid_24.tif": {
    "quad": [
     [
-     2583.48,
-     575.08
+     2583.47,
+     579.02
     ],
     [
-     9365.44,
-     599.55
+     9365.43,
+     603.49
     ],
     [
-     9324.72,
-     8946.89
+     9324.74,
+     8940.95
     ],
     [
-     2544.58,
-     8926.11
+     2544.6,
+     8920.17
     ]
    ],
    "author": "fstwn",
    "status": "confirmed",
-   "reviewed_at": "2026-10-20T07:43:54+02:00",
+   "reviewed_at": "2026-11-01T12:57:32+01:00",
    "auto_quad": [
     [
      2583.51,
@@ -226,30 +302,49 @@
    "px_per_mm": 126.724,
    "format": "polaroid-go",
    "background": "dark",
-   "tol_mm": 0.1
+   "tol_mm": 0.1,
+   "quad_v1": [
+    [
+     2583.48,
+     575.08
+    ],
+    [
+     9365.44,
+     599.55
+    ],
+    [
+     9324.72,
+     8946.89
+    ],
+    [
+     2544.58,
+     8926.11
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "scans/269999_Polaroid_25.tif": {
    "quad": [
     [
-     2760.35,
-     662.83
+     2760.4,
+     673.71
     ],
     [
-     9538.51,
-     632.43
+     9538.56,
+     643.31
     ],
     [
-     9565.58,
-     8988.22
+     9565.51,
+     8974.41
     ],
     [
-     2786.94,
-     9021.33
+     2786.87,
+     9007.52
     ]
    ],
    "author": "fstwn",
    "status": "confirmed",
-   "reviewed_at": "2026-10-20T07:50:21+02:00",
+   "reviewed_at": "2026-11-01T12:57:46+01:00",
    "auto_quad": [
     [
      2760.35,
@@ -271,30 +366,49 @@
    "px_per_mm": 126.724,
    "format": "polaroid-go",
    "background": "dark",
-   "tol_mm": 0.1
+   "tol_mm": 0.1,
+   "quad_v1": [
+    [
+     2760.35,
+     662.83
+    ],
+    [
+     9538.51,
+     632.43
+    ],
+    [
+     9565.58,
+     8988.22
+    ],
+    [
+     2786.94,
+     9021.33
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "scans/269999_Polaroid_26.tif": {
    "quad": [
     [
-     2723.98,
-     850.06
+     2724.06,
+     863.93
     ],
     [
-     9498.28,
-     811.39
+     9498.36,
+     825.26
     ],
     [
-     9549.93,
-     9167.14
+     9549.83,
+     9150.32
     ],
     [
-     2768.59,
-     9209.29
+     2768.49,
+     9192.47
     ]
    ],
    "author": "fstwn",
    "status": "confirmed",
-   "reviewed_at": "2026-10-20T07:50:41+02:00",
+   "reviewed_at": "2026-11-01T12:57:53+01:00",
    "auto_quad": [
     [
      2723.98,
@@ -316,30 +430,49 @@
    "px_per_mm": 126.724,
    "format": "polaroid-go",
    "background": "dark",
-   "tol_mm": 0.1
+   "tol_mm": 0.1,
+   "quad_v1": [
+    [
+     2723.98,
+     850.06
+    ],
+    [
+     9498.28,
+     811.39
+    ],
+    [
+     9549.93,
+     9167.14
+    ],
+    [
+     2768.59,
+     9209.29
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "scans/269999_Polaroid_27.tif": {
    "quad": [
     [
-     2827.63,
-     1171.55
+     2827.77,
+     1182.46
     ],
     [
-     9604.75,
-     1081.67
+     9604.89,
+     1092.58
     ],
     [
-     9705.49,
-     9440.65
+     9705.27,
+     9424.86
     ],
     [
-     2927.17,
-     9536.0
+     2926.95,
+     9520.21
     ]
    ],
    "author": "fstwn",
    "status": "confirmed",
-   "reviewed_at": "2026-10-20T07:50:48+02:00",
+   "reviewed_at": "2026-11-01T12:58:02+01:00",
    "auto_quad": [
     [
      2827.63,
@@ -361,30 +494,49 @@
    "px_per_mm": 126.724,
    "format": "polaroid-go",
    "background": "dark",
-   "tol_mm": 0.1
+   "tol_mm": 0.1,
+   "quad_v1": [
+    [
+     2827.63,
+     1171.55
+    ],
+    [
+     9604.75,
+     1081.67
+    ],
+    [
+     9705.49,
+     9440.65
+    ],
+    [
+     2927.17,
+     9536.0
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "scans/269999_Polaroid_28.tif": {
    "quad": [
     [
-     2458.43,
-     884.29
+     2458.37,
+     898.12
     ],
     [
-     9234.77,
-     914.12
+     9234.71,
+     927.95
     ],
     [
-     9197.05,
-     9275.43
+     9197.11,
+     9259.6
     ],
     [
-     2416.69,
-     9247.94
+     2416.75,
+     9232.11
     ]
    ],
    "author": "fstwn",
    "status": "confirmed",
-   "reviewed_at": "2026-10-20T07:51:06+02:00",
+   "reviewed_at": "2026-11-01T12:58:14+01:00",
    "auto_quad": [
     [
      2458.43,
@@ -406,30 +558,49 @@
    "px_per_mm": 126.724,
    "format": "polaroid-go",
    "background": "dark",
-   "tol_mm": 0.1
+   "tol_mm": 0.1,
+   "quad_v1": [
+    [
+     2458.43,
+     884.29
+    ],
+    [
+     9234.77,
+     914.12
+    ],
+    [
+     9197.05,
+     9275.43
+    ],
+    [
+     2416.69,
+     9247.94
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "scans/269999_Polaroid_29.tif": {
    "quad": [
     [
-     2476.8,
-     811.31
+     2477.02,
+     825.39
     ],
     [
-     9252.1,
-     706.95
+     9252.32,
+     721.03
     ],
     [
-     9372.05,
-     9056.46
+     9371.91,
+     9047.57
     ],
     [
-     2593.93,
-     9166.39
+     2593.79,
+     9157.5
     ]
    ],
    "author": "fstwn",
    "status": "confirmed",
-   "reviewed_at": "2026-10-20T07:51:53+02:00",
+   "reviewed_at": "2026-11-01T12:58:22+01:00",
    "auto_quad": [
     [
      2476.8,
@@ -451,30 +622,49 @@
    "px_per_mm": 126.724,
    "format": "polaroid-go",
    "background": "dark",
-   "tol_mm": 0.1
+   "tol_mm": 0.1,
+   "quad_v1": [
+    [
+     2476.8,
+     811.31
+    ],
+    [
+     9252.1,
+     706.95
+    ],
+    [
+     9372.05,
+     9056.46
+    ],
+    [
+     2593.93,
+     9166.39
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "scans/269999_Polaroid_30.tif": {
    "quad": [
     [
-     2691.77,
-     993.47
+     2691.61,
+     1005.34
     ],
     [
-     9464.68,
-     1086.56
+     9464.52,
+     1098.43
     ],
     [
-     9348.98,
-     9434.54
+     9349.08,
+     9426.65
     ],
     [
-     2575.67,
-     9347.07
+     2575.77,
+     9339.18
     ]
    ],
    "author": "fstwn",
    "status": "confirmed",
-   "reviewed_at": "2026-10-20T07:52:34+02:00",
+   "reviewed_at": "2026-11-01T12:58:29+01:00",
    "auto_quad": [
     [
      2691.74,
@@ -496,30 +686,49 @@
    "px_per_mm": 126.724,
    "format": "polaroid-go",
    "background": "dark",
-   "tol_mm": 0.1
+   "tol_mm": 0.1,
+   "quad_v1": [
+    [
+     2691.77,
+     993.47
+    ],
+    [
+     9464.68,
+     1086.56
+    ],
+    [
+     9348.98,
+     9434.54
+    ],
+    [
+     2575.67,
+     9347.07
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "scans/269999_Polaroid_31.tif": {
    "quad": [
     [
-     2263.72,
-     913.99
+     2263.67,
+     927.84
     ],
     [
-     9040.39,
-     938.32
+     9040.34,
+     952.17
     ],
     [
-     8997.71,
-     9299.86
+     8997.75,
+     9285.01
     ],
     [
-     2221.58,
-     9282.65
+     2221.62,
+     9267.8
     ]
    ],
    "author": "fstwn",
    "status": "confirmed",
-   "reviewed_at": "2026-10-20T07:52:56+02:00",
+   "reviewed_at": "2026-11-01T12:58:36+01:00",
    "auto_quad": [
     [
      2263.72,
@@ -541,30 +750,49 @@
    "px_per_mm": 126.724,
    "format": "polaroid-go",
    "background": "dark",
-   "tol_mm": 0.1
+   "tol_mm": 0.1,
+   "quad_v1": [
+    [
+     2263.72,
+     913.99
+    ],
+    [
+     9040.39,
+     938.32
+    ],
+    [
+     8997.71,
+     9299.86
+    ],
+    [
+     2221.58,
+     9282.65
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "scans/269999_Polaroid_32.tif": {
    "quad": [
     [
-     2443.72,
-     1095.23
+     2443.58,
+     1107.08
     ],
     [
-     9216.33,
-     1177.71
+     9216.19,
+     1189.56
     ],
     [
-     9111.87,
-     9538.34
+     9112.05,
+     9523.51
     ],
     [
-     2334.51,
-     9455.61
+     2334.69,
+     9440.78
     ]
    ],
    "author": "fstwn",
    "status": "confirmed",
-   "reviewed_at": "2026-10-20T07:53:13+02:00",
+   "reviewed_at": "2026-11-01T12:58:46+01:00",
    "auto_quad": [
     [
      2443.72,
@@ -586,30 +814,49 @@
    "px_per_mm": 126.724,
    "format": "polaroid-go",
    "background": "dark",
-   "tol_mm": 0.1
+   "tol_mm": 0.1,
+   "quad_v1": [
+    [
+     2443.72,
+     1095.23
+    ],
+    [
+     9216.33,
+     1177.71
+    ],
+    [
+     9111.87,
+     9538.34
+    ],
+    [
+     2334.51,
+     9455.61
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "scans/269999_Polaroid_33.tif": {
    "quad": [
     [
-     2642.06,
-     877.88
+     2641.95,
+     888.78
     ],
     [
-     9421.29,
-     943.3
+     9421.18,
+     954.2
     ],
     [
-     9332.73,
-     9326.03
+     9332.93,
+     9303.27
     ],
     [
-     2552.8,
-     9267.54
+     2553.0,
+     9244.78
     ]
    ],
    "author": "fstwn",
    "status": "confirmed",
-   "reviewed_at": "2026-10-20T07:53:21+02:00",
+   "reviewed_at": "2026-11-01T12:58:56+01:00",
    "auto_quad": [
     [
      2642.06,
@@ -631,30 +878,49 @@
    "px_per_mm": 126.724,
    "format": "polaroid-go",
    "background": "dark",
-   "tol_mm": 0.1
+   "tol_mm": 0.1,
+   "quad_v1": [
+    [
+     2642.06,
+     877.88
+    ],
+    [
+     9421.29,
+     943.3
+    ],
+    [
+     9332.73,
+     9326.03
+    ],
+    [
+     2552.8,
+     9267.54
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "scans/269999_Polaroid_34.tif": {
    "quad": [
     [
-     2692.23,
-     1125.37
+     2692.21,
+     1127.37
     ],
     [
-     9472.71,
-     1186.69
+     9472.69,
+     1188.69
     ],
     [
-     9397.41,
-     9551.45
+     9397.52,
+     9538.58
     ],
     [
-     2618.29,
-     9491.7
+     2618.4,
+     9478.83
     ]
    ],
    "author": "fstwn",
    "status": "confirmed",
-   "reviewed_at": "2026-10-20T07:53:29+02:00",
+   "reviewed_at": "2026-11-01T12:59:07+01:00",
    "auto_quad": [
     [
      2692.23,
@@ -676,30 +942,49 @@
    "px_per_mm": 126.724,
    "format": "polaroid-go",
    "background": "dark",
-   "tol_mm": 0.1
+   "tol_mm": 0.1,
+   "quad_v1": [
+    [
+     2692.23,
+     1125.37
+    ],
+    [
+     9472.71,
+     1186.69
+    ],
+    [
+     9397.41,
+     9551.45
+    ],
+    [
+     2618.29,
+     9491.7
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "scans/269999_Polaroid_35.tif": {
    "quad": [
     [
-     2493.7,
-     1118.42
+     2493.84,
+     1128.25
     ],
     [
-     9275.73,
-     1024.54
+     9275.87,
+     1034.37
     ],
     [
-     9381.58,
-     9367.9
+     9381.49,
+     9361.99
     ],
     [
-     2598.4,
-     9471.16
+     2598.31,
+     9465.25
     ]
    ],
    "author": "fstwn",
    "status": "confirmed",
-   "reviewed_at": "2026-10-20T07:53:52+02:00",
+   "reviewed_at": "2026-11-01T12:59:13+01:00",
    "auto_quad": [
     [
      2493.69,
@@ -721,30 +1006,49 @@
    "px_per_mm": 126.724,
    "format": "polaroid-go",
    "background": "dark",
-   "tol_mm": 0.1
+   "tol_mm": 0.1,
+   "quad_v1": [
+    [
+     2493.7,
+     1118.42
+    ],
+    [
+     9275.73,
+     1024.54
+    ],
+    [
+     9381.58,
+     9367.9
+    ],
+    [
+     2598.4,
+     9471.16
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "scans/269999_Polaroid_36.tif": {
    "quad": [
     [
-     2196.01,
-     1157.09
+     2196.23,
+     1163.13
     ],
     [
-     8968.64,
-     909.97
+     8968.86,
+     916.01
     ],
     [
-     9278.56,
-     9238.39
+     9278.49,
+     9236.6
     ],
     [
-     2500.21,
-     9499.68
+     2500.14,
+     9497.89
     ]
    ],
    "author": "fstwn",
    "status": "confirmed",
-   "reviewed_at": "2026-10-20T07:54:08+02:00",
+   "reviewed_at": "2026-11-01T12:59:21+01:00",
    "auto_quad": [
     [
      2195.72,
@@ -766,30 +1070,49 @@
    "px_per_mm": 126.724,
    "format": "polaroid-go",
    "background": "dark",
-   "tol_mm": 0.1
+   "tol_mm": 0.1,
+   "quad_v1": [
+    [
+     2196.01,
+     1157.09
+    ],
+    [
+     8968.64,
+     909.97
+    ],
+    [
+     9278.56,
+     9238.39
+    ],
+    [
+     2500.21,
+     9499.68
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "scans/269999_Polaroid_37.tif": {
    "quad": [
     [
-     2549.31,
-     4370.68
+     2549.51,
+     4379.51
     ],
     [
-     9332.72,
-     4214.98
+     9332.92,
+     4223.81
     ],
     [
-     9517.81,
-     12566.2
+     9517.47,
+     12552.35
     ],
     [
-     2731.15,
-     12734.24
+     2730.81,
+     12720.39
     ]
    ],
    "author": "fstwn",
    "status": "confirmed",
-   "reviewed_at": "2026-10-20T07:54:27+02:00",
+   "reviewed_at": "2026-11-01T12:59:32+01:00",
    "auto_quad": [
     [
      2549.31,
@@ -811,30 +1134,49 @@
    "px_per_mm": 126.724,
    "format": "polaroid-go",
    "background": "dark",
-   "tol_mm": 0.1
+   "tol_mm": 0.1,
+   "quad_v1": [
+    [
+     2549.31,
+     4370.68
+    ],
+    [
+     9332.72,
+     4214.98
+    ],
+    [
+     9517.81,
+     12566.2
+    ],
+    [
+     2731.15,
+     12734.24
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "scans/269999_Polaroid_38.tif": {
    "quad": [
     [
-     2535.13,
-     4908.93
+     2535.09,
+     4917.85
     ],
     [
-     9314.02,
-     4938.22
+     9313.98,
+     4947.14
     ],
     [
-     9286.11,
-     13293.72
+     9286.13,
+     13287.79
     ],
     [
-     2500.1,
-     13266.98
+     2500.12,
+     13261.05
     ]
    ],
    "author": "fstwn",
    "status": "confirmed",
-   "reviewed_at": "2026-10-20T07:54:44+02:00",
+   "reviewed_at": "2026-11-01T12:59:40+01:00",
    "auto_quad": [
     [
      2535.13,
@@ -856,30 +1198,49 @@
    "px_per_mm": 126.724,
    "format": "polaroid-go",
    "background": "dark",
-   "tol_mm": 0.1
+   "tol_mm": 0.1,
+   "quad_v1": [
+    [
+     2535.13,
+     4908.93
+    ],
+    [
+     9314.02,
+     4938.22
+    ],
+    [
+     9286.11,
+     13293.72
+    ],
+    [
+     2500.1,
+     13266.98
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "scans/269999_Polaroid_39.tif": {
    "quad": [
     [
-     2402.65,
-     5173.56
+     2402.78,
+     5177.61
     ],
     [
-     9176.46,
-     4961.97
+     9176.59,
+     4966.02
     ],
     [
-     9423.35,
-     13297.01
+     9423.29,
+     13295.09
     ],
     [
-     2641.87,
-     13509.11
+     2641.81,
+     13507.19
     ]
    ],
    "author": "fstwn",
    "status": "confirmed",
-   "reviewed_at": "2026-10-20T07:55:01+02:00",
+   "reviewed_at": "2026-11-01T12:59:49+01:00",
    "auto_quad": [
     [
      2402.32,
@@ -901,30 +1262,49 @@
    "px_per_mm": 126.724,
    "format": "polaroid-go",
    "background": "dark",
-   "tol_mm": 0.1
+   "tol_mm": 0.1,
+   "quad_v1": [
+    [
+     2402.65,
+     5173.56
+    ],
+    [
+     9176.46,
+     4961.97
+    ],
+    [
+     9423.35,
+     13297.01
+    ],
+    [
+     2641.87,
+     13509.11
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "scans/269999_Polaroid_40.tif": {
    "quad": [
     [
-     2504.37,
-     5150.6
+     2504.49,
+     5158.56
     ],
     [
-     9278.8,
-     5047.82
+     9278.92,
+     5055.78
     ],
     [
-     9398.53,
-     13400.65
+     9398.44,
+     13394.71
     ],
     [
-     2619.1,
-     13501.02
+     2619.01,
+     13495.08
     ]
    ],
    "author": "fstwn",
    "status": "confirmed",
-   "reviewed_at": "2026-10-20T07:55:24+02:00",
+   "reviewed_at": "2026-11-01T12:59:56+01:00",
    "auto_quad": [
     [
      2503.38,
@@ -946,30 +1326,49 @@
    "px_per_mm": 126.724,
    "format": "polaroid-go",
    "background": "dark",
-   "tol_mm": 0.1
+   "tol_mm": 0.1,
+   "quad_v1": [
+    [
+     2504.37,
+     5150.6
+    ],
+    [
+     9278.8,
+     5047.82
+    ],
+    [
+     9398.53,
+     13400.65
+    ],
+    [
+     2619.1,
+     13501.02
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "scans/269999_Polaroid_41.tif": {
    "quad": [
     [
-     2847.06,
-     5027.53
+     2846.97,
+     5038.41
     ],
     [
-     9620.47,
-     5081.36
+     9620.38,
+     5092.24
     ],
     [
-     9540.8,
-     13436.42
+     9540.87,
+     13426.52
     ],
     [
-     2756.81,
-     13385.16
+     2756.88,
+     13375.26
     ]
    ],
    "author": "fstwn",
    "status": "confirmed",
-   "reviewed_at": "2026-10-20T07:55:44+02:00",
+   "reviewed_at": "2026-11-01T13:00:06+01:00",
    "auto_quad": [
     [
      2847.08,
@@ -991,30 +1390,49 @@
    "px_per_mm": 126.724,
    "format": "polaroid-go",
    "background": "dark",
-   "tol_mm": 0.1
+   "tol_mm": 0.1,
+   "quad_v1": [
+    [
+     2847.06,
+     5027.53
+    ],
+    [
+     9620.47,
+     5081.36
+    ],
+    [
+     9540.8,
+     13436.42
+    ],
+    [
+     2756.81,
+     13385.16
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "scans/269999_Polaroid_42.tif": {
    "quad": [
     [
-     2769.98,
-     4999.33
+     2769.88,
+     5013.18
     ],
     [
-     9550.34,
-     5047.54
+     9550.24,
+     5061.39
     ],
     [
-     9479.6,
-     13400.8
+     9479.64,
+     13394.88
     ],
     [
-     2695.84,
-     13354.66
+     2695.88,
+     13348.74
     ]
    ],
    "author": "fstwn",
    "status": "confirmed",
-   "reviewed_at": "2026-10-20T07:56:04+02:00",
+   "reviewed_at": "2026-11-01T13:00:13+01:00",
    "auto_quad": [
     [
      2769.98,
@@ -1036,30 +1454,49 @@
    "px_per_mm": 126.724,
    "format": "polaroid-go",
    "background": "dark",
-   "tol_mm": 0.1
+   "tol_mm": 0.1,
+   "quad_v1": [
+    [
+     2769.98,
+     4999.33
+    ],
+    [
+     9550.34,
+     5047.54
+    ],
+    [
+     9479.6,
+     13400.8
+    ],
+    [
+     2695.84,
+     13354.66
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "scans/269999_Polaroid_43.tif": {
    "quad": [
     [
-     2460.24,
-     4830.34
+     2460.21,
+     4844.19
     ],
     [
-     9237.27,
-     4844.07
+     9237.24,
+     4857.92
     ],
     [
-     9226.75,
-     13203.7
+     9226.76,
+     13184.89
     ],
     [
-     2442.06,
-     13198.95
+     2442.07,
+     13180.14
     ]
    ],
    "author": "fstwn",
    "status": "confirmed",
-   "reviewed_at": "2026-10-20T07:56:18+02:00",
+   "reviewed_at": "2026-11-01T13:00:24+01:00",
    "auto_quad": [
     [
      2460.24,
@@ -1081,30 +1518,49 @@
    "px_per_mm": 126.724,
    "format": "polaroid-go",
    "background": "dark",
-   "tol_mm": 0.1
+   "tol_mm": 0.1,
+   "quad_v1": [
+    [
+     2460.24,
+     4830.34
+    ],
+    [
+     9237.27,
+     4844.07
+    ],
+    [
+     9226.75,
+     13203.7
+    ],
+    [
+     2442.06,
+     13198.95
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "scans/269999_Polaroid_72.tif": {
    "quad": [
     [
-     2636.3,
-     4883.03
+     2636.47,
+     4893.87
     ],
     [
-     9414.38,
-     4776.46
+     9414.55,
+     4787.3
     ],
     [
-     9528.37,
-     13131.94
+     9528.14,
+     13118.09
     ],
     [
-     2751.8,
-     13245.51
+     2751.57,
+     13231.66
     ]
    ],
    "author": "fstwn",
    "status": "confirmed",
-   "reviewed_at": "2026-10-20T07:56:28+02:00",
+   "reviewed_at": "2026-11-01T13:00:31+01:00",
    "auto_quad": [
     [
      2636.3,
@@ -1126,17 +1582,36 @@
    "px_per_mm": 126.724,
    "format": "polaroid-go",
    "background": "dark",
-   "tol_mm": 0.1
+   "tol_mm": 0.1,
+   "quad_v1": [
+    [
+     2636.3,
+     4883.03
+    ],
+    [
+     9414.38,
+     4776.46
+    ],
+    [
+     9528.37,
+     13131.94
+    ],
+    [
+     2751.8,
+     13245.51
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "scans/269999_Polaroid_73.tif": {
    "quad": [
     [
      2300.02,
-     4970.23
+     4971.2
     ],
     [
      9102.48,
-     4992.51
+     4993.48
     ],
     [
      9045.57,
@@ -1149,7 +1624,7 @@
    ],
    "author": "fstwn",
    "status": "confirmed",
-   "reviewed_at": "2026-10-20T07:58:46+02:00",
+   "reviewed_at": "2026-11-01T13:00:39+01:00",
    "auto_quad": [
     [
      2546.57,
@@ -1172,7 +1647,26 @@
    "format": "polaroid-go",
    "background": "dark",
    "tol_mm": 0.1,
-   "known_failure": "black Go frame on the black holder: the photo area is found instead of the print"
+   "known_failure": "black Go frame on the black holder: the photo area is found instead of the print",
+   "quad_v1": [
+    [
+     2300.02,
+     4970.23
+    ],
+    [
+     9102.48,
+     4992.51
+    ],
+    [
+     9045.57,
+     13353.65
+    ],
+    [
+     2292.49,
+     13302.51
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
   },
   "white_bg/150101_Polaroid_Misc_2023_01.tif": {
    "quad": [

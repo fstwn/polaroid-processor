@@ -148,9 +148,10 @@ def test_derivative_parse():
 
 
 def test_match_format_orientation_and_go():
-    m = match_format((88 * 10, 107 * 10), 10)
+    w, h = POLAROID_600.width_mm, POLAROID_600.height_mm
+    m = match_format((w * 10, h * 10), 10)
     assert m.format is POLAROID_600 and m.error < 1e-6
-    m = match_format((107 * 10, 88 * 10), 10)  # landscape scan
+    m = match_format((h * 10, w * 10), 10)  # landscape scan
     assert m.format is POLAROID_600
     m = match_format((53.9 * 10, 66.6 * 10), 10)
     assert m.format is POLAROID_GO

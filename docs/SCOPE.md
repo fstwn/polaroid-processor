@@ -15,8 +15,8 @@ A robust tool that crops and rectifies high-resolution flatbed scans of instant 
 
 ## Formats
 
-- Polaroid 600 / i-Type / SX-70: 88 x 107 mm.
-- Polaroid Go: 53.9 x 66.6 mm.
+- Polaroid 600 / i-Type / SX-70: 88 x 107 mm quoted; 88 x 106.85 mm measured without the edge band (see "Edge band" below).
+- Polaroid Go: 53.9 x 66.6 mm quoted; 53.5 x 65.8 mm measured without the edge band.
 - Frame types: white, black (incl. glitter), gold/metallic, printed/coloured special editions. No per-frame-type configuration.
 
 ## Scale (px per mm)
@@ -231,4 +231,31 @@ When the holder rim runs parallel to one side, the detector can take the rim's o
 The scan then passes review with an informational `rim_refit:<side>:<mm>`; the detected outline stays in the manifest as `quad_detected`, and the curves are traced again. Library dry run: the three rim cases are ok, the other 115 outlines are unchanged. Still flagged: D2_26 (0.4 mm wider, edges look right), the black glitter frames (Samsoe_05/06/09, tttacho_14/16) and the emulsion lift.
 
 Tried and dropped: re-detecting a black Go frame on the black holder (sample 73) with low speck thresholds and accepting it when it has a format's size. Thresholds 5-7 give 54.1 x 64.4 mm with the bottom edge still inside the wide black bottom frame; a size check alone could accept such an outline, so 73 stays a known failure.
+
+## Edge band at top and bottom (2026-11-01)
+
+The user decided where the edge of a soft printed frame sits (samples 03, 04, 05: the edge rises sharply to about half the frame level, then ramps slowly). Shown A (the 50 % crossing) against B (the end of the slow ramp), they chose B. Checking it on plain frames showed the same grey band, 0.05-0.35 mm wide, at the top and bottom of almost every print: the rounded print edge seen from above. The old labels counted it as print on plain frames (D3_21, D3_24) and not on printed ones. On a review page with outlines starting from the detector, the user excluded it on all six conflict scans, then relabelled every available holder-scan label (12 tuning, 16 holdout, 26 samples; 7 tuning scans are missing from `input/`) in one convention:
+
+- **Top and bottom edges: the band is not print**; the edge sits at the band's inner end. Moves against the old labels, median: tuning top +0.12 / bottom +0.20 mm, holdout +0.09 / +0.14, samples +0.08 / +0.08 (inward).
+- Left and right edges are unchanged (the middle of the soft transition).
+- The earlier outline stays in each label as `quad_v1`. Camera shots on white paper were not relabelled (their own dark-line rule).
+
+Detector (`detection.band_shift`, run after the line fit, so rim repair and the edge statistics are unaffected): at 15 stations across the top and bottom side, a profile across the fitted line; the band ends at the knee of a two-line least-squares fit behind the 50 % crossing (the band rises at least twice as fast as what follows: plateau or edge shadow), at most 16 cells (0.5 mm) behind it. A grey holder rim in front of the print is not a band: just behind the crossing the band already reaches 65 % of the print level and rises without a dip. The side moves by the median over the stations that show a band (at least half). Tried first and dropped: the band end at 90 % of the print level measured 0.5-1 mm in. It matched the top edges, but on bottom edges the edge shadow behind the band keeps rising, so it landed up to 0.4 mm too far in, and applied per edge point it walked over holder rims (D3_29: 0.6 mm wrong).
+
+Against the new labels, 54 scans (detected minus label, outward +, mm):
+
+| side | before (50 % crossing) | after |
+| --- | --- | --- |
+| top | median +0.10, 30 of 54 over 0.1 | median -0.01, none over 0.1 (90 % within 0.06) |
+| bottom | median +0.14, 40 of 53 over 0.1 | median +0.01, 12 of 53 over 0.1 |
+| left, right | unchanged | unchanged |
+
+The remaining bottom misses are marked `known_failure`: no band found on printed and dusty bottoms (Samsoe_04 0.25, sample 04 0.35, Scan_04 0.17 mm outward), partly found on gold frames (D3_17, D3_20), and the knee landing in the edge shadow (D3_29, sample 05: 0.11-0.15 mm inward). Sample 03 now passes.
+
+Also changed:
+- `formats.py`: heights without the band, measured on the new labels with the scale from the width: 600 88 x 106.85 mm (107.1 with the band), Go 53.5 x 65.8 mm.
+- `flatten.trace`: the same band step, one median shift per side, so a band found at some samples only does not bend the curve.
+- Rim refit (`pipeline.apply_refit`): a refit top or bottom moves on onto its band end (D3_29 (2) matches its label again).
+
+Dry runs: library (118 holder scans) and samples (26): left and right identical on every scan; top and bottom move inward by up to 0.28 mm (median 0.10-0.17); the 42 camera shots are identical. Flattening decisions are the same (bend values within 0.01 mm). Status: Samsoe_05 (black glitter, flagged 0.46 mm too short) is now ok, because the batch median got shorter while its outline (no band found) stayed; Samsoe_09 and tttacho_14 (black glitter, already flagged) add `size_outlier:height`.
 

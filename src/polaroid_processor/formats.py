@@ -18,10 +18,13 @@ class PrintFormat:
         return self.width_mm / self.height_mm
 
 
-POLAROID_600 = PrintFormat("polaroid-600", 88.0, 107.0)  # also i-Type, SX-70
+# Heights exclude the grey band at the top and bottom edge (the rounded print edge seen from
+# above), as the reviewer labels them since 2026-11-01; measured on 32 600 and 22 Go labels,
+# scaled by the width. With the band, the 600 measures the quoted 107 mm.
+POLAROID_600 = PrintFormat("polaroid-600", 88.0, 106.85)  # also i-Type, SX-70
 # measured on 20 Go prints scanned with 600 prints in the same batch (sd 0.01 / 0.05 mm);
 # the often quoted 53.9 x 66.6 mm is about 1 % too large
-POLAROID_GO = PrintFormat("polaroid-go", 53.5, 66.0)
+POLAROID_GO = PrintFormat("polaroid-go", 53.5, 65.8)
 
 FORMATS: Tuple[PrintFormat, ...] = (POLAROID_600, POLAROID_GO)
 DEFAULT_FORMAT = POLAROID_600
