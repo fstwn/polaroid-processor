@@ -259,3 +259,7 @@ Also changed:
 
 Dry runs: library (118 holder scans) and samples (26): left and right identical on every scan; top and bottom move inward by up to 0.28 mm (median 0.10-0.17); the 42 camera shots are identical. Flattening decisions are the same (bend values within 0.01 mm). Status: Samsoe_05 (black glitter, flagged 0.46 mm too short) is now ok, because the batch median got shorter while its outline (no band found) stayed; Samsoe_09 and tttacho_14 (black glitter, already flagged) add `size_outlier:height`.
 
+
+## Crop margin 0.1 mm (2026-11-01)
+
+With the outline now at the end of the edge band, the default crop margin dropped from 0.2 to 0.1 mm (CLI, API, MCP server, pipeline settings, README, skill). Measured on 144 holder scans exported in memory at margin 0 (`.dev/soft/margin_study.py`): the crop edge lands on holder in 11 % of 1 mm steps at margin 0, 1.5 % at 0.05 mm (31 scans) and 1.45 % at 0.1 mm (9 scans), unchanged up to 0.2 mm (1.3 %). The 9 left from 0.1 mm on are dark printed graphics and black glitter at the frame edge, not holder. Camera shots: 1 of 168 sides lies more than 0.1 mm outward of the reviewer (0.103 mm). Dry runs at 0.1 mm: no status changes; Samsoe_06 and sample 73 (both already flagged) add `edge_inside:bottom`. `fix` with export uses the margin stored in the manifest; a new `process` run uses the new default unless `--margin-mm` is given.

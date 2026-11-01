@@ -183,7 +183,7 @@ def edge_points(lum: np.ndarray, window: np.ndarray, px_mm: float, p: LightParam
                 # from the light, about 10 % below the frame) belongs to the print: the edge
                 # is its darkest point. A shallow shadow cast on the paper (about 5 %) does
                 # not: the edge stays where the frame ends. Calibrated on one camera setup
-                # (42 shots, reviewer-placed edges); both stay within the 0.2 mm crop margin.
+                # (42 shots, reviewer-placed edges); both stay within the 0.1 mm crop margin.
                 k_end = min(len(prof), j + int(p.dark_line_mm * px_mm))
                 k = j + int(np.argmin(prof[j:k_end]))
                 if 0 < k < len(prof) - 1 and k < k_end - 1 and ref[j] - prof[k] > p.dark_line_depth * ref[j]:

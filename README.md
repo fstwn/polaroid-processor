@@ -53,7 +53,7 @@ Re-running the same command only processes new or changed scans and scans whose 
 2. **Scale.** Pixels per millimetre come from `--ppi` / `--profile`, else from the TIFF tag if it gives a plausible print size, else from the median of all scans of the same scan size. Each outline's format is told by its shape (600: short/long side 0.819-0.824, Go: 0.808-0.812), so mixed batches of 600 and Go prints get one consistent scale.
 3. **Review rules** flag a scan `needs_review` when its size does not match a known format or the other scans of the batch, opposite sides are not parallel, or an edge is noisy, curved or inconsistent.
 4. **Flatten** curled prints. Each side is traced every 0.5 mm at full resolution and fitted with a smooth curve. When a reliable side bends by 0.1 mm or more, the export maps the curved outline onto a rectangle, so all four sides come out straight. Only the edge band is corrected (fading out within 5 mm); the inside and the output size are exactly those of the straight export, so the photo window keeps its shape; sides whose trace is not trustworthy (printed graphics, black glitter) stay straight. Manually fixed outlines are always straight. `--flatten off` keeps straight sides everywhere.
-5. **Export** with one warp at full resolution, cropped by a margin in millimetres (default 0.2 mm).
+5. **Export** with one warp at full resolution, cropped by a margin in millimetres (default 0.1 mm).
 6. **Remove edge shadows.** Near its edges a print darkens (3-18 % at 0.25 mm on white frames, reaching about 1.5 mm in). On plain frames the darkening is measured from the frame border itself and divided out. Printed, dark and glossy-gradient frames are left untouched. `--shadows off` keeps the tones exactly as scanned; no other colour changes are made.
 
 ## Commands
@@ -66,7 +66,7 @@ polaroid process INPUT... -o OUTPUT [options]
 
 | Option | Effect |
 |---|---|
-| `--margin-mm 0.2` | Crop this far inside the detected print edge |
+| `--margin-mm 0.1` | Crop this far inside the detected print edge |
 | `--derivative NAME=SIZE[:FMT[:Q]]` | Derivative preset, repeatable. SIZE is a long edge in px or `x0.5`; FMT `jpg` or `png` |
 | `--no-derivatives` | Only the TIFF master |
 | `--ppi N` / `--profile NAME` | True scan resolution, directly or from a scanner profile |

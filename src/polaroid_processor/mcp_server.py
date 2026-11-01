@@ -55,7 +55,7 @@ TOOLS: List[Dict[str, Any]] = [
                 "inputs": {**_STR_LIST, "description": "scan files or folders (.tif/.tiff)"},
                 "output": {"type": "string", "description": "output folder; holds the manifest"},
                 "recursive": {"type": "boolean", "default": False},
-                "margin_mm": {"type": "number", "default": 0.2, "description": "crop this far inside the edge"},
+                "margin_mm": {"type": "number", "default": 0.1, "description": "crop this far inside the edge"},
                 "derivatives": {**_STR_LIST, "description": "presets NAME=SIZE[:FMT[:Q]], e.g. web=2048:jpg:88"},
                 "no_derivatives": {"type": "boolean", "default": False},
                 "ppi": {"type": "number", "description": "true scan resolution"},
@@ -180,7 +180,7 @@ def _jpeg(rgb: np.ndarray, quality: int = 88) -> dict:
 def tool_process(args: dict, progress: Callable[[int, int, str], None]) -> dict:
     inputs = args["inputs"]
     settings = api.make_settings(
-        margin_mm=args.get("margin_mm", 0.2), derivatives=args.get("derivatives"),
+        margin_mm=args.get("margin_mm", 0.1), derivatives=args.get("derivatives"),
         no_derivatives=args.get("no_derivatives", False), overlay=args.get("overlay", False),
         ppi=args.get("ppi"), profile=args.get("profile"), strict=args.get("strict", False),
         force=args.get("force", False), redetect=args.get("redetect", False), dry_run=args.get("dry_run", False),

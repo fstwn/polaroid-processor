@@ -164,7 +164,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("inputs", nargs="+", help="scan files or folders")
     sp.add_argument("-o", "--output", help="output folder (holds the manifest)")
     sp.add_argument("-r", "--recursive", action="store_true")
-    sp.add_argument("--margin-mm", type=float, default=0.2, help="crop this far inside the print edge (default 0.2)")
+    sp.add_argument("--margin-mm", type=float, default=0.1, help="crop this far inside the print edge (default 0.1)")
     sp.add_argument("--derivative", action="append", metavar="NAME=SIZE[:FMT[:Q]]",
                     help="derivative preset, repeatable; SIZE = long edge px or xSCALE; FMT jpg|png. "
                          f"Default: {', '.join(f'{d.name}={d.long_edge}:{d.fmt}:{d.quality}' for d in DEFAULT_DERIVATIVES)}")

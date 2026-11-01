@@ -39,7 +39,7 @@ def _ignore(_: dict) -> None:
 
 
 # --------------------------------------------------------------------------- process / detect
-def make_settings(*, margin_mm: float = 0.2, derivatives: Optional[Sequence[str]] = None,
+def make_settings(*, margin_mm: float = 0.1, derivatives: Optional[Sequence[str]] = None,
                   no_derivatives: bool = False, interpolation: str = "cubic", tiff_compression: str = "zlib",
                   overlay: bool = False, ppi: Optional[float] = None, profile: Optional[str] = None,
                   profiles: Optional[str] = None, strict: bool = False, force: bool = False,

@@ -80,7 +80,7 @@ class ReviewRules:
 
 @dataclass
 class Settings:
-    margin_mm: float = 0.2
+    margin_mm: float = 0.1
     derivatives: Tuple[Derivative, ...] = DEFAULT_DERIVATIVES
     interpolation: str = "cubic"
     tiff_compression: str = "zlib"
@@ -451,7 +451,7 @@ def resolve_scales(manifest: Manifest, keys: Sequence[str], settings: Settings) 
 
 def evaluate(entry: dict, scale: Scale, rules: ReviewRules,
              ref_size: Optional[Tuple[float, float]] = None,
-             margin_mm: float = 0.2, flatten: str = "auto",
+             margin_mm: float = 0.1, flatten: str = "auto",
              flatten_params: flat.FlattenParams = flat.FlattenParams()) -> Tuple[str, List[str], Optional[dict]]:
     """Status and warnings for one scan. ``ref_size`` is the median print size of its scan-size group;
     ``margin_mm`` is the crop margin, which hides edge points that lie at most that far inside.
