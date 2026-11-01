@@ -98,6 +98,21 @@ class DetectParams:
     dark_min_share: float = 0.25  # share of a side's stations that must be dark and show the edge
     dark_frame_share: float = 0.4  # share of all stations that must be dark: a black frame, not black artwork
     dark_min_move: int = 4  # cells; smaller disagreements with the line fit are left alone
+    # black Go frames: only the photo window passes the speck thresholds. The frame is greenish
+    # (G above R and B by 2-3 levels; holder, dust and the white holder circle are neutral), and the
+    # print edge reflects as a thin bright ridge. A greenness mask around the found outline gives
+    # the rough print; each side then follows the ridge.
+    black_green: float = 0.8  # greenness G - (R + B) / 2 of the frame, blurred, at analysis scale
+    black_bright: int = 60  # brighter cells are not frame (photo, white circle); the outline is added back
+    black_blur: float = 12.0  # cells (Gaussian sigma)
+    black_morph: int = 41  # cells: open (cuts dust and thin contacts) and close
+    black_search: int = 48  # cells searched on each side of the rough line for the ridge
+    black_ridge: float = 12.0  # min ridge brightness (median along a station), at least 3x its sides
+    # width / height of a print: an outline outside it, or a greenish ring around it, starts the step;
+    # the new outline must fall inside it
+    black_aspect: Tuple[float, float] = (0.80, 0.835)
+    black_min_share: float = 0.1  # share of stations on each side that must show the ridge (the light
+    # comes from one side: the right edge reflects weakly)
     ahead_window: int = 8  # a sparse plateau followed this soon by a bright one is a holder gap
     ahead_ratio: float = 6.0
     corner_skip: float = 0.08  # fraction of each side ignored near the corners
@@ -164,6 +179,7 @@ class Detection:
     source: str = "auto"  # "auto" or "manual"
     repaired: Tuple[str, ...] = ()  # sides refit on inner candidates (holder rim touching the print)
     background: str = "dark"  # "dark" (holder scan) or "light" (print on paper, see light.py)
+    black_frame: bool = False  # the outline grew from the photo window through a black frame
 
     @property
     def aspect(self) -> float:
@@ -184,6 +200,7 @@ class Detection:
             "source": self.source,
             "repaired": list(self.repaired),
             "background": self.background,
+            "black_frame": self.black_frame,
         }
 
     @classmethod
@@ -201,6 +218,7 @@ class Detection:
             source=d.get("source", "auto"),
             repaired=tuple(d.get("repaired", ())),
             background=d.get("background", "dark"),
+            black_frame=d.get("black_frame", False),
         )
 
 
@@ -456,6 +474,144 @@ def band_shift(mx: np.ndarray, quad: np.ndarray, side: str, p: DetectParams = De
     if len(shifts) < p.band_min_share * p.band_stations:
         return None
     return float(np.median(shifts))
+
+
+def _ridge_points(mx: np.ndarray, quad: np.ndarray, side: str, p: DetectParams, f: int) -> Tuple[np.ndarray, int]:
+    """Edge-highlight points along ``side`` of ``quad``: per station (``dark_station`` cells wide)
+    the brightest row of the along-side median within ``black_search`` cells of the line, when it
+    stands out as a ridge. Returns the points and the number of stations."""
+    a, b = {"top": (0, 1), "right": (1, 2), "bottom": (3, 2), "left": (0, 3)}[side]
+    p0, p1 = quad[a], quad[b]
+    length = float(np.linalg.norm(p1 - p0))
+    t = (p1 - p0) / length
+    n = np.array([-t[1], t[0]])
+    if np.dot((p0 + p1) / 2 - quad.mean(axis=0), n) < 0:
+        n = -n  # outward
+    r, w = p.black_search * f, p.dark_station * f
+    d = np.arange(r, -r, -1, dtype=np.float32)  # outside first
+    gap, side_w = 5 * f, 16 * f
+    pts, n_st = [], 0
+    for s0 in np.arange(length * p.corner_skip, length * (1 - p.corner_skip) - w, w):
+        n_st += 1
+        along = (s0 + np.arange(w)).astype(np.float32)
+        X = (p0[0] + along[None, :] * t[0] + d[:, None] * n[0]).astype(np.float32)
+        Y = (p0[1] + along[None, :] * t[1] + d[:, None] * n[1]).astype(np.float32)
+        prof = np.median(cv2.remap(mx, X, Y, cv2.INTER_LINEAR), axis=1)  # dust specks do not run along
+        k = int(np.argmax(prof))
+        out = float(np.median(prof[max(0, k - side_w): max(1, k - gap)]))
+        inn = float(np.median(prof[k + gap: k + side_w])) if k + gap < len(prof) else 0.0
+        if prof[k] < p.black_ridge or prof[k] < 3 * max(out, inn, 1.0) or inn >= p.black_bright:
+            continue
+        pts.append(p0 + (s0 + w / 2) * t + d[k] * n)
+    return np.array(pts).reshape(-1, 2), n_st
+
+
+def _greenness(rgb: np.ndarray, g: int) -> Tuple[np.ndarray, np.ndarray]:
+    """Greenness G - (R + B) / 2 and max(R, G, B) as float block means over g x g pixels
+    (8-bit rounding would erase a 2-level difference)."""
+    h, w = (rgb.shape[0] // g) * g, (rgb.shape[1] // g) * g
+    ch = [rgb[:h, :w, i].reshape(h // g, g, w // g, g).mean(axis=(1, 3), dtype=np.float32) for i in range(3)]
+    if rgb.dtype != np.uint8:
+        ch = [c / 257 for c in ch]
+    return ch[1] - (ch[0] + ch[2]) / 2, np.maximum(np.maximum(ch[0], ch[1]), ch[2])
+
+
+def _ring_greenness(rgb: np.ndarray, quad: np.ndarray, a: float, b: float) -> float:
+    """Mean greenness of pixels sampled a..b px outside ``quad`` (a cheap test for a black frame)."""
+    c = quad.mean(axis=0)
+    pts = []
+    for i in range(4):
+        p0, p1 = quad[i], quad[(i + 1) % 4]
+        t = (p1 - p0) / np.linalg.norm(p1 - p0)
+        n = np.array([-t[1], t[0]])
+        if np.dot((p0 + p1) / 2 - c, n) < 0:
+            n = -n
+        s = np.linspace(0.1, 0.9, 200)[:, None]
+        for d in np.linspace(a, b, 8):
+            pts.append(p0 + s * (p1 - p0) + d * n)
+    pts = np.round(np.concatenate(pts)).astype(int)
+    ok = (pts[:, 0] >= 0) & (pts[:, 1] >= 0) & (pts[:, 0] < rgb.shape[1]) & (pts[:, 1] < rgb.shape[0])
+    v = rgb[pts[ok, 1], pts[ok, 0]].astype(np.float32)
+    if rgb.dtype != np.uint8:
+        v /= 257
+    v = v[v.max(axis=1) < 60]  # photo and white holder circle are not frame
+    return float(np.mean(v[:, 1] - (v[:, 0] + v[:, 2]) / 2)) if len(v) else 0.0
+
+
+def black_frame_outline(rgb: np.ndarray, mx: np.ndarray, quad: Optional[np.ndarray], p: DetectParams = DetectParams(),
+                        f: int = 4):
+    """Outline of a print with a black (greenish) frame around ``quad``, or None.
+
+    ``quad`` is the outline the speck thresholds found (on a black Go frame: the photo window, or
+    the window and part of the frame). The step runs when ``quad`` does not have a print's aspect
+    or a greenish ring surrounds it. Returns ``(quad, edges)`` when every side of the greenness
+    mask's rectangle follows the edge ridge and the result has a print's aspect. When the mask
+    reached a dust disc touching the print, the long axis is cut to the mask width over the aspect
+    and the ridge is looked for there. Without ``quad`` (nothing passed the speck thresholds: a
+    dark photo on a black frame) the largest greenish region is the rough print.
+    """
+    from .geometry import shift_side  # geometry imports this module
+
+    def aspect_ok(q):
+        w, h = quad_size(q)
+        return p.black_aspect[0] <= min(w, h) / max(w, h) <= p.black_aspect[1]
+
+    if quad is not None and aspect_ok(quad) and _ring_greenness(rgb, quad, 32 * f, 96 * f) < p.black_green:
+        return None
+    g = 2 * f  # mask resolution: two cells
+    green, bright = _greenness(rgb, g)
+    green = cv2.GaussianBlur(green, (0, 0), p.black_blur * f / g)
+    m = ((green > p.black_green) & (bright < p.black_bright)).astype(np.uint8)
+    if quad is not None:
+        cv2.fillPoly(m, [np.round(quad / g).astype(np.int32).reshape(-1, 1, 2)], 1)
+    kk = max(3, int(p.black_morph * f / g) | 1)
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kk, kk))
+    m = cv2.morphologyEx(cv2.morphologyEx(m, cv2.MORPH_OPEN, k), cv2.MORPH_CLOSE, k)
+    n_lab, lab, stats, _ = cv2.connectedComponentsWithStats(m)
+    if quad is not None:
+        cx, cy = np.clip(np.round(quad.mean(axis=0) / g).astype(int), 0, [m.shape[1] - 1, m.shape[0] - 1])
+        pick = lab[cy, cx]
+    else:
+        pick = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA])) if n_lab > 1 else 0
+    if pick == 0:
+        return None
+    cnts, _ = cv2.findContours((lab == pick).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    box = cv2.boxPoints(cv2.minAreaRect(max(cnts, key=cv2.contourArea))) * g
+    s_, d_ = box.sum(axis=1), np.diff(box, axis=1).ravel()
+    rough = np.array([box[np.argmin(s_)], box[np.argmin(d_)], box[np.argmax(s_)], box[np.argmax(d_)]])
+    w1, h1 = quad_size(rough)
+
+    def fit_side(q, side):
+        pts, n_st = _ridge_points(mx, q, side, p, f)
+        if n_st == 0 or len(pts) < max(5, p.black_min_share * n_st):
+            return None
+        c, d, inl = _robust_line(pts, p.line_tol_cells * f, p.trim_keep)
+        res = (pts - c) @ np.array([-d[1], d[0]])
+        return (c, d), EdgeStats(len(pts), int(inl.sum()), float(np.median(np.abs(res[inl]))), 0.0,
+                                 float(np.abs(res[inl]).max()))
+
+    def fit_all(q):
+        lines, edges = {}, {}
+        for side in ("top", "right", "bottom", "left"):
+            got = fit_side(q, side)
+            if got is not None:
+                lines[side], edges[side] = got
+        return (_corners(lines) if len(lines) == 4 else None), edges
+
+    q, edges = fit_all(rough)
+    if q is not None and aspect_ok(q):
+        return q, edges
+    # the mask reached a dust disc or the holder circle along the long axis: keep the end with more
+    # ridge support and cut the other to the mask width over the print aspect
+    long_axis = ("top", "bottom") if h1 >= w1 else ("left", "right")
+    ends = [s for s in long_axis if s in edges]
+    if not ends:
+        return None
+    keep = max(ends, key=lambda s: edges[s].n_inliers)
+    other = long_axis[1] if keep == long_axis[0] else long_axis[0]
+    short, long_ = (w1, h1) if long_axis == ("top", "bottom") else (h1, w1)
+    q, edges = fit_all(shift_side(rough, other, short / float(np.mean(p.black_aspect)) - long_))
+    return (q, edges) if q is not None and aspect_ok(q) else None
 
 
 class _Analysis:
@@ -858,10 +1014,15 @@ def detect(rgb: np.ndarray, params: DetectParams = DetectParams(), debug: bool =
         if found is not None:
             thr = t
             break
+    grown = None
     if found is None:
-        raise DetectionError("no plausible print outline at any threshold")
+        # a dark photo on a black frame: nothing passes the thresholds, but the frame may
+        grown = black_frame_outline(rgb, a.mx, None, params, a.f)
+        if grown is None:
+            raise DetectionError("no plausible print outline at any threshold")
+        found, thr = (grown[0], grown[1], {}, a.feature(params.thresholds[0])[0], ()), params.thresholds[0]
     noise = a.holder_noise(found[0])
-    if noise is not None:
+    if noise is not None and grown is None:
         # capped: a bright object on the holder (the white circle of a Go holder) pushes the
         # percentile towards 255, and a threshold above the pixel range finds nothing
         thr2 = min(int(noise + params.noise_margin), max(params.thresholds))
@@ -871,10 +1032,15 @@ def detect(rgb: np.ndarray, params: DetectParams = DetectParams(), debug: bool =
             if again is not None and np.prod(quad_size(again[0])) >= 0.9 * np.prod(quad_size(found[0])):
                 found, thr = again, thr2
     quad, edges, pts, feat, repaired = found
+    if grown is None:
+        grown = black_frame_outline(rgb, a.mx, quad, params, a.f)
+    if grown is not None:  # the sides follow the edge ridge already: no dark or band step
+        quad, edges = grown
+        repaired = ()
     from .geometry import shift_side  # geometry imports this module
     dark = set()
-    found = {side: dark_edge_shift(a.mx, quad, side, params, a.f) for side in SIDES}
-    black = sum(v[1] for v in found.values()) >= params.dark_frame_share * max(1, sum(v[2] for v in found.values()))
+    found = {} if grown is not None else {side: dark_edge_shift(a.mx, quad, side, params, a.f) for side in SIDES}
+    black = bool(found) and sum(v[1] for v in found.values()) >= params.dark_frame_share * max(1, sum(v[2] for v in found.values()))
     for side in SIDES if black else ():
         out = found[side][0]
         if out is None or side not in edges:
@@ -888,7 +1054,7 @@ def detect(rgb: np.ndarray, params: DetectParams = DetectParams(), debug: bool =
             quad = shift_side(quad, side, out)
             edges[side] = edges[side].moved_inward(-out, "dark_px")
             dark.add(side)
-    for side in params.band_sides:
+    for side in params.band_sides if grown is None else ():
         shift = None if side in dark else a.band_shift(quad, side)
         if shift is not None and side in edges:
             quad = shift_side(quad, side, -shift)
@@ -904,6 +1070,7 @@ def detect(rgb: np.ndarray, params: DetectParams = DetectParams(), debug: bool =
         factor=a.f,
         time_s=time.perf_counter() - t0,
         repaired=repaired,
+        black_frame=grown is not None,
     )
     if debug:
         return det, DetectionDebug(a.rgb_small, feat, pts)

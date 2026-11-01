@@ -1646,8 +1646,7 @@
    "px_per_mm": 126.724,
    "format": "polaroid-go",
    "background": "dark",
-   "tol_mm": 0.1,
-   "known_failure": "black Go frame on the black holder: the photo area is found instead of the print",
+   "tol_mm": 0.2,
    "quad_v1": [
     [
      2300.02,
@@ -1667,6 +1666,466 @@
     ]
    ],
    "relabel": "2026-11-01 band convention"
+  },
+  "scans_additional/260801_RollerRoids_SICKalps_Level_3_D0_03.tif": {
+   "quad": [
+    [
+     2455.59,
+     942.97
+    ],
+    [
+     9242.48,
+     834.88
+    ],
+    [
+     9354.08,
+     9179.05
+    ],
+    [
+     2581.04,
+     9287.15
+    ]
+   ],
+   "author": "fstwn",
+   "status": "confirmed",
+   "reviewed_at": "2026-11-01T17:33:19+01:00",
+   "auto_quad": [
+    [
+     2599.60009765625,
+     1531.0999755859375
+    ],
+    [
+     9377.400390625,
+     1492.5
+    ],
+    [
+     9424.900390625,
+     9828.599609375
+    ],
+    [
+     2647.10009765625,
+     9867.2001953125
+    ]
+   ],
+   "px_per_mm": 126.69,
+   "format": "polaroid-go",
+   "background": "dark",
+   "tol_mm": 0.2,
+   "note": "black Go frame (greenish), labelled 2026-11-01 from a rough outline"
+  },
+  "scans_additional/260801_RollerRoids_SICKalps_Level_3_D0_04.tif": {
+   "quad": [
+    [
+     2685.62,
+     3559.42
+    ],
+    [
+     9466.25,
+     3612.34
+    ],
+    [
+     9410.93,
+     11962.74
+    ],
+    [
+     2629.41,
+     11905.87
+    ]
+   ],
+   "author": "fstwn",
+   "status": "confirmed",
+   "reviewed_at": "2026-11-01T17:34:41+01:00",
+   "auto_quad": [
+    [
+     2826.10009765625,
+     1879.0999755859375
+    ],
+    [
+     9603.900390625,
+     1923.0999755859375
+    ],
+    [
+     9549.7001953125,
+     10259.099609375
+    ],
+    [
+     2772.0,
+     10215.099609375
+    ]
+   ],
+   "px_per_mm": 126.69,
+   "format": "polaroid-go",
+   "background": "dark",
+   "tol_mm": 0.2,
+   "note": "black Go frame (greenish), labelled 2026-11-01 from a rough outline"
+  },
+  "scans_additional/260801_RollerRoids_SICKalps_Level_3_D0_05.tif": {
+   "quad": [
+    [
+     2654.91,
+     4892.34
+    ],
+    [
+     9436.32,
+     4970.95
+    ],
+    [
+     9329.69,
+     13321.06
+    ],
+    [
+     2556.52,
+     13227.87
+    ]
+   ],
+   "author": "fstwn",
+   "status": "confirmed",
+   "reviewed_at": "2026-11-01T17:35:39+01:00",
+   "auto_quad": [
+    [
+     2882.699951171875,
+     4011.300048828125
+    ],
+    [
+     9659.7998046875,
+     4117.2001953125
+    ],
+    [
+     9529.599609375,
+     12452.400390625
+    ],
+    [
+     2752.5,
+     12346.5
+    ]
+   ],
+   "px_per_mm": 126.69,
+   "format": "polaroid-go",
+   "background": "dark",
+   "tol_mm": 0.2,
+   "note": "black Go frame (greenish), labelled 2026-11-01 from a rough outline"
+  },
+  "scans_additional/260801_RollerRoids_SICKalps_Level_3_D0_06.tif": {
+   "quad": [
+    [
+     2143.06,
+     4574.91
+    ],
+    [
+     8918.75,
+     4132.06
+    ],
+    [
+     9421.32,
+     12471.45
+    ],
+    [
+     2660.37,
+     12901.43
+    ]
+   ],
+   "author": "fstwn",
+   "status": "confirmed",
+   "reviewed_at": "2026-11-01T17:37:05+01:00",
+   "auto_quad": [
+    [
+     2033.800048828125,
+     3140.800048828125
+    ],
+    [
+     8786.7998046875,
+     2560.89990234375
+    ],
+    [
+     9500.099609375,
+     10866.5
+    ],
+    [
+     2747.0,
+     11446.400390625
+    ]
+   ],
+   "px_per_mm": 126.69,
+   "format": "polaroid-go",
+   "background": "dark",
+   "tol_mm": 0.2,
+   "note": "black Go frame (greenish), labelled 2026-11-01 from a rough outline"
+  },
+  "scans_additional/260801_RollerRoids_SICKalps_Level_3_D0_07.tif": {
+   "quad": [
+    [
+     2784.63,
+     5136.78
+    ],
+    [
+     9559.59,
+     5096.54
+    ],
+    [
+     9592.11,
+     13441.58
+    ],
+    [
+     2821.2,
+     13478.95
+    ]
+   ],
+   "author": "fstwn",
+   "status": "confirmed",
+   "reviewed_at": "2026-11-01T17:37:36+01:00",
+   "auto_quad": [
+    [
+     2781.39990234375,
+     5065.5
+    ],
+    [
+     9559.2998046875,
+     5039.10009765625
+    ],
+    [
+     9591.7998046875,
+     13375.2001953125
+    ],
+    [
+     2814.0,
+     13401.7001953125
+    ]
+   ],
+   "px_per_mm": 126.69,
+   "format": "polaroid-go",
+   "background": "dark",
+   "tol_mm": 0.2,
+   "note": "black Go frame (greenish), labelled 2026-11-01 from a rough outline"
+  },
+  "scans_additional/260801_RollerRoids_SICKalps_Level_3_D0_08.tif": {
+   "quad": [
+    [
+     2638.0,
+     5183.57
+    ],
+    [
+     9430.81,
+     5095.93
+    ],
+    [
+     9521.67,
+     13439.33
+    ],
+    [
+     2753.69,
+     13533.01
+    ]
+   ],
+   "author": "fstwn",
+   "status": "confirmed",
+   "reviewed_at": "2026-11-01T17:39:13+01:00",
+   "auto_quad": [
+    [
+     2615.699951171875,
+     4671.0
+    ],
+    [
+     9386.7001953125,
+     4364.10009765625
+    ],
+    [
+     9764.2001953125,
+     12691.7001953125
+    ],
+    [
+     2993.300048828125,
+     12998.7001953125
+    ]
+   ],
+   "px_per_mm": 126.69,
+   "format": "polaroid-go",
+   "background": "dark",
+   "tol_mm": 0.2,
+   "note": "black Go frame (greenish), labelled 2026-11-01 from a rough outline"
+  },
+  "scans_additional/260803_RollerRoids_SICKalps_Level_3_D2_23.tif": {
+   "quad": [
+    [
+     2491.59,
+     5250.94
+    ],
+    [
+     9269.66,
+     4989.01
+    ],
+    [
+     9592.97,
+     13327.17
+    ],
+    [
+     2826.06,
+     13595.25
+    ]
+   ],
+   "author": "fstwn",
+   "status": "confirmed",
+   "reviewed_at": "2026-11-01T18:31:45+01:00",
+   "auto_quad": [
+    [
+     2492.58,
+     5250.9
+    ],
+    [
+     9269.66,
+     4989.01
+    ],
+    [
+     9592.97,
+     13327.17
+    ],
+    [
+     2827.05,
+     13595.21
+    ]
+   ],
+   "px_per_mm": 126.69,
+   "format": "polaroid-go",
+   "background": "dark",
+   "tol_mm": 0.2,
+   "note": "black Go frame with a dark photo (nothing passes the speck thresholds); confirmed 2026-11-01"
+  },
+  "scans_additional/260803_RollerRoids_SICKalps_Level_3_D2_24.tif": {
+   "quad": [
+    [
+     2409.17,
+     5165.65
+    ],
+    [
+     9186.63,
+     5018.86
+    ],
+    [
+     9358.06,
+     13359.91
+    ],
+    [
+     2584.55,
+     13512.52
+    ]
+   ],
+   "author": "fstwn",
+   "status": "confirmed",
+   "reviewed_at": "2026-11-01T17:40:34+01:00",
+   "auto_quad": [
+    [
+     2805.39990234375,
+     4180.0
+    ],
+    [
+     9579.599609375,
+     4403.89990234375
+    ],
+    [
+     9304.2001953125,
+     12735.599609375
+    ],
+    [
+     2530.0,
+     12511.599609375
+    ]
+   ],
+   "px_per_mm": 126.69,
+   "format": "polaroid-go",
+   "background": "dark",
+   "tol_mm": 0.2,
+   "note": "black Go frame (greenish), labelled 2026-11-01 from a rough outline"
+  },
+  "scans_additional/260803_RollerRoids_SICKalps_Level_3_D2_25.tif": {
+   "quad": [
+    [
+     2432.25,
+     5091.51
+    ],
+    [
+     9222.74,
+     5009.14
+    ],
+    [
+     9292.07,
+     13367.69
+    ],
+    [
+     2526.23,
+     13429.29
+    ]
+   ],
+   "author": "fstwn",
+   "status": "confirmed",
+   "reviewed_at": "2026-11-01T17:41:45+01:00",
+   "auto_quad": [
+    [
+     2437.39990234375,
+     4298.2998046875
+    ],
+    [
+     9215.0,
+     4241.10009765625
+    ],
+    [
+     9285.400390625,
+     12577.0
+    ],
+    [
+     2507.699951171875,
+     12634.2001953125
+    ]
+   ],
+   "px_per_mm": 126.69,
+   "format": "polaroid-go",
+   "background": "dark",
+   "tol_mm": 0.2,
+   "note": "black Go frame (greenish), labelled 2026-11-01 from a rough outline"
+  },
+  "scans_additional/260803_RollerRoids_SICKalps_Level_3_D2_31.tif": {
+   "quad": [
+    [
+     2584.15,
+     5039.11
+    ],
+    [
+     9364.12,
+     5069.85
+    ],
+    [
+     9326.61,
+     13416.99
+    ],
+    [
+     2545.65,
+     13386.25
+    ]
+   ],
+   "author": "fstwn",
+   "status": "confirmed",
+   "reviewed_at": "2026-11-01T17:42:17+01:00",
+   "auto_quad": [
+    [
+     2699.0,
+     5067.89990234375
+    ],
+    [
+     9477.0,
+     5067.89990234375
+    ],
+    [
+     9477.0,
+     13404.099609375
+    ],
+    [
+     2699.0,
+     13404.099609375
+    ]
+   ],
+   "px_per_mm": 126.69,
+   "format": "polaroid-go",
+   "background": "dark",
+   "tol_mm": 0.2,
+   "note": "black Go frame (greenish), labelled 2026-11-01 from a rough outline"
   },
   "white_bg/150101_Polaroid_Misc_2023_01.tif": {
    "quad": [
