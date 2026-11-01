@@ -29,7 +29,7 @@ LIBRARY = Path(os.environ.get("POLAROID_LIBRARY", "D:/11_pictures/Pictures"))
 TOL_MM = 0.1
 HOLDOUT_TOL_MM = 0.2
 # input/ folders whose scans also live in the library with identical pixels (checked 2026-10-18)
-LIBRARY_COPIES = {"SICK_D3": "05_roller_roids/250729_SICKalps_L2_D3"}
+LIBRARY_COPIES = {"SICK_D3": "05_roller_roids/250729_SICKalps_L2_D3", "260325_Samsoe": "02_polaroid/260226_Polaroids_Samsoe"}
 
 
 def _scan_path(rel: str) -> Path:

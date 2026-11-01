@@ -14,7 +14,10 @@ does not threshold brightness; it asks "is there anything at all here":
 6. Robust (trimmed) line fit per side, moved to the middle third of the side (concave prints);
    corners are the line intersections.
 7. Second pass with the threshold raised above the measured holder noise.
-8. Top and bottom: the print's rounded edge shows as a grey band behind the 50 % crossing.
+8. Black (printed) frames: where the frame next to the edge is black, the edge is where its
+   speckle starts; the line fit follows the white artwork, which reaches further out, so a
+   side moves inward when the two clearly disagree.
+9. Top and bottom: the print's rounded edge shows as a grey band behind the 50 % crossing.
    The side moves inward onto the band's inner end (knee of a two-line fit, median over the
    side); a grey holder rim in front of the print is not taken for a band.
 
@@ -82,6 +85,19 @@ class DetectParams:
     band_near_min: float = 0.65
     band_knee: float = 2.0  # the band rises at least this many times faster than what follows it
     band_min_share: float = 0.5  # share of stations that must show a band
+    # black (printed) frames: where the frame next to the edge is black, the edge is where its
+    # speckle starts; the line fit follows the white artwork, which reaches further out. Per side,
+    # stations (dark_station cells wide, corner_skip excluded) whose frame dark_inner cells inside
+    # stays below dark_level give the 35 % crossing of the share of pixels above dark_speck.
+    dark_level: float = 20.0
+    dark_speck: int = 2
+    dark_frac: float = 0.35
+    dark_station: int = 32
+    dark_out: int = 26  # cells searched outside the line
+    dark_inner: Tuple[int, int] = (10, 32)  # cells inside the line: frame level (median) and density
+    dark_min_share: float = 0.25  # share of a side's stations that must be dark and show the edge
+    dark_frame_share: float = 0.4  # share of all stations that must be dark: a black frame, not black artwork
+    dark_min_move: int = 4  # cells; smaller disagreements with the line fit are left alone
     ahead_window: int = 8  # a sparse plateau followed this soon by a bright one is a holder gap
     ahead_ratio: float = 6.0
     corner_skip: float = 0.08  # fraction of each side ignored near the corners
@@ -113,10 +129,13 @@ class EdgeStats:
     inside_px: Optional[float] = None
     # how far the side was moved inward from the fitted crossing line onto the edge band's inner end
     band_px: Optional[float] = None
+    # how far the side was moved inward (negative: outward) onto the edge of a black frame
+    dark_px: Optional[float] = None
 
-    def moved_inward(self, d: float) -> "EdgeStats":
-        """These statistics after the outline moved ``d`` px inward (onto the edge band's end)."""
-        out = replace(self, band_px=d)
+    def moved_inward(self, d: float, why: str = "band_px") -> "EdgeStats":
+        """These statistics after the outline moved ``d`` px inward; ``why`` names the field
+        that records the move (``band_px`` or ``dark_px``)."""
+        out = replace(self, **{why: d})
         if self.inner_px is not None:
             out.inner_px = self.inner_px - d
         if self.inside_px is not None:
@@ -354,6 +373,50 @@ def _consensus_offset(pts: np.ndarray, d: np.ndarray, tol: float) -> np.ndarray:
     i = int(np.argmax(hi - np.arange(len(so))))
     centre = np.median(so[i: hi[i]])
     return np.abs(off - centre) <= tol
+
+
+def dark_edge_shift(mx: np.ndarray, quad: np.ndarray, side: str, p: DetectParams = DetectParams(),
+                    f: int = 4) -> Tuple[Optional[float], int, int]:
+    """Median outward distance (px) from ``side`` of ``quad`` to the edge of a black frame (None
+    when too few stations show it), the number of dark stations and the number of stations.
+
+    Only stations where the frame next to the edge is black count (median max(R, G, B) of the
+    ``dark_inner`` window below ``dark_level``); at each, the edge is the ``dark_frac`` crossing of
+    the share of pixels above ``dark_speck``, from the emptiest holder outside to the frame.
+    """
+    a, b = {"top": (0, 1), "right": (1, 2), "bottom": (3, 2), "left": (0, 3)}[side]
+    p0, p1 = quad[a], quad[b]
+    length = float(np.linalg.norm(p1 - p0))
+    t = (p1 - p0) / length
+    n = np.array([-t[1], t[0]])
+    if np.dot((p0 + p1) / 2 - quad.mean(axis=0), n) < 0:
+        n = -n  # outward
+    wo, (ia, ib), w = p.dark_out * f, (p.dark_inner[0] * f, p.dark_inner[1] * f), p.dark_station * f
+    d = np.arange(wo, -ib, -1, dtype=np.float32)  # outside first
+    along = np.arange(w, dtype=np.float32)
+    shifts, n_st, n_dark = [], 0, 0
+    for s0 in np.arange(length * p.corner_skip, length * (1 - p.corner_skip) - w, w):
+        n_st += 1
+        X = (p0[0] + (s0 + along)[None, :] * t[0] + d[:, None] * n[0]).astype(np.float32)
+        Y = (p0[1] + (s0 + along)[None, :] * t[1] + d[:, None] * n[1]).astype(np.float32)
+        st = cv2.remap(mx, X, Y, cv2.INTER_NEAREST)
+        if np.median(st[wo + ia: wo + ib]) >= p.dark_level:
+            continue
+        n_dark += 1
+        prof = np.convolve((st > p.dark_speck).mean(axis=1), np.ones(5) / 5, mode="same")
+        lo = float(prof[: wo - 3 * f].min())
+        hi = float(np.median(prof[wo + ia: wo + ib - 6 * f]))
+        if hi - lo < 0.3:
+            continue
+        lev = lo + p.dark_frac * (hi - lo)
+        below = np.flatnonzero(prof[: wo + ia] < lev)
+        if not below.size:
+            continue
+        j = int(below[-1]) + 1
+        shifts.append(wo - (j - 1 + (lev - prof[j - 1]) / max(1e-9, float(prof[j] - prof[j - 1]))))
+    if n_st == 0 or len(shifts) < p.dark_min_share * n_st:
+        return None, n_dark, n_st
+    return float(np.median(shifts)), n_dark, n_st
 
 
 def band_shift(mx: np.ndarray, quad: np.ndarray, side: str, p: DetectParams = DetectParams(),
@@ -809,8 +872,24 @@ def detect(rgb: np.ndarray, params: DetectParams = DetectParams(), debug: bool =
                 found, thr = again, thr2
     quad, edges, pts, feat, repaired = found
     from .geometry import shift_side  # geometry imports this module
+    dark = set()
+    found = {side: dark_edge_shift(a.mx, quad, side, params, a.f) for side in SIDES}
+    black = sum(v[1] for v in found.values()) >= params.dark_frame_share * max(1, sum(v[2] for v in found.values()))
+    for side in SIDES if black else ():
+        out = found[side][0]
+        if out is None or side not in edges:
+            continue
+        # the fitted edge points follow the artwork, so how deep they lie inside the outline says
+        # nothing once the black frame's own edge has confirmed or moved the side
+        edges[side] = replace(edges[side], inside_px=None)
+        # the line fit follows the white artwork outward of a black frame's edge; outward moves
+        # only undo a rim repair, which the artwork can mislead on a black frame
+        if out <= -params.dark_min_move * a.f or (out >= params.dark_min_move * a.f and side in repaired):
+            quad = shift_side(quad, side, out)
+            edges[side] = edges[side].moved_inward(-out, "dark_px")
+            dark.add(side)
     for side in params.band_sides:
-        shift = a.band_shift(quad, side)
+        shift = None if side in dark else a.band_shift(quad, side)
         if shift is not None and side in edges:
             quad = shift_side(quad, side, -shift)
             edges[side] = edges[side].moved_inward(shift)

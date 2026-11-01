@@ -235,6 +235,137 @@
    "relabel": "2026-11-01 band convention",
    "known_failure": "bottom edge band not found (dusty, textured bottom): detector 0.17 mm outward of the reviewer"
   },
+  "260325_Samsoe/260315_Polaroids_Samsoe_05.tif": {
+   "quad": [
+    [
+     476.92,
+     470.36
+    ],
+    [
+     11579.72,
+     430.66
+    ],
+    [
+     11601.73,
+     13959.26
+    ],
+    [
+     490.93,
+     14002.36
+    ]
+   ],
+   "author": "fstwn",
+   "status": "confirmed",
+   "note": "black printed frame; labelled on the review page 2026-11-01 (edge band convention)",
+   "reviewed_at": "2026-11-01T15:37:00+01:00",
+   "auto_quad": [
+    [
+     476.9,
+     464.4
+    ],
+    [
+     11579.7,
+     424.7
+    ],
+    [
+     11601.6,
+     13925.6
+    ],
+    [
+     490.8,
+     13968.7
+    ]
+   ],
+   "px_per_mm": 126.64
+  },
+  "260325_Samsoe/260315_Polaroids_Samsoe_06.tif": {
+   "quad": [
+    [
+     360.58,
+     450.61
+    ],
+    [
+     11505.05,
+     412.79
+    ],
+    [
+     11505.56,
+     13927.23
+    ],
+    [
+     401.9,
+     13980.04
+    ]
+   ],
+   "author": "fstwn",
+   "status": "confirmed",
+   "note": "black printed frame; labelled on the review page 2026-11-01 (edge band convention)",
+   "reviewed_at": "2026-11-01T15:38:00+01:00",
+   "auto_quad": [
+    [
+     337.8,
+     446.7
+    ],
+    [
+     11509.0,
+     409.8
+    ],
+    [
+     11504.7,
+     13969.8
+    ],
+    [
+     375.3,
+     14010.8
+    ]
+   ],
+   "px_per_mm": 126.64,
+   "known_failure": "black printed frame: bottom corner 0.12 mm (bottom 0.08 mm outward, slightly tilted)"
+  },
+  "260325_Samsoe/260315_Polaroids_Samsoe_09.tif": {
+   "quad": [
+    [
+     463.73,
+     480.32
+    ],
+    [
+     11552.29,
+     436.09
+    ],
+    [
+     11647.14,
+     13951.79
+    ],
+    [
+     481.62,
+     14009.33
+    ]
+   ],
+   "author": "fstwn",
+   "status": "confirmed",
+   "note": "black printed frame; labelled on the review page 2026-11-01 (edge band convention)",
+   "reviewed_at": "2026-11-01T15:38:45+01:00",
+   "auto_quad": [
+    [
+     452.8,
+     473.4
+    ],
+    [
+     11549.3,
+     411.3
+    ],
+    [
+     11659.2,
+     13985.4
+    ],
+    [
+     470.9,
+     14042.0
+    ]
+   ],
+   "px_per_mm": 126.64,
+   "known_failure": "black printed frame: top 0.13 mm outward (the dark edge band is not found on black frames), right corner 0.20 mm"
+  },
   "260328_tttacho_IGNITION/260328_RollerRoids_tttacho_02-2.tif": {
    "quad": [
     [
@@ -422,6 +553,93 @@
    "relabel": "2026-11-01 band convention",
    "known_failure": "black glitter frame: corner 0.10 mm, at the tolerance"
   },
+  "260328_tttacho_IGNITION/260328_RollerRoids_tttacho_14-2.tif": {
+   "quad": [
+    [
+     385.19,
+     453.62
+    ],
+    [
+     11503.6,
+     370.0
+    ],
+    [
+     11551.54,
+     13914.64
+    ],
+    [
+     415.36,
+     13988.05
+    ]
+   ],
+   "author": "fstwn",
+   "status": "confirmed",
+   "note": "black printed frame; labelled on the review page 2026-11-01 (edge band convention)",
+   "reviewed_at": "2026-11-01T15:39:31+01:00",
+   "auto_quad": [
+    [
+     360.3,
+     443.8
+    ],
+    [
+     11530.2,
+     353.1
+    ],
+    [
+     11576.3,
+     13937.3
+    ],
+    [
+     391.6,
+     13988.1
+    ]
+   ],
+   "px_per_mm": 126.64,
+   "known_failure": "black printed frame: top and bottom about 0.1 mm outward (the dark edge band is not found on black frames)"
+  },
+  "260328_tttacho_IGNITION/260328_RollerRoids_tttacho_16-2.tif": {
+   "quad": [
+    [
+     392.88,
+     425.5
+    ],
+    [
+     11544.69,
+     380.9
+    ],
+    [
+     11531.3,
+     13926.2
+    ],
+    [
+     422.88,
+     13959.76
+    ]
+   ],
+   "author": "fstwn",
+   "status": "confirmed",
+   "note": "black printed frame; labelled on the review page 2026-11-01 (edge band convention)",
+   "reviewed_at": "2026-11-01T15:39:51+01:00",
+   "auto_quad": [
+    [
+     373.1,
+     420.6
+    ],
+    [
+     11553.6,
+     380.9
+    ],
+    [
+     11531.3,
+     13926.2
+    ],
+    [
+     403.1,
+     13959.8
+    ]
+   ],
+   "px_per_mm": 126.64
+  },
   "260328_tttacho_IGNITION/260328_RollerRoids_tttacho_21-2.tif": {
    "quad": [
     [
@@ -547,68 +765,6 @@
    "relabel": "2026-11-01 band convention",
    "known_failure": "gold frame: bottom band only partly found, detector 0.09 mm outward"
   },
-  "SICK_D3/250928_SICKalps_L2_D3_21.tif": {
-   "quad": [
-    [
-     246.11,
-     445.37
-    ],
-    [
-     11400.06,
-     424.79
-    ],
-    [
-     11426.77,
-     13937.49
-    ],
-    [
-     279.04,
-     13978.24
-    ]
-   ],
-   "author": "fstwn",
-   "status": "confirmed",
-   "note": "label review page: correct",
-   "reviewed_at": "2026-11-01T12:39:54+01:00",
-   "auto_quad": [
-    [
-     232.35,
-     421.45
-    ],
-    [
-     11411.02,
-     396.41
-    ],
-    [
-     11436.33,
-     13968.32
-    ],
-    [
-     265.33,
-     14010.78
-    ]
-   ],
-   "fixes": 1,
-   "quad_v1": [
-    [
-     248.0,
-     424.0
-    ],
-    [
-     11401.0,
-     399.0
-    ],
-    [
-     11426.3,
-     13962.0
-    ],
-    [
-     280.9,
-     14004.5
-    ]
-   ],
-   "relabel": "2026-11-01 band convention"
-  },
   "SICK_D3/250928_SICKalps_L2_D3_20.tif": {
    "quad": [
     [
@@ -672,6 +828,68 @@
    "relabel": "2026-11-01 band convention",
    "known_failure": "gold frame: bottom band only partly found, detector 0.12 mm outward"
   },
+  "SICK_D3/250928_SICKalps_L2_D3_21.tif": {
+   "quad": [
+    [
+     246.11,
+     445.37
+    ],
+    [
+     11400.06,
+     424.79
+    ],
+    [
+     11426.77,
+     13937.49
+    ],
+    [
+     279.04,
+     13978.24
+    ]
+   ],
+   "author": "fstwn",
+   "status": "confirmed",
+   "note": "label review page: correct",
+   "reviewed_at": "2026-11-01T12:39:54+01:00",
+   "auto_quad": [
+    [
+     232.35,
+     421.45
+    ],
+    [
+     11411.02,
+     396.41
+    ],
+    [
+     11436.33,
+     13968.32
+    ],
+    [
+     265.33,
+     14010.78
+    ]
+   ],
+   "fixes": 1,
+   "quad_v1": [
+    [
+     248.0,
+     424.0
+    ],
+    [
+     11401.0,
+     399.0
+    ],
+    [
+     11426.3,
+     13962.0
+    ],
+    [
+     280.9,
+     14004.5
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
+  },
   "SICK_D3/250928_SICKalps_L2_D3_24.tif": {
    "quad": [
     [
@@ -730,6 +948,69 @@
     [
      230.7,
      14028.5
+    ]
+   ],
+   "relabel": "2026-11-01 band convention"
+  },
+  "SICK_D3/250928_SICKalps_L2_D3_29 (2).tif": {
+   "quad": [
+    [
+     200.64,
+     382.39
+    ],
+    [
+     11329.04,
+     343.19
+    ],
+    [
+     11392.11,
+     13868.58
+    ],
+    [
+     248.41,
+     13907.98
+    ]
+   ],
+   "author": "fstwn",
+   "status": "confirmed",
+   "note": "label review page: correct",
+   "reviewed_at": "2026-11-01T12:52:04+01:00",
+   "auto_quad": [
+    [
+     193.84,
+     365.72
+    ],
+    [
+     11342.18,
+     326.51
+    ],
+    [
+     11405.58,
+     13960.96
+    ],
+    [
+     241.94,
+     14000.44
+    ]
+   ],
+   "fixes": 2,
+   "known_failure": "holder rim parallel to the bottom edge; detection 0.46 mm too tall (review hint names the fix)",
+   "quad_v1": [
+    [
+     200.6,
+     371.5
+    ],
+    [
+     11329.0,
+     332.3
+    ],
+    [
+     11392.2,
+     13893.3
+    ],
+    [
+     248.5,
+     13932.7
     ]
    ],
    "relabel": "2026-11-01 band convention"
@@ -796,69 +1077,6 @@
    ],
    "relabel": "2026-11-01 band convention",
    "known_failure": "bottom band knee lands in the edge shadow: detector 0.15 mm inward"
-  },
-  "SICK_D3/250928_SICKalps_L2_D3_29 (2).tif": {
-   "quad": [
-    [
-     200.64,
-     382.39
-    ],
-    [
-     11329.04,
-     343.19
-    ],
-    [
-     11392.11,
-     13868.58
-    ],
-    [
-     248.41,
-     13907.98
-    ]
-   ],
-   "author": "fstwn",
-   "status": "confirmed",
-   "note": "label review page: correct",
-   "reviewed_at": "2026-11-01T12:52:04+01:00",
-   "auto_quad": [
-    [
-     193.84,
-     365.72
-    ],
-    [
-     11342.18,
-     326.51
-    ],
-    [
-     11405.58,
-     13960.96
-    ],
-    [
-     241.94,
-     14000.44
-    ]
-   ],
-   "fixes": 2,
-   "known_failure": "holder rim parallel to the bottom edge; detection 0.46 mm too tall (review hint names the fix)",
-   "quad_v1": [
-    [
-     200.6,
-     371.5
-    ],
-    [
-     11329.0,
-     332.3
-    ],
-    [
-     11392.2,
-     13893.3
-    ],
-    [
-     248.5,
-     13932.7
-    ]
-   ],
-   "relabel": "2026-11-01 band convention"
   },
   "shelby_gt_h/251030_Shelby_GT_H_01.tif": {
    "quad": [
@@ -965,49 +1183,6 @@
    ],
    "fixes": 1
   },
-  "test/250928_RollerRoids_Scan_09.tif": {
-   "quad": [
-    [
-     459.9,
-     655.7
-    ],
-    [
-     17119.8,
-     562.6
-    ],
-    [
-     17228.4,
-     20904.9
-    ],
-    [
-     504.2,
-     21014.2
-    ]
-   ],
-   "author": "fstwn",
-   "status": "confirmed",
-   "note": "label review page: correct",
-   "reviewed_at": "2026-10-18T13:19:11+02:00",
-   "auto_quad": [
-    [
-     439.48,
-     649.07
-    ],
-    [
-     17131.38,
-     555.97
-    ],
-    [
-     17240.03,
-     20911.16
-    ],
-    [
-     483.81,
-     21020.53
-    ]
-   ],
-   "fixes": 1
-  },
   "test/250928_RollerRoids_Scan_03.tif": {
    "quad": [
     [
@@ -1047,6 +1222,49 @@
     [
      340.66,
      20800.37
+    ]
+   ],
+   "fixes": 1
+  },
+  "test/250928_RollerRoids_Scan_09.tif": {
+   "quad": [
+    [
+     459.9,
+     655.7
+    ],
+    [
+     17119.8,
+     562.6
+    ],
+    [
+     17228.4,
+     20904.9
+    ],
+    [
+     504.2,
+     21014.2
+    ]
+   ],
+   "author": "fstwn",
+   "status": "confirmed",
+   "note": "label review page: correct",
+   "reviewed_at": "2026-10-18T13:19:11+02:00",
+   "auto_quad": [
+    [
+     439.48,
+     649.07
+    ],
+    [
+     17131.38,
+     555.97
+    ],
+    [
+     17240.03,
+     20911.16
+    ],
+    [
+     483.81,
+     21020.53
     ]
    ],
    "fixes": 1
