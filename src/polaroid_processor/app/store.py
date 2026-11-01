@@ -55,8 +55,12 @@ class Store:
     def touch_project(self, input_dir: Optional[str], output: str) -> None:
         with self._lock:
             data = self._load()
+            old = [p for p in data.get("projects", []) if same_path(p["output"], output)]
             rest = [p for p in data.get("projects", []) if not same_path(p["output"], output)]
-            data["projects"] = ([{"input": input_dir, "output": output, "opened_at": now()}] + rest)[:MAX_PROJECTS]
+            entry = {"input": input_dir, "output": output, "opened_at": now()}
+            if old and old[0].get("settings"):
+                entry["settings"] = old[0]["settings"]       # kept until the project has a manifest of its own
+            data["projects"] = ([entry] + rest)[:MAX_PROJECTS]
             if input_dir:
                 ins = [p for p in data.get("recent_inputs", []) if not same_path(p, input_dir)]
                 data["recent_inputs"] = ([input_dir] + ins)[:MAX_INPUTS]
@@ -66,6 +70,34 @@ class Store:
         with self._lock:
             data = self._load()
             data["projects"] = [p for p in data.get("projects", []) if not same_path(p["output"], output)]
+            self._save(data)
+
+    # ---- settings ----------------------------------------------------------
+    def settings_defaults(self) -> dict:
+        """The panel fields the user chose last: the start for new projects."""
+        with self._lock:
+            return dict(self._load().get("settings_defaults", {}))
+
+    def set_settings_defaults(self, panel: dict) -> None:
+        with self._lock:
+            data = self._load()
+            data["settings_defaults"] = panel
+            self._save(data)
+
+    def project_settings(self, output: str) -> Optional[dict]:
+        """Settings of a project that has no manifest yet (a manifest holds them afterwards)."""
+        with self._lock:
+            for p in self._load().get("projects", []):
+                if same_path(p["output"], output):
+                    return p.get("settings")
+        return None
+
+    def set_project_settings(self, output: str, settings: dict) -> None:
+        with self._lock:
+            data = self._load()
+            for p in data.get("projects", []):
+                if same_path(p["output"], output):
+                    p["settings"] = settings
             self._save(data)
 
     def recent_inputs(self) -> List[str]:

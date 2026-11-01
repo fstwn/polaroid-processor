@@ -856,8 +856,7 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
         outs = e.get("outputs") or {}
         missing = not outs or any(not manifest.abs(p).exists() for p in outs.values())
         if exported_now.get(k):
-            px_p = e.get("export_px_per_mm") or final.px_per_mm
-            if abs(px_p - final.px_per_mm) * settings.margin_mm < 0.5:
+            if retag_ok(e, final, settings, curves, manual):      # cut at a scale within 0.5 % of the final one
                 retag(manifest, e, final)
                 e["export_key"], e["export_base"] = xkey, xbase
                 continue

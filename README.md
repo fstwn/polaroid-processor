@@ -27,7 +27,9 @@ This installs two commands: `polaroid` (CLI) and `polaroid-mcp` (MCP server for 
 
 ### Windows: drag and drop
 
-[`launcher/polaroid-drop.bat`](launcher/polaroid-drop.bat) needs no terminal. Drag one or more scan folders onto it (or double-click it and type a folder path). Each folder is processed into a sibling folder `<folder>_processed`, which opens in Explorer when done. If `polaroid.exe` is not on the PATH, set `POLAROID_CONDA_ENV` (or `POLAROID_EXE`) at the top of the file. Extra options go into `POLAROID_ARGS`, e.g. `--overlay`.
+Two launchers need no terminal. [`launcher/polaroid-app.bat`](launcher/polaroid-app.bat) starts the [web app](#web-app): double-click it, or drag scan folders onto it to make them projects (each is processed into a sibling folder `<folder>_processed`); an app that is already running is reused. It reads `POLAROID_EXE` / `POLAROID_CONDA_ENV` like the other launcher, and `POLAROID_APP_ARGS` adds options such as `--port`. Close its window to stop the app. A folder whose name contains `&` is cut at the `&` if Explorer does not quote it when dragged (the same limit as `polaroid-drop.bat`); start such a folder from a terminal with `polaroid app "C:\R&D\scans"`.
+
+[`launcher/polaroid-drop.bat`](launcher/polaroid-drop.bat) processes without the app. Drag one or more scan folders onto it (or double-click it and type a folder path). Each folder is processed into a sibling folder `<folder>_processed`, which opens in Explorer when done. If `polaroid.exe` is not on the PATH, set `POLAROID_CONDA_ENV` (or `POLAROID_EXE`) at the top of the file. Extra options go into `POLAROID_ARGS`, e.g. `--overlay`.
 
 ## Quick start
 
@@ -44,7 +46,26 @@ Per scan this writes:
 | `<out>/web/<name>.jpg` | Long edge 2048 px, quality 88 |
 | `<out>/polaroid-manifest.json` | Detection, scale, status, manual fixes and their history |
 
-Re-running the same command only processes new or changed scans and scans whose settings changed.
+Re-running the same command only processes new or changed scans and scans whose settings changed. When only the batch's inferred scale moved (a fix changed the median print size), the resolution tags of the finished exports are patched in place and nothing is encoded again, as long as the scale it was cut at is within 0.5 % of the new one. A scale set on purpose (`--ppi`, a profile) is a new export.
+
+## Web app
+
+```bash
+polaroid app                       # starts the app and opens the browser (http://127.0.0.1:8780)
+polaroid app D:\scans\roll_01      # ... and makes that folder a project
+python -m polaroid_processor.app   # the same
+```
+
+A local app (stdlib server on `127.0.0.1`, plain JavaScript, no extra dependencies) for the whole loop: pick a scan folder, run, review, fix, export.
+
+- **Projects.** The home page lists recent projects (input folder, output folder, counts of ok / needs review / failed / exported). A new project takes an input folder (Browse opens the native folder dialog, or type a path; recent folders are offered) and an output folder, by default `<input>_processed` next to it. Any existing output folder with a `polaroid-manifest.json` can be opened too, also one made on the command line. The list is kept per user in `%APPDATA%/polaroid-processor/app.json` (`~/.polaroid-processor/` elsewhere).
+- **Detect.** Finds the print in every scan and stores the outlines in the manifest, without exporting. A bar shows done/total and time left; the grid fills as scans finish, each card with a small straightened preview of the crop (cached in `<out>/_previews/`), its status and warnings. Cancel stops after the scans in flight; the next run resumes. The grid filters by status.
+- **Fix.** A click on a card opens the 9-tile drag view (the same page the old `review` command served): drag a corner or an edge grip onto the print edge, then Confirm or Save correction. The card and its preview update. Fixes can be made at any time, also during a run.
+- **Export.** Writes the TIFF master and the JPG derivatives of every detected scan that has no up to date export; `Export (N)` says how many. It has the same progress and Cancel. `Detect + export` does both in one go, for batches you trust. A scale-only change shows as `Update tags (T)`: the resolution tags are patched, nothing is encoded.
+- **Settings.** Per project, kept in the manifest: crop margin, the JPG derivatives `high` and `web`, flatten and shadow correction; under Advanced the scale (ppi or scanner profile), TIFF compression, interpolation and the overlay. Your last choices are the start for new projects (the scale is not carried over). Settings apply to the next run and cannot be changed while one goes; a change shows in the Export count.
+- **With the command line and agents.** The app watches the manifest: a fix made by `polaroid fix`, an agent or another window shows up in the grid and in an open drag view without a reload. Only one run can work on an output folder at a time (see [Run lock](#run-lock-and-concurrent-writers)); the app shows when another process holds it.
+
+`polaroid review OUTPUT [--all] [--port N] [--no-browser]` opens the app on that project; the grid starts on "needs review" unless `--all` is given. `--author NAME` sets the author recorded with fixes made in the app (only when this command starts the app; a running app keeps its own); `--export` is ignored (use the Export button). `polaroid app` and `polaroid review` reuse an app that already runs on the port (default 8780, or a free one when that is busy and no `--port` is given): the browser opens on it and on the project, and no second server starts. A run in the running app is never stopped for that; the app stays on its project.
 
 ## How it works
 
@@ -116,19 +137,20 @@ polaroid fix OUTPUT NAME --reset
 
 Corners are `tl`, `tr`, `br`, `bl`; sides are `top`, `right`, `bottom`, `left`. `--shift` moves a side outward (positive) or inward (negative). `--accept` marks the current outline as reviewed. Every change is stored in the manifest with author (`--author`, default `human`), time, note and previous value. `--export` re-exports that scan right away; otherwise the next `process` run does it.
 
-### `review`
+### `app` and `review`
 
 ```bash
-polaroid review OUTPUT [--all] [--port N] [--author NAME] [--export] [--no-browser]
+polaroid app [FOLDER...] [--port N] [--no-browser]
+polaroid review OUTPUT [--all] [--port N] [--author NAME] [--no-browser]
 ```
 
-Serves a local page (stdlib server on `127.0.0.1`, no network access, no extra dependencies) and opens it in the browser. By default it lists the scans of the manifest with status `needs_review`; `--all` lists every scan. Each scan is a 3x3 grid: the four corners and the four edge midpoints as 480 px tiles of the original pixels (contrast-stretched when dark), and an overview in the middle. The green line is the current outline.
+`app` starts the [web app](#web-app); each `FOLDER` becomes a project (an output folder with a manifest opens as it is). `review` opens the app on one output folder, with the grid on "needs review" unless `--all` is given. Both start a local stdlib server on `127.0.0.1` (no network access, no extra dependencies) and open the browser, or reuse the app that already runs. When they start the server they block until it is stopped (Ctrl+C); when an app already runs they open the browser on it and return at once. The fix page of the app shows each scan as a 3x3 grid: the four corners and the four edge midpoints as 480 px tiles of the original pixels (contrast-stretched when dark), and an overview in the middle. The green line is the current outline.
 
 - Drag a magenta corner, or the green grip on an edge tile (moves the whole side), onto the print edge.
 - Click a tile to enlarge it; there the arrow keys move 1 px and `Shift` + arrow 10 px. `Esc` closes.
 - **Confirm** stores the current outline as reviewed (`fix --accept`) and goes to the next scan. **Save correction** stores the moved corners and cuts the tiles again at the new outline. **Reset** drops edits that are not saved yet. **Skip** goes on without writing.
 
-Saves go through the same code as `fix` (history with author, time, note and previous outline; author is `--author`, default `human`). With `--export`, each saved scan is re-exported right away; otherwise the next `process` run does it. Tiles are cut from the input scans, which are only read. `--port` defaults to any free port; the URL is printed.
+Saves go through the same code as `fix` (history with author, time, note and previous outline; author is `--author`, default `human`); the scan is judged again on the new outline and its preview renewed. Export from the app's Export button, or run `process` again. Tiles are cut from the input scans, which are only read. The URL is printed.
 
 ### `status`
 
@@ -148,9 +170,11 @@ With `--json`, `process` prints one JSON object per scan, then a summary:
  "format": {"name": "polaroid-600", "size_mm": [87.97, 106.98], "error": 0.0003},
  "edges": {"top": {"n_points": 18, "n_inliers": 18, "mad_px": 1.0, "bow_px": -0.2, "max_px": 3.1}, ...},
  "outputs": {"tiff": "...", "high": "...", "web": "..."}, "exported": true, "error": null}
-{"type": "summary", "scans": 14, "counts": {"ok": 13, "needs_review": 1}, "exported": 14,
- "needs_review": ["scan_01.tif"], "failed": [], "manifest": "...", "time_s": 59.0}
+{"type": "summary", "scans": 14, "counts": {"ok": 13, "needs_review": 1}, "exported": 14, "retagged": 0,
+ "needs_review": ["scan_01.tif"], "failed": [], "manifest": "...", "cancelled": false, "time_s": 59.0}
 ```
+
+Summary keys beyond the counts: `exported` (scans written in this run), `retagged` (finished exports whose resolution tags were patched because only the inferred scale moved; nothing was encoded again), `cancelled` (the run was stopped before every scan was started: run it again to resume).
 
 | Status | Meaning |
 |---|---|
@@ -174,7 +198,13 @@ Informational: `scale_inferred:<source>`, `size_unverified` (single scan, no sca
 
 For sides that follow a curve, the straight-line checks `not_parallel`, `edge_inside` and `edge_curved` do not apply. Each result also carries `flatten` (applied, sides, bend per side) and `shadows` (corrected sides, strongest darkening, share of each side that could be measured).
 
-Exit codes: `0` success (scans may still need review), `1` at least one scan failed, `2` usage error. Logs go to stderr (`-v` for progress).
+Exit codes: `0` success (scans may still need review), `1` at least one scan failed, `2` usage error, which includes a refused run (see below). Logs go to stderr (`-v` for progress).
+
+### Run lock and concurrent writers
+
+Only one run (`process`, the app's Detect / Export, MCP `polaroid_process`, `fix --export`) works on an output folder at a time. A run takes an operating-system lock on `<out>/polaroid-run.lock`, which also holds its pid and start time. The system drops the lock when the process ends, so a crashed run leaves nothing behind. A second run fails with `RunLocked` ("another run is working on ...") and exit code 2. A fix without `--export` never needs the lock, and `fix --export` during a run stores the fix and returns the record with `note: "fix saved; export skipped: ..."` (exit code 0): run `process` or Export afterwards.
+
+Writers merge before they save: the manifest is re-read under a short lock and merged per scan, so a fix made by the app, the CLI or an agent while a run goes is kept, and the run judges the fixed scan on its fixed outline.
 
 ### Review loop for agents
 
@@ -205,7 +235,7 @@ Use the full path to `polaroid-mcp` (for example `.../envs/<env>/Scripts/polaroi
 | `polaroid_fix` | `set` / `nudge` / `shift` / `accept` / `reset` as JSON objects, author `agent` by default, re-exports by default |
 | `polaroid_status` | Counts and the scans that need review |
 
-Tool errors (bad arguments, missing manifest) come back as tool results with `isError`, so the agent can correct itself.
+Tool errors (bad arguments, missing manifest, another run working on the output folder) come back as tool results with `isError`, so the agent can correct itself. A refused run is not a failure of the scans: wait and try again. `polaroid_fix` with `export` while another run holds the folder still saves the fix; its result says the export was skipped.
 
 ### Claude Code skill
 

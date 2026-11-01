@@ -33,7 +33,10 @@ folder per input folder); for every scan with status needs_review call polaroid_
 compare the green line with the print edge, then polaroid_fix (set/nudge/shift corners, or
 accept) with a note saying why. Coordinates are full-resolution scan pixels; shift is positive
 outward. Warnings starting with hint: name a concrete fix. Escalate to a human when the edge is
-not visible even in stretched tiles or is physically curved. Never write into input folders."""
+not visible even in stretched tiles or is physically curved (they open `polaroid review <output>`,
+the local web app). Never write into input folders. One run works on an output folder at a time:
+when polaroid_process says another run is working there, wait and try again; polaroid_fix still
+saves a fix then, and says the export was skipped."""
 
 _STR_LIST = {"type": "array", "items": {"type": "string"}}
 _POINT = {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2}
@@ -47,8 +50,9 @@ TOOLS: List[Dict[str, Any]] = [
         "description": (
             "Detect, rectify and export scans into an output folder (TIFF master plus JPG/PNG derivatives, "
             "manifest polaroid-manifest.json). Resumable: unchanged scans are skipped. Returns a summary and "
-            "per-scan results; status needs_review means check the scan with polaroid_inspect. Can take "
-            "several seconds per scan."),
+            "per-scan results; status needs_review means check the scan with polaroid_inspect. The summary "
+            "says cancelled (stopped early: run again) and retagged (only resolution tags patched). Fails "
+            "while another run works on the same output folder. Can take several seconds per scan."),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -120,7 +124,9 @@ TOOLS: List[Dict[str, Any]] = [
             "Correct or accept the outline of one scan in the manifest and (by default) re-export it. "
             "set: absolute corner positions; nudge: corner offsets; shift: move a whole side outward "
             "(positive) or inward (negative); accept: mark the current outline as reviewed; reset: back "
-            "to automatic detection. Every change is logged with author, time, note and previous value."),
+            "to automatic detection. Every change is logged with author, time, note and previous value. "
+            "While another run works on the output folder the fix is saved and the export is skipped "
+            "(the result has a note)."),
         "inputSchema": {
             "type": "object",
             "properties": {

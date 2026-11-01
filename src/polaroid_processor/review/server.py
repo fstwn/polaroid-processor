@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import json
 import logging
+import socket
+import sys
 import threading
 import time
 import webbrowser
@@ -289,10 +291,22 @@ class Handler(BaseHTTPRequestHandler):
         self._route("POST")
 
 
+class LocalServer(ThreadingHTTPServer):
+    """A threading server that never shares its port: on Windows ``SO_REUSEADDR`` lets a second socket bind a
+    port that is listening (two apps would answer on one port), so the port is bound exclusively there."""
+
+    allow_reuse_address = sys.platform != "win32"   # elsewhere it only allows a restart during TIME_WAIT
+
+    def server_bind(self) -> None:
+        if sys.platform == "win32":
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
 def make_server(app: ReviewApp, port: int = 0) -> ThreadingHTTPServer:
     """HTTP server for ``app`` on 127.0.0.1 (port 0 picks a free one). Not started."""
     handler = type("BoundHandler", (Handler,), {"app": app})
-    srv = ThreadingHTTPServer(("127.0.0.1", port), handler)
+    srv = LocalServer(("127.0.0.1", port), handler)
     srv.daemon_threads = True
     return srv
 

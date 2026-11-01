@@ -135,18 +135,26 @@ def cmd_status(a) -> int:
     return 0
 
 
-# --------------------------------------------------------------------------- review
-def cmd_review(a) -> int:
-    from .review import ReviewApp, serve
+# --------------------------------------------------------------------------- app, review
+def _announce(m: str) -> None:
+    print(m, file=sys.stderr)
 
-    app = ReviewApp(a.output, show_all=a.all, author=a.author, export=a.export)
-    n = len(app.list_scans()["scans"])
-    if not n:
-        print("no scans need review (use --all to look at every scan)" if not a.all else "the manifest has no scans")
-        return 0
-    print(f"{n} scan(s) to review in {a.output}", file=sys.stderr)
-    serve(app, a.port, open_browser=not a.no_browser, announce=lambda m: print(m, file=sys.stderr))
-    return 0
+
+def cmd_app(a) -> int:
+    from .app import launch
+
+    return launch(a.folders, port=a.port, open_browser=not a.no_browser, config=a.config, announce=_announce)
+
+
+def cmd_review(a) -> int:
+    """Opens the app on the output folder (the standalone review page is gone as a command; the app's
+    drag-to-fix view is the same page)."""
+    from .app import launch
+
+    if a.export:
+        print("note: --export is ignored here; the app has an Export button", file=sys.stderr)
+    return launch(output=a.output, port=a.port, open_browser=not a.no_browser, author=a.author,
+                  filter_name=None if a.all else "needs_review", announce=_announce)
 
 
 # --------------------------------------------------------------------------- parser
@@ -225,12 +233,20 @@ def build_parser() -> argparse.ArgumentParser:
     common(sp)
     sp.set_defaults(fn=cmd_status)
 
-    sp = sub.add_parser("review", help="local web page to drag outlines onto the print edge")
+    sp = sub.add_parser("app", help="local web app: projects, runs, review grid, drag-to-fix, export")
+    sp.add_argument("folders", nargs="*", help="scan folders to make projects of; an output folder opens as it is")
+    sp.add_argument("--port", type=int, help="port on 127.0.0.1 (default 8780, or a free one when that is busy)")
+    sp.add_argument("--no-browser", action="store_true", help="do not open the page in the browser")
+    sp.add_argument("--config", help="user data file (default %%APPDATA%%/polaroid-processor/app.json)")
+    common(sp)
+    sp.set_defaults(fn=cmd_app)
+
+    sp = sub.add_parser("review", help="open the app on an output folder (drag outlines onto the print edge)")
     sp.add_argument("output", help="output folder holding the manifest")
-    sp.add_argument("--all", action="store_true", help="every scan, not only those that need review")
-    sp.add_argument("--port", type=int, default=0, help="port on 127.0.0.1 (default: any free port)")
+    sp.add_argument("--all", action="store_true", help="show every scan (default: the grid starts on 'needs review')")
+    sp.add_argument("--port", type=int, help="port on 127.0.0.1 (default 8780, or a free one when that is busy)")
     sp.add_argument("--author", default="human", help="author recorded with each fix (default human)")
-    sp.add_argument("--export", action="store_true", help="re-export each scan right after it is saved")
+    sp.add_argument("--export", action="store_true", help="ignored; the app has an Export button")
     sp.add_argument("--no-browser", action="store_true", help="do not open the page in the browser")
     common(sp)
     sp.set_defaults(fn=cmd_review)

@@ -53,6 +53,35 @@
       <span id="bar-text" class="dim"></span>
     </div>
   </div>
+  <div id="settings" class="panel" hidden>
+    <h2>Settings of this project</h2>
+    <div class="grid2">
+      <label>Crop margin (mm) <input id="s-margin_mm" type="number" step="0.05" min="0" max="5"></label>
+      <label>Flatten curled prints <select id="s-flatten"><option value="auto">on (auto)</option><option value="off">off</option></select></label>
+      <label>Edge shadow correction <select id="s-shadows"><option value="auto">on (auto)</option><option value="off">off</option></select></label>
+    </div>
+    <div class="grid2">
+      <div class="deriv"><label><input id="s-high_on" type="checkbox"> JPG &ldquo;high&rdquo;</label>
+        <span>long edge <input id="s-high_edge" type="number" min="100" max="30000" step="100"> px, quality <input id="s-high_quality" type="number" min="1" max="100"></span></div>
+      <div class="deriv"><label><input id="s-web_on" type="checkbox"> JPG &ldquo;web&rdquo;</label>
+        <span>long edge <input id="s-web_edge" type="number" min="100" max="30000" step="100"> px, quality <input id="s-web_quality" type="number" min="1" max="100"></span></div>
+    </div>
+    <details><summary>Advanced</summary>
+      <div class="grid2">
+        <label>Scale: scanner resolution (ppi, empty = inferred) <input id="s-ppi" type="number" step="1" min="10" max="20000"></label>
+        <label>or scanner profile <input id="s-profile" type="text" spellcheck="false"></label>
+        <label>TIFF compression <select id="s-tiff_compression"><option value="zlib">zlib</option><option value="none">none</option></select></label>
+        <label>Interpolation <select id="s-interpolation"><option value="linear">linear</option><option value="cubic">cubic</option><option value="lanczos">lanczos</option></select></label>
+        <label><input id="s-overlay" type="checkbox"> also write a detection overlay JPG per scan</label>
+      </div>
+    </details>
+    <div class="row end">
+      <span id="s-note" class="dim"></span>
+      <button id="s-close">Close</button>
+      <button id="s-save" class="primary">Save</button>
+    </div>
+    <p class="dim small">Settings apply to the next run and are kept in the project's manifest. Your last choices are the start for new projects (the scale is not carried over). A change shows up in the Export count; a changed scale or profile exports again.</p>
+  </div>
   <div id="filters" class="chips filters"></div>
   <div id="empty" class="empty" hidden></div>
   <div id="grid"></div>

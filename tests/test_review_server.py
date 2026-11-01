@@ -180,15 +180,3 @@ def test_rejects_foreign_host_and_origin(page):
     assert page.request("/api/scans", headers={"Origin": "http://evil.example"})[0] == 403
     status, _, _ = page.request("/api/scans/r_white.tif/confirm", {}, headers={"Content-Type": "text/plain"})
     assert status == 400
-
-
-def test_cli_without_flagged_scans_does_not_serve(processed, capsys, tmp_path):
-    _, out = processed
-    work = copy_out(out, tmp_path / "out")
-    m = Manifest(str(work))
-    for e in m.scans.values():
-        e["status"] = "ok"
-    m.save()
-    assert main(["review", str(work), "--no-browser"]) == 0
-    assert "no scans need review" in capsys.readouterr().out
-    assert main(["review", str(tmp_path / "missing")]) == 2

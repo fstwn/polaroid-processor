@@ -22,6 +22,7 @@ from ..manifest import MANIFEST_NAME, Manifest
 from ..pipeline import collect_inputs, manual_outline, reevaluate, resolve_scales, retag_ok, settings_from_dict
 from ..preview import LONG_EDGE, PREVIEW_DIR, preview_key, write_preview
 from ..scale import scale_from_size
+from .settings import defaults_of, from_panel, to_panel
 
 log = logging.getLogger("polaroid_processor.app")
 
@@ -176,7 +177,8 @@ class Run:
 
 
 class Project:
-    def __init__(self, input_dir: Optional[str], output: str):
+    def __init__(self, input_dir: Optional[str], output: str, store=None):
+        self.store = store
         self.input = str(input_dir) if input_dir else None
         self.output = str(output)
         self.name = Path(self.output).name
@@ -278,6 +280,46 @@ class Project:
     def record(self) -> dict:
         return {"input": self.input, "output": self.output, "name": self.name}
 
+    # ---- settings -----------------------------------------------------------
+    def settings_dict(self, m: Optional[Manifest] = None) -> dict:
+        """The settings the next run uses: the manifest's; else the project's own (set before its first run);
+        else the user's last choices; else the tool's defaults."""
+        m = m or load_manifest(self.output)
+        if m and m.data.get("settings"):
+            return m.data["settings"]
+        if self.store:
+            own = self.store.project_settings(self.output)
+            if own:
+                return own
+            return from_panel(None, self.store.settings_defaults())
+        return from_panel(None, {})
+
+    def get_settings(self) -> dict:
+        return {"settings": to_panel(self.settings_dict()), "running": self.running,
+                "locked_by": (holder(self.output) or {}).get("who") if not self.running else None}
+
+    def set_settings(self, update: dict) -> dict:
+        """Apply panel fields. Refused while a run goes (here or in another process): a run reads its settings
+        once, so a change could not apply to it; the next run uses the new ones."""
+        if self.running:
+            raise api.UsageError("wait until the run ends before changing settings; they apply to the next run")
+        other = holder(self.output)
+        if other and other["pid"] != os.getpid():
+            raise api.UsageError(f"another run is working on this output folder (pid {other['pid']}, {other['who']}); "
+                                 "wait until it ends")
+        m = load_manifest(self.output)
+        new = from_panel(self.settings_dict(m), update)
+        if m:
+            m.data["settings"] = new
+            m.save()
+        elif self.store:
+            self.store.set_project_settings(self.output, new)
+        if self.store:
+            self.store.set_settings_defaults(defaults_of(new))
+        with self._lock:
+            self._sig = None
+        return self.get_settings()
+
     # ---- runs -----------------------------------------------------------
     @property
     def running(self) -> bool:
@@ -345,8 +387,7 @@ class Project:
 
         state, error = "finished", None
         try:
-            m = load_manifest(self.output)
-            settings = settings_from_dict((m.data.get("settings") if m else None) or {})
+            settings = settings_from_dict(self.settings_dict())
             settings.export, settings.previews = run.mode != "detect", run.mode != "export"
             summary = api.process(inputs, self.output, settings, progress=progress, cancel=run.cancel.is_set,
                                   on_jobs=on_jobs, on_phase=on_phase)

@@ -25,10 +25,11 @@ If `polaroid` is not found, it is installed in a Python environment that is not 
 - Never write into, rename or delete anything in the input folders. Outputs go to a separate output folder, one per input folder (scan file names must be unique per output folder).
 - Every fix gets `author` = `agent` and a `note` saying what you saw. Fixes are logged and revertible (`reset`).
 - Do not change `margin_mm`, derivative presets or scale (`ppi`, `profile`) unless the user asks.
+- One run per output folder. When `process`, `polaroid_process` or an export fails with "another run is working on ... (pid ...)" (exit code 2), the user's app or another agent has the folder: wait and try again; never delete `polaroid-run.lock` unless the user says no run is going. A `fix` is still saved while a run goes; with `--export` it returns a `note` saying the export was skipped, so run `process` again afterwards instead of repeating the fix.
 
 ## Workflow
 
-1. Process: `polaroid_process` with `inputs` and `output`. Read `summary.counts`, `needs_review` and `failed`.
+1. Process: `polaroid_process` with `inputs` and `output`. Read `summary.counts`, `needs_review` and `failed`. `summary.cancelled` true means the run was stopped early (by the app's Cancel): run it again to finish. `summary.retagged` counts exports whose resolution tags were patched because only the inferred scale moved; nothing was encoded again, no action.
 2. For each scan with status `needs_review`, read its `warnings`:
    - `hint:fix --shift <side>=-<px> ...`: the review rules found the likely fix. Apply it, then verify with inspect.
    - `size_outlier`, `not_parallel`, `edge_uncertain`, `edge_noisy`, `edge_curved`, `size_mismatch`: inspect first.
@@ -44,7 +45,7 @@ If `polaroid` is not found, it is installed in a Python environment that is not 
    - Only one corner off: `nudge` that corner by `[dx, dy]`, or `set` it to `[x, y]`.
    - Then inspect again and check the tiles you changed.
 5. Escalate to the user instead of guessing when: the edge is invisible even in stretched tiles (black frame on black holder), an edge is visibly curved so no straight line fits, or a fix would move a side by more than about 1 mm (~130 px at 128 px/mm).
-6. Hand-off: for the scans you escalated, tell the user to run `polaroid review OUTPUT_FOLDER` (add `--all` to see every scan). It opens a local page where they drag the outline onto the print edge and press Confirm or Save correction; fixes go into the manifest with `author` `human`. Do not run it yourself (it blocks until stopped). Afterwards run `process` again, or `polaroid review OUTPUT_FOLDER --export` to export on save.
+6. Hand-off: for the scans you escalated, tell the user to run `polaroid review OUTPUT_FOLDER` (the grid starts on "needs review"; `--all` shows every scan). It opens the local web app on that project: they click a scan, drag the outline onto the print edge and press Confirm or Save correction; fixes go into the manifest with `author` `human`. Do not run it yourself (it blocks until stopped). The user can also start `polaroid app` (or `launcher/polaroid-app.bat`) and pick the folder. Afterwards run `process` again, or let the user press Export in the app. The app shows your own fixes live while it is open, and a fix by the user while you work is kept (writers merge); read `polaroid_status` again before you decide what is left.
 7. Report: counts, what you fixed and why, what you left for the user (name the scans and the `review` command), and the output folder.
 
 ## Notes

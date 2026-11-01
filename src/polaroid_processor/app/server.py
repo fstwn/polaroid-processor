@@ -6,6 +6,10 @@ mapping come from the review server). Routes::
     GET  /                                      the page (static files under /static/)
     GET  /api/home                              recent projects with counts, recent input folders
     POST /api/browse                            body {"initial": path}: native folder dialog, {"path": ...}
+    GET  /api/ping                              who answers: another launch finds a running app with it
+    GET  /api/project/settings                  the settings panel's fields of the open project
+    POST /api/project/settings                  body: fields to change (refused while a run goes)
+    POST /api/project/add                       body {"input", "output"?}: onto the recent list, not opened
     POST /api/project/open                      body {"input", "output"?} new project, or {"output"} an existing one
     POST /api/project/close
     POST /api/project/forget                    body {"output"}: drop it from the recent list
@@ -24,6 +28,7 @@ mapping come from the review server). Routes::
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 import sys
 import threading
@@ -33,8 +38,8 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable, List, Optional
 
-from .. import api
-from ..review.server import Handler, NotFound
+from .. import __version__, api
+from ..review.server import Handler, LocalServer, NotFound
 from .fix import FixApp
 from .project import Project, load_manifest, input_folder_of, list_inputs, project_summary
 from .store import Store, same_path
@@ -65,14 +70,18 @@ def pick_folder(title: str = "Select a folder", initial: str = "") -> Optional[s
 
 def default_output(input_dir: str) -> str:
     p = Path(input_dir)
+    if not p.name:
+        raise api.UsageError(f"{input_dir} is a drive root, not a scan folder; pick the folder that holds the scans")
     return str(p.with_name(p.name + "_processed"))
 
 
 class AppState:
     """The user's recent projects and the one open project (no HTTP in here)."""
 
-    def __init__(self, config: Optional[Path] = None, picker: Callable[..., Optional[str]] = pick_folder):
+    def __init__(self, config: Optional[Path] = None, picker: Callable[..., Optional[str]] = pick_folder,
+                 author: str = "human"):
         self.store = Store(config)
+        self.author = author
         self.picker = picker
         self.project: Optional[Project] = None
         self._closing: List[Project] = []      # closed projects whose run is still stopping
@@ -93,11 +102,13 @@ class AppState:
         return {"path": self.picker("Select a folder", start)}
 
     # ---- open / close ---------------------------------------------------------
-    def open_project(self, input_dir: Optional[str] = None, output: Optional[str] = None) -> dict:
-        """Open a new project (``input_dir``, ``output`` defaulting to ``<input>_processed``) or an existing
-        output folder with a manifest (``input_dir`` omitted)."""
+    def _resolve(self, input_dir: Optional[str], output: Optional[str]) -> tuple:
+        """Check a project's folders: ``(input or None, output)``. A new project gives ``input_dir`` (``output``
+        defaults to ``<input>_processed``); an existing output folder with a manifest gives only ``output``."""
         input_dir = (input_dir or "").strip().strip('"') or None
         output = (output or "").strip().strip('"') or None
+        input_dir = os.path.abspath(input_dir) if input_dir else None    # the app may run from anywhere
+        output = os.path.abspath(output) if output else None
         if input_dir:
             if not Path(input_dir).is_dir():
                 raise api.UsageError(f"{input_dir} is not a folder")
@@ -123,15 +134,45 @@ class AppState:
             input_dir = input_folder_of(m)
             if input_dir and not Path(input_dir).is_dir():
                 input_dir = None
+        return input_dir, str(Path(output))
+
+    def open_project(self, input_dir: Optional[str] = None, output: Optional[str] = None) -> dict:
+        """Open a new project (``input_dir``, ``output`` defaulting to ``<input>_processed``) or an existing
+        output folder with a manifest (``input_dir`` omitted). Refused while a run goes in another project:
+        leaving a project cancels its run, and a caller that only wants to look must not do that."""
+        input_dir, output = self._resolve(input_dir, output)
         with self._lock:
+            cur = self.project
+            if cur and cur.running:
+                if same_path(cur.output, output):
+                    return cur.record()
+                raise api.UsageError(f"a run is going in {cur.name}; stop it (Cancel) or wait until it ends")
             self._close_current()
             self._closing = [p for p in self._closing if p.running]
-            if any(same_path(p.output, str(Path(output))) for p in self._closing):
+            if any(same_path(p.output, output) for p in self._closing):
                 raise api.UsageError("the run on this output folder is still stopping; try again in a moment")
-            self.project = Project(input_dir, str(Path(output)))
-            self.store.touch_project(input_dir, str(Path(output)))
+            self.project = Project(input_dir, output, self.store)
+            self.store.touch_project(input_dir, output)
             self.project.kick_previews()
             return self.project.record()
+
+    def add_project(self, input_dir: Optional[str] = None, output: Optional[str] = None) -> dict:
+        """Put a project on the recent list without opening it (folders dropped on the launcher)."""
+        input_dir, output = self._resolve(input_dir, output)
+        self.store.touch_project(input_dir, output)
+        return {"input": input_dir, "output": output, "name": Path(output).name}
+
+    def open_path(self, path: str) -> dict:
+        """A folder given on the command line: an output folder with a manifest opens as it is, any other folder is
+        a new project."""
+        if (Path(path) / "polaroid-manifest.json").exists():
+            return self.open_project(output=path)
+        return self.open_project(input_dir=path)
+
+    def add_path(self, path: str) -> dict:
+        if (Path(path) / "polaroid-manifest.json").exists():
+            return self.add_project(output=path)
+        return self.add_project(input_dir=path)
 
     def _close_current(self) -> None:
         if self.project:
@@ -164,7 +205,7 @@ class AppState:
         p = self.need_project()
         with self._lock:
             if p.fixer is None:
-                p.fixer = FixApp(p)
+                p.fixer = FixApp(p, self.author)
             return p.fixer
 
     def shutdown(self) -> None:
@@ -190,6 +231,8 @@ class AppHandler(Handler):
                                   "text/html; charset=utf-8")
             if segs[:2] == ["api", "fix"]:
                 return self._fix(method, segs[2:])
+            if segs == ["api", "ping"]:
+                return self._json({"app": "polaroid-app", "version": __version__, "pid": os.getpid()})
             if segs == ["api", "home"]:
                 return self._json(st.home())
             if segs == ["api", "project"]:
@@ -199,6 +242,8 @@ class AppHandler(Handler):
                     return self._json(st.need_project().progress())
                 if segs[2] == "scans":
                     return self._json(st.need_project().scans())
+                if segs[2] == "settings":
+                    return self._json(st.need_project().get_settings())
             if len(segs) == 4 and segs[:3] == ["api", "project", "preview"] and segs[3].endswith(".jpg"):
                 try:
                     path = st.need_project().preview_file(segs[3][:-4])
@@ -213,6 +258,10 @@ class AppHandler(Handler):
                 return self._json(st.browse(str(body.get("initial") or "")))
             if segs == ["api", "project", "open"]:
                 return self._json(st.open_project(body.get("input"), body.get("output")))
+            if segs == ["api", "project", "add"]:
+                return self._json(st.add_project(body.get("input"), body.get("output")))
+            if segs == ["api", "project", "settings"]:
+                return self._json(st.need_project().set_settings(body))
             if segs == ["api", "project", "forget"]:
                 return self._json(st.forget(str(body.get("output") or "")))
             if segs == ["api", "project", "close"]:
@@ -252,16 +301,22 @@ class AppHandler(Handler):
 def make_server(state: AppState, port: int = 0) -> ThreadingHTTPServer:
     """HTTP server for ``state`` on 127.0.0.1 (port 0 picks a free one). Not started."""
     handler = type("BoundAppHandler", (AppHandler,), {"state": state})
-    srv = ThreadingHTTPServer(("127.0.0.1", port), handler)
+    srv = LocalServer(("127.0.0.1", port), handler)
     srv.daemon_threads = True
     return srv
 
 
-def serve(state: Optional[AppState] = None, port: int = 8780, *, open_browser: bool = True, announce=print) -> None:
-    """Run until interrupted."""
+def serve(state: Optional[AppState] = None, port: int = 8780, *, open_browser: bool = True, announce=print,
+          path: str = "/", fallback: bool = False) -> None:
+    """Run until interrupted. With ``fallback`` a busy ``port`` is replaced by any free one."""
     state = state or AppState()
-    srv = make_server(state, port)
-    url = f"http://127.0.0.1:{srv.server_address[1]}/"
+    try:
+        srv = make_server(state, port)
+    except OSError:
+        if not fallback:
+            raise
+        srv = make_server(state, 0)
+    url = f"http://127.0.0.1:{srv.server_address[1]}{path}"
     announce(f"polaroid app: {url}  (Ctrl+C to stop)")
     if open_browser:
         webbrowser.open(url)

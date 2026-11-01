@@ -87,3 +87,13 @@ label { display: block; color: var(--dim); font-size: 12px; margin: 10px 0 4px; 
 .runbar.locked .dim { color: var(--amber); }
 #fixview { position: fixed; inset: 0; z-index: 20; background: var(--bg); }
 #fixview iframe { width: 100%; height: 100%; border: 0; display: block; }
+#settings label { margin: 6px 0; color: var(--text); font-size: 13px; }
+#settings .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 4px 24px; margin-bottom: 6px; }
+#settings input[type=number], #settings input[type=text], #settings select { font: inherit; color: var(--text); background: #14151a;
+  border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; margin-left: 6px; }
+#settings input[type=number] { width: 90px; }
+#settings .deriv { display: flex; flex-direction: column; gap: 2px; margin: 6px 0; }
+#settings .deriv > span { color: var(--dim); font-size: 13px; padding-left: 22px; }
+#settings summary { cursor: pointer; color: var(--dim); margin: 6px 0; }
+#settings .small { font-size: 12px; margin: 10px 0 0; }
+#settings input:disabled, #settings select:disabled { opacity: .5; }

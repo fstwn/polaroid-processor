@@ -1,5 +1,10 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
+// ?filter=needs_review (from `polaroid review`) applies to the first project only, then the address is clean
+let startFilter = new URLSearchParams(location.search).get("filter");
+if (startFilter) history.replaceState(null, "", location.pathname);
+const SETTING_FIELDS = ["margin_mm", "flatten", "shadows", "high_on", "high_edge", "high_quality", "web_on", "web_edge",
+  "web_quality", "ppi", "profile", "tiff_compression", "interpolation", "overlay"];
 const S = { view: "home", project: null, rev: null, filter: "all", cards: new Map(), keys: [], scans: [], prog: null, timer: null };
 
 // ---------------------------------------------------------------- helpers
@@ -339,14 +344,61 @@ function renderActions(p) {
     all.onclick = start("all");
     actions.append(d, x, all);
   }
+  const set = el("button", null, "Settings");
+  set.onclick = () => toggleSettings();
+  actions.append(set);
   const back = el("button", null, "← Projects");
   back.onclick = leaveProject;
   actions.append(back);
 }
 
+// ---------------------------------------------------------------- settings
+async function loadSettings() {
+  const r = await guarded(() => api("/api/project/settings"));
+  if (!r) return;
+  const v = r.settings;
+  S.loadedSettings = v;
+  for (const f of SETTING_FIELDS) {
+    const e = $("s-" + f);
+    if (e.type === "checkbox") e.checked = !!v[f]; else e.value = v[f] === null || v[f] === undefined ? "" : v[f];
+    e.disabled = r.running || !!r.locked_by;
+  }
+  $("s-save").disabled = r.running || !!r.locked_by;
+  $("s-note").textContent = r.running ? "A run is going: settings apply to the next one."
+    : r.locked_by ? `Another process (${r.locked_by}) is working here.`
+    : (v.other_derivatives ? `${v.other_derivatives} more derivative(s) from the command line are kept.` : "");
+}
+
+async function saveSettings() {
+  const body = {};                 // only what the user changed: the rest (a derivative made on the command line) stays as it is
+  for (const f of SETTING_FIELDS) {
+    const e = $("s-" + f);
+    const value = e.type === "checkbox" ? e.checked : (e.type === "number" ? (e.value === "" ? null : Number(e.value)) : e.value);
+    const old = S.loadedSettings ? S.loadedSettings[f] : undefined;
+    if (value !== (old === undefined ? null : old) && !(value === "" && (old === null || old === undefined))) body[f] = value;
+  }
+  const r = await guarded(() => api("/api/project/settings", body));
+  if (!r) return;
+  showMsg("Settings saved. They apply to the next run.", true);
+  await loadSettings();
+  tick(true);
+}
+
+function toggleSettings(force) {
+  const box = $("settings");
+  box.hidden = force === undefined ? !box.hidden : !force;
+  if (!box.hidden) loadSettings();
+}
+$("s-save").onclick = saveSettings;
+$("s-close").onclick = () => toggleSettings(false);
+
 async function enterProject(p) {
   S.project = p;
-  S.rev = null; S.keys = []; S.cards = new Map(); S.scans = []; S.prog = null; S.filter = "all";
+  S.rev = null; S.keys = []; S.cards = new Map(); S.scans = []; S.prog = null;
+  S.filter = startFilter || "all";
+  startFilter = null;
+  if (!FILTERS.some((f) => f[0] === S.filter)) S.filter = "all";
+  $("settings").hidden = true;
   setView("project");
   $("grid").textContent = "";
   $("title").textContent = p.name;
