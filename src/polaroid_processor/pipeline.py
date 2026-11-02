@@ -9,7 +9,7 @@ import sys
 import time
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from concurrent.futures.process import BrokenProcessPool
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -29,10 +29,16 @@ from .manifest import MANIFEST_NAME, Manifest, now, scan_key
 from .preview import LONG_EDGE, PREVIEW_DIR, write_preview
 from .render import overlay
 from .scale import Scale, batch_median_scale, explicit_scale, scale_from_size, scale_from_tag
+from .scan_window import outline_id, window_current, window_for_scan
+from .window import inset_quad
 
 log = logging.getLogger("polaroid_processor")
 
 GB = 1024 ** 3
+
+PHOTO_CROP = ("off", "derivatives", "tiff")  # photo-area crop next to the full print: none, JPG derivatives, + TIFF master
+PHOTO_BLEED_MM = 0.3
+PHOTO_DIR = "photo"
 
 
 # --------------------------------------------------------------------------- settings
@@ -103,23 +109,26 @@ class Settings:
     shadows: str = "auto"  # "auto": remove edge shadows on plain frames; "off"
     flatten_params: flat.FlattenParams = field(default_factory=flat.FlattenParams)
     shading_params: shading.ShadingParams = field(default_factory=shading.ShadingParams)
+    photo_crop: Optional[str] = "off"        # None only from api.make_settings: run_batch fills in the manifest's value
+    photo_bleed_mm: Optional[float] = PHOTO_BLEED_MM
 
     def export_key(self, quad: np.ndarray, scale: Scale, curves: Optional[dict] = None,
-                   override: bool = False) -> str:
-        """Identity of an export: outline, curves, settings and scale."""
-        return self._key(quad, curves, override, round(scale.px_per_mm, 4))
+                   override: bool = False, window: Optional[dict] = None) -> str:
+        """Identity of an export: outline, curves, settings, scale and (with a photo crop) the window."""
+        return self._key(quad, curves, override, round(scale.px_per_mm, 4), window=window)
 
-    def export_base(self, quad: np.ndarray, scale: Scale, curves: Optional[dict] = None, override: bool = False) -> str:
+    def export_base(self, quad: np.ndarray, scale: Scale, curves: Optional[dict] = None, override: bool = False,
+                    window: Optional[dict] = None) -> str:
         """The export key without the scale value: two exports with the same base differ only by the scale
         a batch inferred (its median moved). An explicit scale (``ppi``, a profile, a TIFF tag) is part of it,
         so a deliberate change of scale is always a new export."""
         inferred = scale.source in ("batch-median", "single-scan")
         return self._key(quad, curves, override, None,
                          ["inferred" if inferred else scale.source, None if inferred else self.ppi,
-                          None if inferred else self.profile])
+                          None if inferred else self.profile], window)
 
     def _key(self, quad: np.ndarray, curves: Optional[dict], override: bool, px_per_mm: Optional[float],
-             scale_kind: Optional[list] = None) -> str:
+             scale_kind: Optional[list] = None, window: Optional[dict] = None) -> str:
         payload = {
             "v": __version__,
             "margin_mm": self.margin_mm,
@@ -131,6 +140,11 @@ class Settings:
             "flatten": self.flatten,
             "shadows": self.shadows,
         }
+        if self.photo_crop != "off":      # absent when off: the keys of exports made before stay valid
+            shape = None
+            if window and window.get("found") and window.get("quad"):
+                shape = [window.get("kind"), np.round(np.asarray(window["quad"], float), 1).tolist()]
+            payload["photo"] = [self.photo_crop, self.photo_bleed_mm, shape]
         if px_per_mm is not None:
             payload["px_per_mm"] = px_per_mm
         if scale_kind is not None:
@@ -218,9 +232,57 @@ def flatten_plan(curves: Optional[dict], px_per_mm: float, mode: str, override: 
     return flat.plan(flat.curves_from_dict(curves), px_per_mm, params)
 
 
+def _write_images(img: np.ndarray, out_dir: Path, stem: str, px_per_mm: float, icc: Optional[bytes], ex: dict,
+                  prefix: str = "", alpha: Optional[np.ndarray] = None, tiff: bool = True) -> Tuple[dict, dict]:
+    """TIFF master (``out_dir/STEM.tif``) and the derivatives (``out_dir/NAME/STEM.EXT``) of ``img``.
+    Returns outputs and their px/mm, named ``prefix`` + ``tiff`` / the derivative's name."""
+    outputs, ppm = {}, {}
+    if tiff:
+        tiff_path = out_dir / f"{stem}.tif"
+        write_tiff(str(tiff_path), img, px_per_mm, icc, ex["tiff_compression"], alpha=alpha)
+        outputs[prefix + "tiff"], ppm[prefix + "tiff"] = str(tiff_path), px_per_mm
+    for d in ex["derivatives"]:
+        small = resize_long_edge(img, d["long_edge"], d["scale"])
+        f = small.shape[1] / img.shape[1]
+        p = out_dir / d["name"] / f"{stem}.{d['fmt']}"
+        write_derivative(str(p), small, d["fmt"], d["quality"], px_per_mm * f * 25.4, icc)
+        outputs[prefix + d["name"]], ppm[prefix + d["name"]] = str(p), px_per_mm * f
+    return outputs, ppm
+
+
+def photo_image(rgb: np.ndarray, window: dict, px_per_mm: float, bleed_mm: float,
+                interpolation: str) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+    """The photo crop: the window quad cut ``bleed_mm`` inward on every side, warped straight from the scan
+    (one resampling). Round window: also the alpha plane, 0 outside the circle inscribed in the crop."""
+    img = rectify(rgb, inset_quad(np.asarray(window["quad"], float), bleed_mm * px_per_mm), 0.0, interpolation)
+    if window.get("kind") != "round":
+        return img, None
+    h, w = img.shape[:2]
+    yy, xx = np.mgrid[:h, :w]
+    dist = np.hypot(xx + 0.5 - w / 2, yy + 0.5 - h / 2)
+    cover = np.clip((h + w) / 4 - dist + 0.5, 0.0, 1.0)
+    top = 65535 if img.dtype == np.uint16 else 255
+    return img, np.round(cover * top).astype(img.dtype)
+
+
+def remove_photo_files(out_dir: Path, stem: str) -> None:
+    """Delete the photo-crop files of one scan (an export that makes none must not leave an older one behind)."""
+    base = out_dir / PHOTO_DIR
+    if not base.is_dir():
+        return
+    cands = [base / f"{stem}.tif"] + [d / f"{stem}.{ext}" for d in base.iterdir() if d.is_dir()
+                                       for ext in ("jpg", "png")]
+    for f in cands:
+        try:
+            f.unlink()
+        except OSError:
+            pass
+
+
 def _export(rgb: np.ndarray, quad: np.ndarray, px_per_mm: float, icc: Optional[bytes], key: str, ex: dict,
-            curves: Optional[dict] = None, override: bool = False) -> dict:
-    """Rectify (or unwarp), remove edge shadows, write master + derivatives (+ overlay).
+            curves: Optional[dict] = None, override: bool = False, window: Optional[dict] = None) -> dict:
+    """Rectify (or unwarp), remove edge shadows, write master + derivatives (+ overlay), and with a photo
+    window and ``photo_crop`` on the photo crop (``photo/``) from the same scan.
 
     Returns outputs, their px/mm and what was applied.
     """
@@ -236,16 +298,18 @@ def _export(rgb: np.ndarray, quad: np.ndarray, px_per_mm: float, icc: Optional[b
         img, shade = shading.correct(img, px_per_mm, ex["shading_params"])
     stem = Path(key).stem
     out_dir = Path(ex["out_dir"])
-    outputs, ppm = {}, {}
-    tiff_path = out_dir / f"{stem}.tif"
-    write_tiff(str(tiff_path), img, px_per_mm, icc, ex["tiff_compression"])
-    outputs["tiff"], ppm["tiff"] = str(tiff_path), px_per_mm
-    for d in ex["derivatives"]:
-        small = resize_long_edge(img, d["long_edge"], d["scale"])
-        f = small.shape[1] / img.shape[1]
-        p = out_dir / d["name"] / f"{stem}.{d['fmt']}"
-        write_derivative(str(p), small, d["fmt"], d["quality"], px_per_mm * f * 25.4, icc)
-        outputs[d["name"]], ppm[d["name"]] = str(p), px_per_mm * f
+    outputs, ppm = _write_images(img, out_dir, stem, px_per_mm, icc, ex)
+    photo = ex.get("photo_crop", "off") != "off" and window and window.get("found") and window.get("quad")
+    if photo:     # no shadow correction here: it only touches the frame
+        crop, alpha = photo_image(rgb, window, px_per_mm, ex["photo_bleed_mm"], ex["interpolation"])
+        o, r = _write_images(crop, out_dir / PHOTO_DIR, stem, px_per_mm, icc, ex, "photo_", alpha,
+                             tiff=ex["photo_crop"] == "tiff")
+        outputs.update(o)
+        ppm.update(r)
+    if not photo:
+        remove_photo_files(out_dir, stem)
+    elif ex["photo_crop"] != "tiff":      # a master from an earlier export made with tiff
+        (out_dir / PHOTO_DIR / f"{stem}.tif").unlink(missing_ok=True)
     if ex["overlay"]:
         p = out_dir / "_overlays" / f"{stem}.jpg"
         pts = {"curves": flat.outline_points(sides, quad, **ex["flatten_params"].warp_px(px_per_mm))} if sides else None
@@ -293,6 +357,11 @@ def _job(job: dict) -> dict:
             curves = flat.trace(rgb, np.array(det["quad"], dtype=np.float64), px, det.get("speck_threshold") or 30,
                                 ex["flatten_params"])
             det["curves"] = {k: c.to_dict() for k, c in curves.items()}
+        window = job.get("window")
+        # a window of another outline (a fix landed after the window pass, or that pass lost the scan) is measured again here
+        if ex.get("photo_crop", "off") != "off" and (job["detect"] or not (window and window.get("outline") == outline_id(quad))):
+            window, res["window_time_s"] = _window_step(rgb, quad)
+            res["window"] = window
         if job.get("preview"):
             try:  # a preview that fails must not fail the scan
                 res["preview"] = write_preview(rgb, quad, px, (det or {}).get("curves"),
@@ -303,12 +372,34 @@ def _job(job: dict) -> dict:
         if job["export"]:
             res.update(_export(rgb, quad, px, meta.icc_profile, job["key"], ex,
                                curves=(det or {}).get("curves"),
-                               override=manual_outline(job.get("override"), det)))
+                               override=manual_outline(job.get("override"), det), window=window))
             res["export_px_per_mm"] = px
     except Exception as e:  # noqa: BLE001
         res["error"] = f"{type(e).__name__}: {e}"
     finally:
         res["time_s"] = round(time.perf_counter() - t0, 2)
+    return res
+
+
+def _window_step(rgb: np.ndarray, quad: np.ndarray) -> Tuple[dict, float]:
+    """The photo window of a scan for the manifest; a failure of the step is a window not found, never an error."""
+    try:
+        return window_for_scan(rgb, quad)
+    except Exception as e:  # noqa: BLE001
+        log.warning("window step failed: %s", e)
+        return {"found": False, "reason": f"window step failed: {type(e).__name__}: {e}", "kind": None,
+                "format": None, "notes": [], "outline": outline_id(quad), "source": "auto"}, 0.0
+
+
+def _window_job(job: dict) -> dict:
+    """Only the window step of a detected scan (the window is missing or its outline changed)."""
+    t0 = time.perf_counter()
+    res = {"key": job["key"], "path": job["path"]}
+    try:
+        res["window"], res["window_time_s"] = _window_step(load_rgb(job["path"]), np.array(job["quad"], dtype=np.float64))
+    except Exception as e:  # noqa: BLE001
+        res["error"] = f"{type(e).__name__}: {e}"
+    res["time_s"] = round(time.perf_counter() - t0, 2)
     return res
 
 
@@ -414,7 +505,10 @@ def _clean_partial(out: Path) -> None:
     has that name too). The previews are left alone: the app writes them without the run lock."""
     if not out.is_dir():
         return
-    for d in [out] + [x for x in out.iterdir() if x.is_dir() and x.name != "_previews"]:
+    dirs = [out] + [x for x in out.iterdir() if x.is_dir() and x.name != "_previews"]
+    if (out / PHOTO_DIR).is_dir():
+        dirs += [x for x in (out / PHOTO_DIR).iterdir() if x.is_dir()]
+    for d in dirs:
         for f in d.iterdir():
             if f.is_file() and f.name.lower().endswith(PARTIAL_SUFFIXES):
                 try:
@@ -556,7 +650,8 @@ def resolve_scales(manifest: Manifest, keys: Sequence[str], settings: Settings) 
 def evaluate(entry: dict, scale: Scale, rules: ReviewRules,
              ref_size: Optional[Tuple[float, float]] = None,
              margin_mm: float = 0.1, flatten: str = "auto",
-             flatten_params: flat.FlattenParams = flat.FlattenParams()) -> Tuple[str, List[str], Optional[dict]]:
+             flatten_params: flat.FlattenParams = flat.FlattenParams(),
+             photo_crop: str = "off") -> Tuple[str, List[str], Optional[dict]]:
     """Status and warnings for one scan. ``ref_size`` is the median print size of its scan-size group;
     ``margin_mm`` is the crop margin, which hides edge points that lie at most that far inside.
 
@@ -628,6 +723,11 @@ def evaluate(entry: dict, scale: Scale, rules: ReviewRules,
             if abs(st["bow_px"]) / scale.px_per_mm > rules.edge_bow_mm:
                 warnings.append(f"edge_curved:{side}:{st['bow_px'] / scale.px_per_mm:+.2f}mm")
                 review = True
+    win = entry.get("window")
+    if photo_crop != "off" and win and not win.get("found") and window_current(entry):
+        # a window not found is a review item; accepting the scan (an override) exports the print without a crop
+        warnings.append(f"photo window not found: {win.get('reason') or 'unknown'}")
+        review = review or not override
     if any(w.startswith("edge_curved") for w in warnings) and flatten == "off":
         warnings.append("hint:process with flatten on to unwarp curved edges")
     return ("needs_review" if review else "ok"), warnings, fmt
@@ -642,7 +742,7 @@ def reevaluate(manifest: Manifest, keys: Sequence[str], settings: Settings) -> N
         e = manifest.get(k)
         if k in scales and e and (e.get("detection") or e.get("override")):
             status, warnings, fmt = evaluate(e, scales[k], settings.rules, refs.get(_ref_group(e)), settings.margin_mm,
-                                             settings.flatten, settings.flatten_params)
+                                             settings.flatten, settings.flatten_params, settings.photo_crop)
             e.update(scale=scales[k].to_dict(), format=fmt, status=status, warnings=warnings, error=None)
 
 
@@ -667,12 +767,23 @@ class _Saver:
         self.last = time.monotonic()
 
 
+def window_record(e: dict) -> dict:
+    """The photo window of a manifest entry as the result records show it."""
+    w = e.get("window") or {}
+    rec = {k: w[k] for k in ("found", "kind", "format", "size_mm", "quad", "reason") if w.get(k) not in (None, "")}
+    rec["found"] = bool(w.get("found"))
+    rec["current"] = window_current(e)
+    if w.get("notes"):
+        rec["notes"] = w["notes"]
+    return rec
+
+
 def result_record(manifest: Manifest, key: str, exported: bool = False) -> dict:
     e = manifest.get(key) or {}
     det = e.get("detection") or {}
     outputs = {k: str(manifest.abs(v)) for k, v in (e.get("outputs") or {}).items()}
     quad = Manifest.effective_quad(e)
-    return {
+    rec = {
         "type": "result",
         "file": key,
         "input": e.get("input"),
@@ -690,6 +801,9 @@ def result_record(manifest: Manifest, key: str, exported: bool = False) -> dict:
         "exported": exported,
         "error": e.get("error"),
     }
+    if e.get("window") and manifest.data.get("settings", {}).get("photo_crop", "off") != "off":
+        rec["window"] = window_record(e)
+    return rec
 
 
 # --------------------------------------------------------------------------- driver
@@ -703,7 +817,8 @@ def _export_settings(settings: Settings, out_dir: Path) -> dict:
             "tiff_compression": settings.tiff_compression, "overlay": settings.overlay,
             "derivatives": [asdict(d) for d in settings.derivatives], "out_dir": str(out_dir),
             "flatten": settings.flatten, "shadows": settings.shadows,
-            "flatten_params": settings.flatten_params, "shading_params": settings.shading_params}
+            "flatten_params": settings.flatten_params, "shading_params": settings.shading_params,
+            "photo_crop": settings.photo_crop, "photo_bleed_mm": settings.photo_bleed_mm}
 
 
 def _workers_for(manifest: Manifest, jobs: List[dict], settings: Settings) -> int:
@@ -737,6 +852,8 @@ def _store_job_result(manifest: Manifest, res: dict) -> None:
         e.update(status="failed", error=res["error"], warnings=[])
         return
     e["error"] = None
+    if "window" in res:
+        e["window"] = res["window"]
     if "preview" in res:
         e["preview"] = {**res["preview"], "file": manifest.rel(res["preview"]["file"])}
     if "outputs" in res:
@@ -820,6 +937,12 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
     out_path = manifest.out_dir
     if manifest.persist:
         _clean_partial(out_path)
+    stored = manifest.data.get("settings") or {}      # an option left out keeps the project's value
+    if settings.photo_crop is None or settings.photo_bleed_mm is None:
+        settings = replace(settings, photo_crop=stored.get("photo_crop", "off") if settings.photo_crop is None
+                           else settings.photo_crop,
+                           photo_bleed_mm=stored.get("photo_bleed_mm", PHOTO_BLEED_MM) if settings.photo_bleed_mm is None
+                           else settings.photo_bleed_mm)
     manifest.data["settings"] = settings_to_dict(settings)
     keys = names
     explicit = explicit_scale(settings.ppi, settings.profile, settings.profiles_file)
@@ -830,6 +953,7 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
                "flatten": settings.flatten, "flatten_params": settings.flatten_params
                } if manifest.persist and settings.previews else None
     exported_now: Dict[str, bool] = {}
+    win_used: Dict[str, str] = {}      # outline of the window a scan's export (pass A) was cut from
     saver = _Saver(manifest, settings)
 
     # ---- pass A: detect new or changed scans, export them from the same decode ----------
@@ -855,6 +979,8 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
         for res in _run_pool(_job, jobs, workers, cancel):
             _store_job_result(manifest, res)
             exported_now[res["key"]] = "outputs" in res
+            if "outputs" in res and "window" in res:
+                win_used[res["key"]] = res["window"]["outline"]
             log.info("%s: %s in %.1fs", res["key"], res.get("error") or "done", res["time_s"])
             if progress:
                 progress(res["key"], res.get("error") or "detected")
@@ -868,19 +994,20 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
     if on_phase:
         on_phase("checking sizes")
     last_refresh = time.monotonic()
+    ref_of: Dict[str, Optional[Tuple[float, float]]] = {}
     for k in keys:
         e = manifest.entry(k)
         if k in scales and (e.get("detection") or e.get("override")):
-            ref = refs.get(_ref_group(e))
+            ref = ref_of[k] = refs.get(_ref_group(e))
             status, warnings, fmt = evaluate(e, scales[k], settings.rules, ref, settings.margin_mm,
-                                             settings.flatten, settings.flatten_params)
+                                             settings.flatten, settings.flatten_params, settings.photo_crop)
             if status == "needs_review":      # fixed meanwhile? (a refresh parses the file: at most once a second)
                 if time.monotonic() - last_refresh >= 1.0:
                     manifest.refresh()
                     last_refresh = time.monotonic()
                 if k in manifest.fixed:
                     status, warnings, fmt = evaluate(e, scales[k], settings.rules, ref, settings.margin_mm,
-                                                     settings.flatten, settings.flatten_params)
+                                                     settings.flatten, settings.flatten_params, settings.photo_crop)
             if status == "needs_review" and not (cancel and cancel()):    # (a refit loads the scan: not after a cancel)
                 cache = {}
 
@@ -895,8 +1022,35 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
                 if fit:
                     apply_refit(e, fit[0], fit[1], scan_rgb(), scales[k].px_per_mm, settings)
                     status, warnings, fmt = evaluate(e, scales[k], settings.rules, ref, settings.margin_mm,
-                                                     settings.flatten, settings.flatten_params)
+                                                     settings.flatten, settings.flatten_params, settings.photo_crop)
             e.update(scale=scales[k].to_dict(), format=fmt, status=status, warnings=warnings, error=None)
+
+    # ---- photo windows: scans whose window is missing or was found for another outline ----
+    if settings.photo_crop != "off" and not (cancel and cancel()):
+        w_jobs = []
+        for k in keys:
+            e = manifest.entry(k)
+            quad = Manifest.effective_quad(e)
+            if quad is not None and e.get("status") != "failed" and e.get("input") and not window_current(e):
+                w_jobs.append({"key": k, "path": e["input"], "quad": quad.tolist()})
+        if w_jobs:      # not counted as jobs (the app's "exported N scans" counts scans), the phase says what runs
+            if on_phase:
+                on_phase("finding photo windows")
+            log.info("finding the photo window of %d scan(s)", len(w_jobs))
+            found = []
+            for res in _run_pool(_window_job, w_jobs, _workers_for(manifest, w_jobs, settings), cancel):
+                if "window" in res:
+                    manifest.entry(res["key"])["window"] = res["window"]
+                    found.append(res["key"])
+                log.info("%s: photo window %s in %.1fs", res["key"], res.get("error") or "done", res["time_s"])
+                saver.tick()
+            for k in found:     # judged again with the scale and reference size of the pass above: a window not found is a review item
+                e = manifest.entry(k)
+                if k in scales and (e.get("detection") or e.get("override")):
+                    status, warnings, fmt = evaluate(e, scales[k], settings.rules, ref_of.get(k), settings.margin_mm,
+                                                     settings.flatten, settings.flatten_params, settings.photo_crop)
+                    e.update(scale=scales[k].to_dict(), format=fmt, status=status, warnings=warnings, error=None)
+            saver.flush()
 
     # ---- reconcile exports with the final scale ---------------------------------------
     manifest.refresh()
@@ -904,6 +1058,7 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
     if fixed:
         reevaluate(manifest, fixed, settings)
     pass_b = []
+    xargs: Dict[str, tuple] = {}      # quad, scale, curves, manual of each export job: for the key of a window found in the job
     retagged = 0
     for k in keys:
         e = manifest.entry(k)
@@ -918,12 +1073,14 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
         final = scales[k]
         curves = (e.get("detection") or {}).get("curves")
         manual = manual_outline((e.get("override") or {}).get("quad"), e.get("detection"))
-        xkey = settings.export_key(quad, final, curves, manual)
-        xbase = settings.export_base(quad, final, curves, manual)
+        win = e.get("window")
+        xkey = settings.export_key(quad, final, curves, manual, win)
+        xbase = settings.export_base(quad, final, curves, manual, win)
         outs = e.get("outputs") or {}
         missing = not outs or any(not manifest.abs(p).exists() for p in outs.values())
         if exported_now.get(k):
-            if retag_ok(e, final, settings, curves, manual):      # cut at a scale within 0.5 % of the final one
+            if (retag_ok(e, final, settings, curves, manual)      # cut at a scale within 0.5 % of the final one
+                    and (settings.photo_crop == "off" or win_used.get(k) == (win or {}).get("outline"))):
                 retag(manifest, e, final)
                 e["export_key"], e["export_base"] = xkey, xbase
                 continue
@@ -935,9 +1092,10 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
             continue
         elif not (settings.force or e.get("export_key") != xkey or missing):
             continue
+        xargs[k] = (quad, final, curves, manual)
         pass_b.append({"key": k, "path": e["input"], "detect": False, "detection": e.get("detection"),
                        "override": e["override"]["quad"] if e.get("override") else None, "export": True,
-                       "scale": final.px_per_mm, "export_settings": ex_settings,
+                       "scale": final.px_per_mm, "export_settings": ex_settings, "window": win,
                        "detect_params": settings.detect_params, "xkey": xkey, "xbase": xbase})
     if pass_b:
         if on_jobs:
@@ -954,6 +1112,9 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
                 e["error"] = f"export failed: {res['error']}"
             else:
                 e["export_key"], e["export_base"] = xkeys[res["key"]]
+                if "window" in res:      # measured again in the job: the key is that of the window the photo was cut from
+                    e["export_key"] = settings.export_key(*xargs[res["key"]], res["window"])
+                    e["export_base"] = settings.export_base(*xargs[res["key"]], res["window"])
                 exported_now[res["key"]] = True
             log.info("%s: exported in %.1fs", res["key"], res["time_s"])
             if progress:
@@ -996,12 +1157,19 @@ def settings_to_dict(s: Settings) -> dict:
     d = {k: getattr(s, k) for k in PERSISTED}
     d["derivatives"] = [asdict(x) for x in s.derivatives]
     d["rules"] = asdict(s.rules)
+    if s.photo_crop != "off":      # defaults are left out: a manifest made without the photo crop stays as it was
+        d["photo_crop"] = s.photo_crop
+    if s.photo_bleed_mm != PHOTO_BLEED_MM:
+        d["photo_bleed_mm"] = s.photo_bleed_mm
     return d
 
 
 def settings_from_dict(d: dict) -> Settings:
     s = Settings()
     for k in PERSISTED:
+        if k in d:
+            setattr(s, k, d[k])
+    for k in ("photo_crop", "photo_bleed_mm"):
         if k in d:
             setattr(s, k, d[k])
     if "derivatives" in d:

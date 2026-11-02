@@ -16,8 +16,8 @@ from .geometry import shift_side
 from .imageio import load_rgb, write_derivative
 from .lock import RunLocked
 from .manifest import Manifest
-from .pipeline import (Derivative, Settings, collect_inputs, flatten_plan, manual_outline, result_record,
-                       run_batch, settings_from_dict)
+from .pipeline import (PHOTO_CROP, Derivative, Settings, collect_inputs, flatten_plan, manual_outline,
+                       result_record, run_batch, settings_from_dict, window_record)
 from .scale import scale_from_size
 from .render import CORNERS, inspect_sheet, quad_summary
 
@@ -46,7 +46,10 @@ def make_settings(*, margin_mm: float = 0.1, derivatives: Optional[Sequence[str]
                   profiles: Optional[str] = None, strict: bool = False, force: bool = False,
                   redetect: bool = False, dry_run: bool = False, workers: Optional[int] = None,
                   flatten: str = "auto", shadows: str = "auto", export: bool = True,
-                  previews: bool = False) -> Settings:
+                  previews: bool = False, photo_crop: Optional[str] = None,
+                  photo_bleed_mm: Optional[float] = None) -> Settings:
+    """``photo_crop`` / ``photo_bleed_mm`` left at None keep the value stored in the output folder's
+    manifest (off / 0.3 for a new folder); ``run_batch`` resolves them."""
     s = Settings()
     s.margin_mm = float(margin_mm)
     if derivatives is not None:
@@ -66,6 +69,12 @@ def make_settings(*, margin_mm: float = 0.1, derivatives: Optional[Sequence[str]
     s.flatten, s.shadows = flatten, shadows
     s.workers = workers
     s.export, s.previews = export, previews
+    if photo_crop is not None and photo_crop not in PHOTO_CROP:
+        raise UsageError(f"photo_crop must be {', '.join(PHOTO_CROP)}, not {photo_crop!r}")
+    if photo_bleed_mm is not None and not 0 <= float(photo_bleed_mm) <= 3:
+        raise UsageError("photo_bleed_mm must be between 0 and 3")
+    s.photo_crop = photo_crop
+    s.photo_bleed_mm = None if photo_bleed_mm is None else float(photo_bleed_mm)
     return s
 
 
@@ -164,6 +173,8 @@ def inspect_scan(scan: str, output: Optional[str] = None, *, image: Optional[str
     if m:
         e = m.get(key)
         rec.update(status=e.get("status"), warnings=e.get("warnings", []))
+        if e.get("window") and (m.data.get("settings") or {}).get("photo_crop", "off") != "off":
+            rec["window"] = window_record(e)
     return rec, sheet
 
 

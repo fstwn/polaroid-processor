@@ -32,9 +32,10 @@ black holder. Workflow: polaroid_process the input folder into an output folder 
 folder per input folder); for every scan with status needs_review call polaroid_inspect,
 compare the green line with the print edge, then polaroid_fix (set/nudge/shift corners, or
 accept) with a note saying why. Coordinates are full-resolution scan pixels; shift is positive
-outward. Warnings starting with hint: name a concrete fix. Escalate to a human when the edge is
-not visible even in stretched tiles or is physically curved (they open `polaroid review <output>`,
-the local web app). Never write into input folders. One run works on an output folder at a time:
+outward. Warnings starting with hint: name a concrete fix. With photo_crop on, a scan flagged "photo
+window not found" is resolved by accepting it: its full print is then exported without the photo crop.
+Escalate to a human when the edge is not visible even in stretched tiles or is physically curved (they
+open `polaroid review <output>`, the local web app). Never write into input folders. One run works on an output folder at a time:
 when polaroid_process says another run is working there, wait and try again; polaroid_fix still
 saves a fix then, and says the export was skipped."""
 
@@ -52,7 +53,9 @@ TOOLS: List[Dict[str, Any]] = [
             "manifest polaroid-manifest.json). Resumable: unchanged scans are skipped. Returns a summary and "
             "per-scan results; status needs_review means check the scan with polaroid_inspect. The summary "
             "says cancelled (stopped early: run again) and retagged (only resolution tags patched). Fails "
-            "while another run works on the same output folder. Can take several seconds per scan."),
+            "while another run works on the same output folder. With photo_crop on, the photo window is "
+            "also cropped into <output>/photo/ (high/, web/, and with tiff a TIFF master); results then carry "
+            "the scan's window. Can take several seconds per scan."),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -73,6 +76,15 @@ TOOLS: List[Dict[str, Any]] = [
                             "description": "unwarp curled prints along their traced edges"},
                 "shadows": {"type": "string", "enum": ["auto", "off"], "default": "auto",
                             "description": "remove edge shadows on plain frames"},
+                "photo_crop": {"type": "string", "enum": ["off", "derivatives", "tiff"],
+                               "description": "also crop the photo window into <output>/photo/ (derivatives: JPGs as "
+                                              "for the full print; tiff: and a TIFF master, round windows with alpha). "
+                                              "The full print is always exported; a window not found makes the "
+                                              "scan needs_review (accept it to export without the crop). Leave it "
+                                              "out to keep the output folder's setting (off for a new folder)"},
+                "photo_bleed_mm": {"type": "number",
+                                   "description": "cut the photo crop this far inside the window border (default 0.3; "
+                                                  "leave out to keep the output folder's setting)"},
                 "workers": {"type": "integer", "minimum": 1},
                 "details": {"type": "string", "enum": ["flagged", "all", "none"], "default": "flagged",
                             "description": "full records for flagged scans only (default), all scans, or none"},
@@ -123,7 +135,8 @@ TOOLS: List[Dict[str, Any]] = [
         "description": (
             "Correct or accept the outline of one scan in the manifest and (by default) re-export it. "
             "set: absolute corner positions; nudge: corner offsets; shift: move a whole side outward "
-            "(positive) or inward (negative); accept: mark the current outline as reviewed; reset: back "
+            "(positive) or inward (negative); accept: mark the current outline as reviewed (a scan whose "
+            "photo window was not found then exports its full print without the photo crop); reset: back "
             "to automatic detection. Every change is logged with author, time, note and previous value. "
             "While another run works on the output folder the fix is saved and the export is skipped "
             "(the result has a note)."),
@@ -150,7 +163,8 @@ TOOLS: List[Dict[str, Any]] = [
     {
         "name": "polaroid_status",
         "title": "Batch status",
-        "description": "State of an output folder from its manifest: counts and per-scan status.",
+        "description": ("State of an output folder from its manifest: counts and per-scan status; with the "
+                        "photo crop on, each scan's photo window (found, kind, format, quad in scan pixels)."),
         "inputSchema": {
             "type": "object",
             "properties": {"output": {"type": "string"},
@@ -164,7 +178,7 @@ TOOLS: List[Dict[str, Any]] = [
 
 _BRIEF = ("file", "status", "warnings", "error", "quad", "quad_source", "size_px", "scale", "format", "flatten",
           "shadows", "outputs",
-          "exported")
+          "exported", "window")
 
 
 def _brief(rec: dict) -> dict:
@@ -191,7 +205,8 @@ def tool_process(args: dict, progress: Callable[[int, int, str], None]) -> dict:
         ppi=args.get("ppi"), profile=args.get("profile"), strict=args.get("strict", False),
         force=args.get("force", False), redetect=args.get("redetect", False), dry_run=args.get("dry_run", False),
         flatten=args.get("flatten", "auto"), shadows=args.get("shadows", "auto"),
-        workers=args.get("workers"))
+        workers=args.get("workers"), photo_crop=args.get("photo_crop"),
+        photo_bleed_mm=args.get("photo_bleed_mm"))
     recursive = args.get("recursive", False)
     total = len(collect_inputs(list(inputs), recursive))
     results: List[dict] = []

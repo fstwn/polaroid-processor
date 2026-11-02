@@ -54,6 +54,22 @@ def test_panel_fields_round_trip_and_keep_other_derivatives():
     assert to_panel(None)["margin_mm"] == 0.1 and to_panel(None)["high_edge"] == 6000 and to_panel(None)["web_edge"] == 2048
 
 
+def test_photo_crop_panel_fields():
+    assert to_panel(None)["photo_crop"] == "off" and to_panel(None)["photo_bleed_mm"] == 0.3
+    new = from_panel(None, {"photo_crop": "tiff", "photo_bleed_mm": 0.4})
+    s = settings_from_dict(new)
+    assert (s.photo_crop, s.photo_bleed_mm) == ("tiff", 0.4) and to_panel(new)["photo_crop"] == "tiff"
+    back = from_panel(new, {"photo_crop": "off", "photo_bleed_mm": 0.3})
+    assert "photo_crop" not in back and "photo_bleed_mm" not in back          # defaults stay out of the manifest
+
+
+@pytest.mark.parametrize("bad", [{"photo_crop": "all"}, {"photo_crop": True}, {"photo_bleed_mm": -0.1},
+                                 {"photo_bleed_mm": 9}, {"photo_bleed_mm": "x"}])
+def test_panel_refuses_bad_photo_values(bad):
+    with pytest.raises(api.UsageError):
+        from_panel(None, bad)
+
+
 @pytest.mark.parametrize("bad", [{"margin_mm": -1}, {"margin_mm": "x"}, {"flatten": "maybe"}, {"shadows": 1},
                                  {"tiff_compression": "lzw"}, {"interpolation": "nearest"}, {"ppi": 5},
                                  {"high_quality": 500}, {"web_edge": 5}, {"nope": 1}, {"ppi": 1200, "profile": "epson"}])
@@ -120,6 +136,13 @@ def test_a_settings_change_shows_in_the_export_count(app, src):
     assert app.json("/api/project/progress")[1]["counts"]["to_export"] == 2
     app.json("/api/project/settings", {"web_on": True, "ppi": 1200})  # a deliberate scale: a new export
     assert app.json("/api/project/progress")[1]["counts"]["to_export"] == 2
+    app.json("/api/project/settings", {"web_on": True, "ppi": None})      # back to the exports made at the start
+    assert app.json("/api/project/progress")[1]["counts"]["to_export"] == 0
+    for update in ({"photo_crop": "derivatives"}, {"photo_crop": "tiff"}, {"photo_bleed_mm": 0.5},
+                   {"photo_crop": "off", "photo_bleed_mm": 0.3}):         # each is a new export; back to off is the old one
+        app.json("/api/project/settings", update)
+        want = 0 if update.get("photo_crop") == "off" else 2
+        assert app.json("/api/project/progress")[1]["counts"]["to_export"] == want, update
 
 
 # --------------------------------------------------------------------------- polaroid app / review

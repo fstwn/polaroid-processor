@@ -104,8 +104,10 @@ def _atomic_target(path: Path) -> Path:
 
 
 def write_tiff(path: str, rgb: np.ndarray, px_per_mm: Optional[float], icc: Optional[bytes] = None,
-               compression: Optional[str] = "zlib", compression_level: int = 1, threads: int = 8) -> None:
-    """Lossless TIFF master with resolution tag (px/cm) and ICC profile."""
+               compression: Optional[str] = "zlib", compression_level: int = 1, threads: int = 8,
+               alpha: Optional[np.ndarray] = None) -> None:
+    """Lossless TIFF master with resolution tag (px/cm) and ICC profile. ``alpha``: a plane of the image's
+    dtype (0 = transparent), written as an unassociated alpha channel."""
     target = Path(path)
     tmp = _atomic_target(target)
     extratags = []
@@ -122,6 +124,9 @@ def write_tiff(path: str, rgb: np.ndarray, px_per_mm: Optional[float], icc: Opti
             kwargs["compressionargs"] = {"level": compression_level}
         kwargs["rowsperstrip"] = 512
         kwargs["maxworkers"] = threads
+    if alpha is not None:
+        rgb = np.concatenate([rgb, alpha[..., None]], axis=2)
+        kwargs["extrasamples"] = ("unassalpha",)
     tifffile.imwrite(str(tmp), rgb, photometric="rgb", extratags=extratags, **kwargs)
     os.replace(tmp, target)
 

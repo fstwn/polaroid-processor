@@ -3,7 +3,7 @@ const $ = (id) => document.getElementById(id);
 // ?filter=needs_review (from `polaroid review`) applies to the first project only, then the address is clean
 let startFilter = new URLSearchParams(location.search).get("filter");
 if (startFilter) history.replaceState(null, "", location.pathname);
-const SETTING_FIELDS = ["margin_mm", "flatten", "shadows", "high_on", "high_edge", "high_quality", "web_on", "web_edge",
+const SETTING_FIELDS = ["margin_mm", "photo_crop", "photo_bleed_mm", "flatten", "shadows", "high_on", "high_edge", "high_quality", "web_on", "web_edge",
   "web_quality", "ppi", "profile", "tiff_compression", "interpolation", "overlay"];
 const S = { view: "home", project: null, rev: null, filter: "all", cards: new Map(), keys: [], scans: [], prog: null, timer: null };
 

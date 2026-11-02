@@ -14,7 +14,7 @@ from typing import List, Optional
 
 from . import __version__, api
 from .api import apply_fix  # noqa: F401  (public, used by tests)
-from .pipeline import DEFAULT_DERIVATIVES, Settings
+from .pipeline import DEFAULT_DERIVATIVES, PHOTO_BLEED_MM, PHOTO_CROP, Settings
 
 log = logging.getLogger("polaroid_processor")
 
@@ -61,7 +61,8 @@ def _settings_from_args(a) -> Settings:
         margin_mm=a.margin_mm, derivatives=a.derivative, no_derivatives=a.no_derivatives,
         interpolation=a.interpolation, tiff_compression=a.tiff_compression, overlay=a.overlay,
         ppi=a.ppi, profile=a.profile, profiles=a.profiles, strict=a.strict, force=a.force,
-        redetect=a.redetect, dry_run=a.dry_run, workers=a.workers, flatten=a.flatten, shadows=a.shadows)
+        redetect=a.redetect, dry_run=a.dry_run, workers=a.workers, flatten=a.flatten, shadows=a.shadows,
+        photo_crop=a.photo_crop, photo_bleed_mm=a.photo_bleed_mm)
 
 
 def cmd_process(a) -> int:
@@ -191,6 +192,14 @@ def build_parser() -> argparse.ArgumentParser:
                     help="auto: unwarp curled prints along their traced edges (default); off: straight sides")
     sp.add_argument("--shadows", choices=("auto", "off"), default="auto",
                     help="auto: remove edge shadows on plain frames (default); off: leave tones untouched")
+    sp.add_argument("--photo-crop", choices=PHOTO_CROP,
+                    help="also crop the photo window of each print into <output>/photo/: off, "
+                         "derivatives (JPGs as for the full print), tiff (and a TIFF master; round windows get an "
+                         "alpha channel). A window not found marks the scan needs_review; the full print is "
+                         "always exported. Left out: keep the output folder's setting (off for a new folder)")
+    sp.add_argument("--photo-bleed-mm", type=float,
+                    help=f"cut the photo crop this far inside the window border (default {PHOTO_BLEED_MM}; "
+                         "left out: keep the output folder's setting)")
     sp.add_argument("-j", "--workers", type=int, help="parallel workers (default: from free RAM and CPUs)")
     common(sp)
     sp.set_defaults(fn=cmd_process)

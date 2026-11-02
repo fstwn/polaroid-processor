@@ -72,8 +72,8 @@ def export_plan(m: Manifest, settings) -> Dict[str, tuple]:
         e = m.get(k)
         if k in scales and e.get("status") != "failed":
             quad, curves, manual = Project._quad_curves(e)
-            out[k] = (settings.export_key(quad, scales[k], curves, manual),
-                      settings.export_base(quad, scales[k], curves, manual),
+            out[k] = (settings.export_key(quad, scales[k], curves, manual, e.get("window")),
+                      settings.export_base(quad, scales[k], curves, manual, e.get("window")),
                       retag_ok(e, scales[k], settings, curves, manual))
     return out
 

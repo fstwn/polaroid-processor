@@ -25,12 +25,12 @@ from __future__ import annotations
 import copy
 import math
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import cv2
 import numpy as np
 
-from .formats import PrintFormat
+from .formats import FORMATS, PrintFormat
 
 SIDES = ("top", "right", "bottom", "left")
 
@@ -597,3 +597,43 @@ def find_window(img: np.ndarray, px_per_mm: float, fmt: PrintFormat, kind: Optio
     if len(notes) > 1:
         first.reason = " | ".join(notes)
     return first
+
+
+def find_window_for_formats(img: np.ndarray, fmt: PrintFormat, formats: Sequence[PrintFormat] = FORMATS,
+                            margin_mm: float = 0.0, kind: Optional[str] = None,
+                            params: WindowParams = WindowParams()) -> Tuple[WindowResult, PrintFormat]:
+    """Find the window with the format ``classify()`` gave (``fmt``) first, then with the others.
+
+    Each format gets its own scale, straightened width / (format width - 2 x ``margin_mm``): a wrong format
+    cannot pass, because its nominal size and scale disagree with the print. Returns the result and the format
+    that found it; when that is not ``fmt`` a note says so (a Go-shaped 600 print or the reverse). When no
+    format finds a window, the result is that of ``fmt`` with the other formats' reasons in its notes.
+    """
+    first: Optional[WindowResult] = None
+    for f in [fmt] + [x for x in formats if x.name != fmt.name]:
+        px = img.shape[1] / (f.width_mm - 2 * margin_mm)
+        r = find_window(img, px, f, kind, margin_mm, params)
+        if r.found:
+            if f.name != fmt.name:
+                r.notes.append(f"format: window fits {f.name}, classify() said {fmt.name}")
+            return r, f
+        if first is None:
+            first = r
+        else:
+            first.notes.append(f"{f.name}: {r.reason}")
+    return first, fmt
+
+
+def inset_quad(quad: np.ndarray, d: float) -> np.ndarray:
+    """``quad`` (tl, tr, br, bl) with every side moved inward by ``d`` px: the new sides meet in the new corners."""
+    q = np.asarray(quad, np.float64)
+    centre = q.mean(axis=0)
+    lines = []
+    for i in range(4):
+        a, b = q[i], q[(i + 1) % 4]
+        t = (b - a) / np.linalg.norm(b - a)
+        n = np.array([-t[1], t[0]])
+        if np.dot(centre - a, n) < 0:
+            n = -n
+        lines.append((a + d * n, t))
+    return np.array([_intersect(*lines[i - 1], *lines[i]) for i in range(4)])

@@ -46,6 +46,8 @@ Per scan this writes:
 | `<out>/web/<name>.jpg` | Long edge 2048 px, quality 88 |
 | `<out>/polaroid-manifest.json` | Detection, scale, status, manual fixes and their history |
 
+With `--photo-crop` the photo area is cropped as an extra output next to the full print, which is always written (see [Photo area crop](#photo-area-crop)).
+
 Re-running the same command only processes new or changed scans and scans whose settings changed. When only the batch's inferred scale moved (a fix changed the median print size), the resolution tags of the finished exports are patched in place and nothing is encoded again, as long as the scale it was cut at is within 0.5 % of the new one. A scale set on purpose (`--ppi`, a profile) is a new export.
 
 ## Web app
@@ -62,7 +64,7 @@ A local app (stdlib server on `127.0.0.1`, plain JavaScript, no extra dependenci
 - **Detect.** Finds the print in every scan and stores the outlines in the manifest, without exporting. A bar shows done/total and time left; the grid fills as scans finish, each card with a small straightened preview of the crop (cached in `<out>/_previews/`), its status and warnings. Cancel stops the run at once; the scans in flight are redone by the next run. The grid filters by status.
 - **Fix.** A click on a card opens the 9-tile drag view (the same page the old `review` command served): drag a corner or an edge grip onto the print edge, then Confirm or Save correction. The card and its preview update. Fixes can be made at any time, also during a run.
 - **Export.** Writes the TIFF master and the JPG derivatives of every detected scan that has no up to date export; `Export (N)` says how many. It has the same progress and Cancel. `Detect + export` does both in one go, for batches you trust. A scale-only change shows as `Update tags (T)`: the resolution tags are patched, nothing is encoded.
-- **Settings.** Per project, kept in the manifest: crop margin, the JPG derivatives `high` and `web`, flatten and shadow correction; under Advanced the scale (ppi or scanner profile), TIFF compression, interpolation and the overlay. Your last choices are the start for new projects (the scale is not carried over). Settings apply to the next run and cannot be changed while one goes; a change shows in the Export count.
+- **Settings.** Per project, kept in the manifest: crop margin, the photo area crop and its bleed, the JPG derivatives `high` and `web`, flatten and shadow correction; under Advanced the scale (ppi or scanner profile), TIFF compression, interpolation and the overlay. Your last choices are the start for new projects (the scale is not carried over). Settings apply to the next run and cannot be changed while one goes; a change shows in the Export count.
 - **With the command line and agents.** The app watches the manifest: a fix made by `polaroid fix`, an agent or another window shows up in the grid and in an open drag view without a reload. Only one run can work on an output folder at a time (see [Run lock](#run-lock-and-concurrent-writers)); the app shows when another process holds it.
 
 `polaroid review OUTPUT [--all] [--port N] [--no-browser]` opens the app on that project; the grid starts on "needs review" unless `--all` is given. `--author NAME` sets the author recorded with fixes made in the app (only when this command starts the app; a running app keeps its own); `--export` is ignored (use the Export button). `polaroid app` and `polaroid review` reuse an app that already runs on the port (default 8780, or a free one when that is busy and no `--port` is given): the browser opens on it and on the project, and no second server starts. A run in the running app is never stopped for that; the app stays on its project.
@@ -90,6 +92,8 @@ polaroid process INPUT... -o OUTPUT [options]
 | `--margin-mm 0.1` | Crop this far inside the detected print edge |
 | `--derivative NAME=SIZE[:FMT[:Q]]` | Derivative preset, repeatable. SIZE is a long edge in px or `x0.5`; FMT `jpg` or `png` |
 | `--no-derivatives` | Only the TIFF master |
+| `--photo-crop off\|derivatives\|tiff` | Also crop the photo window into `<out>/photo/`; left out, the output folder keeps its setting (`off` for a new one); see [Photo area crop](#photo-area-crop) |
+| `--photo-bleed-mm 0.3` | Cut the photo crop this far inside the window border |
 | `--ppi N` / `--profile NAME` | True scan resolution, directly or from a scanner profile |
 | `--flatten auto\|off` | Unwarp curled prints along their traced edges (default `auto`) |
 | `--shadows auto\|off` | Remove edge shadows on plain frames (default `auto`) |
@@ -158,6 +162,21 @@ Saves go through the same code as `fix` (history with author, time, note and pre
 polaroid status OUTPUT [--needs-review] [--json]
 ```
 
+## Photo area crop
+
+An extra output, off by default: next to the full print (frame included, always written exactly as before) each export also writes the picture area inside the frame. Settings: `--photo-crop {off,derivatives,tiff}` and `--photo-bleed-mm` (CLI, `api.make_settings`, the MCP `polaroid_process`, the app's settings panel: "Photo area crop" and "Photo crop bleed"); both are part of the export key, so changing them exports again, while a project with the crop `off` keeps its old keys. A run that leaves both options out keeps the values stored in the output folder (a new folder starts with `off` and 0.3 mm), so re-running a project without the flag does not switch its photo crop off.
+
+| File | Content |
+|---|---|
+| `<out>/photo/high/<name>.jpg`, `<out>/photo/web/<name>.jpg` | The same derivative list and sizes as the full print |
+| `<out>/photo/<name>.tif` | Only with `tiff`: lossless master, same ICC profile, compression and resolution tag |
+
+- **The window** is measured per scan at Detect, on a quarter-scale straightened copy (about 0.4 s a scan), and its four corners are stored in the manifest in scan pixels (`window` of the scan's entry, with the outline it was found from). A hand fix, a rim refit or a re-detect makes it stale and finds it again; turning the crop on for an already detected project runs only this step. Square windows are cut along their own border, so a window that sits a fraction of a degree rotated or sheared against the frame comes out square. Round windows are a tight square around the circle.
+- **Bleed.** The crop is cut `--photo-bleed-mm` (default 0.3) inside the measured border on every side, which hides the soft step and the thin dark line at the window edge. The photo is warped straight from the original scan (one resampling, as the full print); edge shadow correction is not applied, as it only touches the frame.
+- **Round windows.** The `tiff` master has an alpha channel, transparent outside the circle; the JPG derivatives keep the frame pixels in the four corners.
+- **Window not found.** The full print is exported as always, no `photo/` files are written for that scan, the manifest gets the warning `photo window not found: <reason>` and the scan is `needs_review`. Accepting the scan (`fix --accept`, the app's Confirm) means: export the full print without a photo crop. An export that makes no photo crop for a scan (window lost after a fix, crop turned off) removes that scan's older files in `photo/`.
+- **Results.** With the crop on, `process`/`status` records carry `window` (found, kind, format, size, corners, reason); `outputs` has `photo_tiff`, `photo_high`, `photo_web`.
+
 ## Machine-readable output
 
 With `--json`, `process` prints one JSON object per scan, then a summary:
@@ -193,6 +212,8 @@ Warnings that set `needs_review`:
 | `edge_curved:<side>:<mm>` | Edge bows by more than 0.4 mm |
 | `edge_uncertain:<side>:<inliers>/<points>` | Less than 60 % of the edge points agree on one line |
 | `edge_inside:<side>:<mm>` | A stretch of the print edge lies further inside the outline than the crop margin, so holder would show in the export there (curved or concave edge) |
+
+| `photo window not found: <reason>` | Only with the photo crop on: no photo window was found in the print (see [Photo area crop](#photo-area-crop)) |
 
 Informational: `scale_inferred:<source>`, `size_unverified` (single scan, no scale reference), `edge_repaired:<side>` (the holder rim touched that side; the side was refit on the print edge behind it), `flattened:<sides>:<mm>` (the export follows these sides' curves; largest bend), `flatten_straight:<side>` (in a flattened print, this side's trace was not reliable and stays straight), `rim_refit:<side>:<mm>` (the outline sat on the holder rim along that side; the batch showed the print oversized by exactly the distance to the print edge behind the rim, so the side was moved there; the original outline stays in the manifest as `quad_detected`).
 

@@ -9,13 +9,13 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from .. import api
-from ..pipeline import DEFAULT_DERIVATIVES, Derivative, settings_from_dict, settings_to_dict
+from ..pipeline import DEFAULT_DERIVATIVES, PHOTO_CROP, Derivative, settings_from_dict, settings_to_dict
 from ..scale import explicit_scale
 
 HIGH_WEB = {d.name: d for d in DEFAULT_DERIVATIVES}
 CHOICES = {"flatten": ("auto", "off"), "shadows": ("auto", "off"), "tiff_compression": ("zlib", "none"),
-           "interpolation": ("linear", "cubic", "lanczos")}
-FIELDS = ("margin_mm", "flatten", "shadows", "high_on", "high_edge", "high_quality", "web_on", "web_edge",
+           "interpolation": ("linear", "cubic", "lanczos"), "photo_crop": PHOTO_CROP}
+FIELDS = ("margin_mm", "photo_crop", "photo_bleed_mm", "flatten", "shadows", "high_on", "high_edge", "high_quality", "web_on", "web_edge",
           "web_quality", "ppi", "profile", "tiff_compression", "interpolation", "overlay")
 
 
@@ -23,7 +23,8 @@ def to_panel(d: Optional[dict]) -> Dict[str, Any]:
     """The flat fields of the panel for a manifest settings dict (missing keys: the tool's defaults)."""
     s = settings_from_dict(d or {})
     by_name = {x.name: x for x in s.derivatives}
-    out: Dict[str, Any] = {"margin_mm": s.margin_mm, "flatten": s.flatten, "shadows": s.shadows, "ppi": s.ppi,
+    out: Dict[str, Any] = {"margin_mm": s.margin_mm, "photo_crop": s.photo_crop, "photo_bleed_mm": s.photo_bleed_mm,
+                           "flatten": s.flatten, "shadows": s.shadows, "ppi": s.ppi,
                            "profile": s.profile, "tiff_compression": s.tiff_compression,
                            "interpolation": s.interpolation, "overlay": s.overlay,
                            "other_derivatives": sum(1 for x in s.derivatives if x.name not in HIGH_WEB)}
@@ -60,6 +61,8 @@ def from_panel(current: Optional[dict], update: Dict[str, Any]) -> dict:
     s = settings_from_dict(current or {})
     if "margin_mm" in update:
         s.margin_mm = _number(update["margin_mm"], "margin", 0.0, 5.0)
+    if "photo_bleed_mm" in update:
+        s.photo_bleed_mm = _number(update["photo_bleed_mm"], "photo bleed", 0.0, 3.0)
     for key, choices in CHOICES.items():
         if key in update:
             if update[key] not in choices:

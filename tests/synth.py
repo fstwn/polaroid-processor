@@ -1,7 +1,7 @@
 """Synthetic holder scans with known print corners, at 25.6 px/mm (1/5 of the real scans)."""
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Optional, Tuple
 
 import cv2
 import numpy as np
@@ -12,12 +12,17 @@ PRINT_MM = (88.0, 107.0)
 
 def make_scan(frame: str = "white", angle_deg: float = 0.4, seed: int = 0,
               scan_px: Tuple[int, int] = (2400, 2900), rim: bool = True,
-              rim_band_deg: float = None) -> Tuple[np.ndarray, np.ndarray]:
+              rim_band_deg: float = None, window_mm: Optional[Tuple[float, float, float, float]] = None,
+              round_window: bool = False) -> Tuple[np.ndarray, np.ndarray]:
     """Return (rgb uint8 scan, true quad tl/tr/br/bl in continuous pixel coordinates).
 
     ``rim_band_deg`` adds a grey holder rim band at the bottom edge, tilted by that angle against
     the print. The print lies on top of it: the band is hidden at the left and emerges towards the
     right, separated from the print only by the thin shadow line of the print edge.
+
+    ``window_mm`` = (left, top, width, height) in mm from the print's top left corner replaces the default
+    photo window (78 x 79 mm, a little off the real position); ``round_window`` draws a circle of the window's
+    width instead, centred in that box.
     """
     rng = np.random.default_rng(seed)
     w, h = scan_px
@@ -62,7 +67,17 @@ def make_scan(frame: str = "white", angle_deg: float = 0.4, seed: int = 0,
         raise ValueError(frame)
     # photo window
     win = np.zeros((h, w), np.uint8)
-    wl = np.array([[-39, -45], [39, -45], [39, 34], [-39, 34]]) * PX_PER_MM @ rot.T + [cx, cy]
+    if window_mm is None:
+        wl = np.array([[-39, -45], [39, -45], [39, 34], [-39, 34]]) * PX_PER_MM @ rot.T + [cx, cy]
+    else:
+        left, top, ww, hh = window_mm
+        x0, y0 = left - PRINT_MM[0] / 2, top - PRINT_MM[1] / 2
+        if round_window:
+            t = np.linspace(0, 2 * np.pi, 720, endpoint=False)
+            local_w = np.stack([x0 + ww / 2 + ww / 2 * np.cos(t), y0 + hh / 2 + ww / 2 * np.sin(t)], -1)
+        else:
+            local_w = np.array([[x0, y0], [x0 + ww, y0], [x0 + ww, y0 + hh], [x0, y0 + hh]])
+        wl = local_w * PX_PER_MM @ rot.T + [cx, cy]
     cv2.fillPoly(win, [np.round(wl).astype(np.int32).reshape(-1, 1, 2)], 255)
     photo = rng.integers(0, 255, size=(h // 32 + 1, w // 32 + 1, 3), dtype=np.uint8)
     photo = cv2.resize(photo, (w, h), interpolation=cv2.INTER_CUBIC)
