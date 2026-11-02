@@ -115,7 +115,7 @@ def test_cancel_stops_new_scans_and_a_rerun_resumes(src, tmp_path):
     out = tmp_path / "out"
     flag, seen = threading.Event(), []
     summary = api.process([str(src)], str(out), settings(export=False, previews=True),
-                          progress=lambda k, what: (seen.append(k), flag.set()), cancel=flag.is_set,
+                          progress=lambda k, what: (seen.append(k), flag.set() if what == "detected" else None), cancel=flag.is_set,
                           on_jobs=lambda n: seen.append(n))
     assert seen[0] == 10 and summary["cancelled"]
     done = [k for k, e in Manifest(str(out)).items() if e.get("detection")]

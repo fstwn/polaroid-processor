@@ -1,6 +1,7 @@
 """Regression against hand-reviewed corners of real scans.
 
-- tests/data/labels.json: scans in input/; the detector was tuned on these. Acceptance target
+- tests/data/labels.json: scans from the former input/ folder, now under $POLAROID_SAMPLES (keys keep
+  the input/-relative path); the detector was tuned on these. Acceptance target
   from docs/SCOPE.md is every corner within 0.2 mm; the detector meets 0.1 mm since the edge
   bias fix (2026-10-18).
 - tests/data/labels_holdout.json: scans from the user's library ($POLAROID_LIBRARY) that were
@@ -20,7 +21,6 @@ import pytest
 from polaroid_processor import detect, load_rgb
 from polaroid_processor.formats import POLAROID_600
 
-ROOT = Path(__file__).resolve().parents[1]
 LABELS = Path(__file__).parent / "data" / "labels.json"
 HOLDOUT = Path(__file__).parent / "data" / "labels_holdout.json"
 SAMPLES = Path(__file__).parent / "data" / "labels_samples.json"
@@ -33,7 +33,7 @@ LIBRARY_COPIES = {"SICK_D3": "05_roller_roids/250729_SICKalps_L2_D3", "260325_Sa
 
 
 def _scan_path(rel: str) -> Path:
-    path = ROOT / "input" / rel
+    path = SAMPLES_ROOT / rel  # the input/ folders moved there on 2026-11-02
     folder, _, name = rel.partition("/")
     if not path.exists() and folder in LIBRARY_COPIES:
         path = LIBRARY / LIBRARY_COPIES[folder] / name

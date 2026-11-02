@@ -65,6 +65,9 @@ ul.warn li.hint { color: var(--amber); }
 .mark.skipped { color: var(--dim); }
 #empty { text-align: center; color: var(--dim); padding: 80px 20px; display: none; }
 
+#discard { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: center; justify-content: center; z-index: 20; }
+#discard .dlg { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px 20px; max-width: 360px; }
+#discard p { margin: 0 0 12px; }
 #zoom { position: fixed; inset: 0; background: rgba(0,0,0,.88); display: none; flex-direction: column; align-items: center;
   justify-content: center; gap: 8px; z-index: 10; }
 #zoom .bar { display: flex; gap: 14px; align-items: center; color: var(--dim); font: 13px ui-monospace, Consolas, monospace; }
@@ -127,6 +130,13 @@ kbd { background: #2b2e37; border: 1px solid var(--line); border-radius: 4px; pa
     <div id="list"></div>
   </div>
 </aside>
+
+<div id="discard" role="alertdialog" aria-label="Unsaved edits">
+  <div class="dlg">
+    <p>This scan has edits that are not saved.</p>
+    <div class="row"><button id="d-stay" class="primary">Keep editing</button><button id="d-leave" class="warn">Leave without saving</button></div>
+  </div>
+</div>
 
 <div id="zoom">
   <div class="bar"><b id="zname"></b><span id="zinfo"></span>
@@ -527,9 +537,21 @@ function updateButtons() {
   $("next").disabled = busy || S.idx >= S.scans.length - 1;
 }
 
-function go(i) {
+// Asks in the page (not with the browser's dialogs) whether unsaved drags may go; resolves true to leave.
+function askDiscard() {
+  return new Promise((resolve) => {
+    const box = $("discard");
+    box.style.display = "flex";
+    const done = (yes) => { box.style.display = "none"; $("d-leave").onclick = $("d-stay").onclick = null; resolve(yes); };
+    $("d-leave").onclick = () => done(true);
+    $("d-stay").onclick = () => done(false);
+    $("d-stay").focus();
+  });
+}
+
+async function go(i) {
   if (i < 0 || i >= S.scans.length || (i === S.idx && S.cur)) return;
-  if (isDirty() && !window.confirm("This scan has edits that are not saved. Leave without saving?")) return;
+  if (isDirty() && !(await askDiscard())) return;
   loadScan(i);
 }
 
@@ -547,7 +569,7 @@ async function commit(kind) {
     S.marks[key] = kind === "confirm" ? "confirmed" : "fixed";
     S.busy = false;
     showMsg(kind === "confirm" ? `Confirmed ${key}` : `Saved ${key}${rec.exported ? " and exported" : ""}`, true);
-    if (EMBED) { toApp({ type: "fix-saved", key }); return; }
+    if (EMBED) { cur.orig = clone(cur.quad); toApp({ type: "fix-saved", key }); return; }   // nothing unsaved is left
     if (kind === "confirm" && S.idx < S.scans.length - 1) loadScan(S.idx + 1);
     else loadScan(S.idx);       // re-cut tiles at the stored outline
   } catch (e) {
@@ -564,7 +586,19 @@ $("reset").onclick = () => {
   if (S.changedElsewhere) { loadScan(S.idx); return; }     // take over the outline stored meanwhile
   S.cur.quad = clone(S.cur.orig); drawAll();
 };
-$("back").onclick = () => toApp({ type: "fix-close" });
+async function closeToApp() {
+  if (isDirty() && !(await askDiscard())) return false;
+  markClean();
+  toApp({ type: "fix-close" });
+  return true;
+}
+function markClean() { if (S.cur) S.cur.orig = clone(S.cur.quad); }
+$("back").onclick = closeToApp;
+// browser Back in the app: the app asks the page to close; the page answers, after asking about unsaved drags
+window.addEventListener("message", async (e) => {
+  if (!EMBED || e.origin !== location.origin || !e.data || e.data.type !== "request-close") return;
+  if (!(await closeToApp())) toApp({ type: "fix-stay" });
+});
 $("skip").onclick = () => {
   if (!S.cur) return;
   if (!S.marks[S.cur.rec.key]) S.marks[S.cur.rec.key] = "skipped";
@@ -572,7 +606,9 @@ $("skip").onclick = () => {
 };
 $("prev").onclick = () => go(S.idx - 1);
 $("next").onclick = () => go(S.idx + 1);
-window.addEventListener("beforeunload", (e) => { if (isDirty()) { e.preventDefault(); e.returnValue = ""; } });
+// The standalone page asks the browser before it is left with unsaved drags. Inside the app the page is
+// closed by the app (the Grid button asks in the page, a save has nothing unsaved), so the browser must not ask.
+if (!EMBED) window.addEventListener("beforeunload", (e) => { if (isDirty()) { e.preventDefault(); e.returnValue = ""; } });
 window.addEventListener("resize", () => { if (S.cur) { layout(); if (S.zoom) drawZoom(true); } });
 
 (async function init() {

@@ -35,5 +35,5 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
-    "scans: needs the real scans in input/ (skipped when absent)",
+    "scans: needs the real scans in $POLAROID_SAMPLES / $POLAROID_LIBRARY (skipped when absent)",
 ]

@@ -65,8 +65,7 @@ if defined POLAROID_EXE if exist "%POLAROID_EXE%" exit /b 0
 if defined POLAROID_CONDA_ENV (
     for %%R in ("%USERPROFILE%\miniconda3" "%USERPROFILE%\anaconda3" "%ProgramData%\miniconda3" "%ProgramData%\anaconda3" "%LOCALAPPDATA%\miniconda3") do (
         if exist "%%~R\envs\%POLAROID_CONDA_ENV%\Scripts\polaroid.exe" (
-            set "POLAROID_EXE=%%~R\envs\%POLAROID_CONDA_ENV%\Scripts\polaroid.exe"
-            set "PATH=%%~R\envs\%POLAROID_CONDA_ENV%;%%~R\envs\%POLAROID_CONDA_ENV%\Library\bin;%%~R\envs\%POLAROID_CONDA_ENV%\Scripts;!PATH!"
+            call :use_env "%%~R\envs\%POLAROID_CONDA_ENV%"
             exit /b 0
         )
     )
@@ -75,9 +74,24 @@ if defined POLAROID_CONDA_ENV (
 )
 for %%X in (polaroid.exe) do set "POLAROID_EXE=%%~$PATH:X"
 if defined POLAROID_EXE exit /b 0
+rem started from Explorer, no conda environment is active: look in every one
+for %%R in ("%USERPROFILE%\miniconda3" "%USERPROFILE%\anaconda3" "%ProgramData%\miniconda3" "%ProgramData%\anaconda3" "%LOCALAPPDATA%\miniconda3") do (
+    for /d %%E in ("%%~R\envs\*") do (
+        if exist "%%~E\Scripts\polaroid.exe" (
+            call :use_env "%%~E"
+            echo Using %%~E\Scripts\polaroid.exe
+            exit /b 0
+        )
+    )
+)
 echo polaroid.exe not found. Install polaroid-processor, or set POLAROID_EXE or
 echo POLAROID_CONDA_ENV at the top of this file.
 exit /b 1
+
+:use_env
+set "POLAROID_EXE=%~1\Scripts\polaroid.exe"
+set "PATH=%~1;%~1\Library\bin;%~1\Scripts;!PATH!"
+exit /b 0
 
 rem ---------------------------------------------------------------------------
 :fail

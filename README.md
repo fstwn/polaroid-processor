@@ -29,7 +29,7 @@ This installs two commands: `polaroid` (CLI) and `polaroid-mcp` (MCP server for 
 
 Two launchers need no terminal. [`launcher/polaroid-app.bat`](launcher/polaroid-app.bat) starts the [web app](#web-app): double-click it, or drag scan folders onto it to make them projects (each is processed into a sibling folder `<folder>_processed`); an app that is already running is reused. It reads `POLAROID_EXE` / `POLAROID_CONDA_ENV` like the other launcher, and `POLAROID_APP_ARGS` adds options such as `--port`. Close its window to stop the app. A folder whose name contains `&` is cut at the `&` if Explorer does not quote it when dragged (the same limit as `polaroid-drop.bat`); start such a folder from a terminal with `polaroid app "C:\R&D\scans"`.
 
-[`launcher/polaroid-drop.bat`](launcher/polaroid-drop.bat) processes without the app. Drag one or more scan folders onto it (or double-click it and type a folder path). Each folder is processed into a sibling folder `<folder>_processed`, which opens in Explorer when done. If `polaroid.exe` is not on the PATH, set `POLAROID_CONDA_ENV` (or `POLAROID_EXE`) at the top of the file. Extra options go into `POLAROID_ARGS`, e.g. `--overlay`.
+[`launcher/polaroid-drop.bat`](launcher/polaroid-drop.bat) processes without the app. Drag one or more scan folders onto it (or double-click it and type a folder path). Each folder is processed into a sibling folder `<folder>_processed`, which opens in Explorer when done. If `polaroid.exe` is not on the PATH (as when started from Explorer), both launchers look for it in every conda environment under `miniconda3` / `anaconda3` in the user profile, `ProgramData` or `LocalAppData` and use the first one that has it; set `POLAROID_CONDA_ENV` (or `POLAROID_EXE`) at the top of the file to pick one. Extra options go into `POLAROID_ARGS`, e.g. `--overlay`.
 
 ## Quick start
 
@@ -59,7 +59,7 @@ python -m polaroid_processor.app   # the same
 A local app (stdlib server on `127.0.0.1`, plain JavaScript, no extra dependencies) for the whole loop: pick a scan folder, run, review, fix, export.
 
 - **Projects.** The home page lists recent projects (input folder, output folder, counts of ok / needs review / failed / exported). A new project takes an input folder (Browse opens the native folder dialog, or type a path; recent folders are offered) and an output folder, by default `<input>_processed` next to it. Any existing output folder with a `polaroid-manifest.json` can be opened too, also one made on the command line. The list is kept per user in `%APPDATA%/polaroid-processor/app.json` (`~/.polaroid-processor/` elsewhere).
-- **Detect.** Finds the print in every scan and stores the outlines in the manifest, without exporting. A bar shows done/total and time left; the grid fills as scans finish, each card with a small straightened preview of the crop (cached in `<out>/_previews/`), its status and warnings. Cancel stops after the scans in flight; the next run resumes. The grid filters by status.
+- **Detect.** Finds the print in every scan and stores the outlines in the manifest, without exporting. A bar shows done/total and time left; the grid fills as scans finish, each card with a small straightened preview of the crop (cached in `<out>/_previews/`), its status and warnings. Cancel stops the run at once; the scans in flight are redone by the next run. The grid filters by status.
 - **Fix.** A click on a card opens the 9-tile drag view (the same page the old `review` command served): drag a corner or an edge grip onto the print edge, then Confirm or Save correction. The card and its preview update. Fixes can be made at any time, also during a run.
 - **Export.** Writes the TIFF master and the JPG derivatives of every detected scan that has no up to date export; `Export (N)` says how many. It has the same progress and Cancel. `Detect + export` does both in one go, for batches you trust. A scale-only change shows as `Update tags (T)`: the resolution tags are patched, nothing is encoded.
 - **Settings.** Per project, kept in the manifest: crop margin, the JPG derivatives `high` and `web`, flatten and shadow correction; under Advanced the scale (ppi or scanner profile), TIFF compression, interpolation and the overlay. Your last choices are the start for new projects (the scale is not carried over). Settings apply to the next run and cannot be changed while one goes; a change shows in the Export count.
@@ -263,11 +263,11 @@ Batch processing with manifest and exports: `polaroid_processor.pipeline.run_bat
 
 ```bash
 pip install -e ".[dev]"
-python -m pytest              # synthetic tests; real-scan regression runs when input/ is present
+python -m pytest              # synthetic tests; real-scan regression runs when the scans are present
 python tools/export_labels.py OUTPUT...   # collect reviewed corners into tests/data/labels.json
 ```
 
-`input/` and `output/` hold real scans and are git-ignored. Experiments go to `.dev/`.
+The real scans live outside the repo: the regression tests read them from `$POLAROID_SAMPLES` (default `E:/POLAROID_PROCESSOR_SAMPLES`) and `$POLAROID_LIBRARY`, and skip what is missing. Experiments go to `.dev/`.
 
 ## License
 

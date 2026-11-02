@@ -4,12 +4,13 @@ A scan counts as reviewed when its manifest entry has an override (from
 ``polaroid fix --accept`` or a corner fix). A ``known_failure`` note added by hand to an
 entry is kept; the regression test expects the detector to miss those. Usage::
 
-    python tools/export_labels.py OUTPUT_DIR [OUTPUT_DIR ...] [--input-root input] [--out tests/data/labels.json]
+    python tools/export_labels.py OUTPUT_DIR [OUTPUT_DIR ...] [--input-root $POLAROID_SAMPLES] [--out tests/data/labels.json]
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 from polaroid_processor.manifest import Manifest
@@ -18,7 +19,7 @@ from polaroid_processor.manifest import Manifest
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("outputs", nargs="+")
-    ap.add_argument("--input-root", default="input")
+    ap.add_argument("--input-root", default=os.environ.get("POLAROID_SAMPLES", "E:/POLAROID_PROCESSOR_SAMPLES"))
     ap.add_argument("--out", default="tests/data/labels.json")
     a = ap.parse_args()
     root = Path(a.input_root).resolve()

@@ -231,21 +231,38 @@ function buildCard(scan) {
 function openScan(scan) {
   if (!scan.size_px) { showMsg(scan.status === "failed" ? "No outline was found for this scan." : "This scan has not been detected yet.", true); return; }
   showMsg("");
-  $("fixframe").src = "/fix#" + encodeURIComponent(scan.key);
+  // location.replace: opening and closing the page adds no history entries to step through with Back
+  $("fixframe").contentWindow.location.replace("/fix#" + encodeURIComponent(scan.key));
   $("fixview").hidden = false;
   document.body.style.overflow = "hidden";
+  history.pushState({ fix: true }, "");          // Back closes the page (asking first when edits are unsaved)
 }
 
+let skipPop = false;
 function closeFix() {
   $("fixview").hidden = true;
-  $("fixframe").src = "about:blank";
+  $("fixframe").contentWindow.location.replace("about:blank");
   document.body.style.overflow = "";
+  if (history.state && history.state.fix) { skipPop = true; history.back(); }
   tick(true);
 }
 
+// Browser Back with the fix page open: the page decides (it asks about unsaved drags); a page that does not
+// answer (blank, broken) is closed, so the overlay is never left stuck.
+let closeTimer = null;
+window.addEventListener("popstate", () => {
+  if (skipPop) { skipPop = false; return; }
+  if ($("fixview").hidden) return;
+  clearTimeout(closeTimer);
+  closeTimer = setTimeout(closeFix, 1500);
+  try { $("fixframe").contentWindow.postMessage({ type: "request-close" }, location.origin); } catch (e) { closeFix(); }
+});
+
 window.addEventListener("message", (e) => {
   if (e.origin !== location.origin || !e.data) return;
+  clearTimeout(closeTimer);
   if (e.data.type === "fix-saved" || e.data.type === "fix-close") closeFix();
+  else if (e.data.type === "fix-stay") history.pushState({ fix: true }, "");     // Back was refused: the page stays
 });
 
 function renderScans(data) {
@@ -284,7 +301,8 @@ function renderProgress(p) {
       else if (total === 0) { text = "Nothing to do"; frac = 1; }
       else {
         frac = run.done / total;
-        text = `${verb[run.mode] || "Working"} · ${run.done} / ${total}` + (run.eta !== null ? ` · ${fmtTime(run.eta)} left` : "") + (run.state === "cancelling" ? " · stopping after the scans in flight…" : "");
+        text = `${verb[run.mode] || "Working"} · ${run.done} / ${total}` + (run.eta !== null ? ` · ${fmtTime(run.eta)} left` : "");
+        if (run.state === "cancelling") text = `Cancelling\u2026 (${run.done} of ${total} done)`;
       }
       if (run.phase) text = (total ? `${run.done} / ${total} · ` : "") + `${run.phase}…`;
     } else if (run.state === "finished") {
@@ -293,7 +311,7 @@ function renderProgress(p) {
       text = total ? `${did} ${plural(run.done, "scan")} in ${fmtTime(run.elapsed)}` + (run.errors ? ` · ${run.errors} failed` : "") : "Nothing new to do";
     } else if (run.state === "cancelled") {
       frac = total ? run.done / total : 0;
-      text = `Stopped at ${run.done} / ${total}. Start it again to continue.`;
+      text = `Cancelled: ${run.done} of ${total} done. Start it again to continue with the rest.`;
     } else if (run.state === "error") {
       cls = "error"; frac = 1; text = run.error;
     }
@@ -414,7 +432,7 @@ async function leaveProject() {
   const r = await guarded(() => api("/api/project/close", {}));
   S.project = null;
   await loadHome();
-  if (r && r.stopping) showMsg("The run is stopping after the scans in flight. This project can be opened again when it has stopped.", true);
+  if (r && r.stopping) showMsg("The run is being cancelled. This project can be opened again in a moment.", true);
 }
 
 async function tick(now) {

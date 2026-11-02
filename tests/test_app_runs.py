@@ -543,3 +543,131 @@ def test_a_probe_holding_the_lock_for_a_moment_does_not_fail_a_starting_run(tmp_
     threading.Timer(0.06, release).start()
     with RunLock(str(out)):
         assert holder(str(out))["pid"] == os.getpid()
+
+
+# --------------------------------------------------------------------------- cancel stops the work in flight
+import multiprocessing
+
+from pool_jobs import slow_job
+from polaroid_processor.pipeline import _clean_partial, _run_pool
+
+
+def test_cancel_kills_the_jobs_in_flight_and_returns_at_once():
+    flag = threading.Event()
+    threading.Timer(0.6, flag.set).start()
+    t0 = time.time()
+    got = list(_run_pool(slow_job, [{"i": i, "t": 30} for i in range(6)], 8, flag.is_set))   # more workers than jobs
+    assert got == [] and time.time() - t0 < 10
+    time.sleep(0.5)
+    assert multiprocessing.active_children() == []              # no worker is left behind
+
+
+def test_cancel_keeps_the_results_that_are_in():
+    flag = threading.Event()
+    got = []
+    for res in _run_pool(slow_job, [{"i": 0, "t": 0.0}] + [{"i": i, "t": 30} for i in range(1, 5)], 8, flag.is_set):
+        got.append(res["key"])
+        flag.set()
+    assert got == ["0"]
+
+
+def test_only_about_the_worker_count_is_submitted_at_a_time():
+    flag = threading.Event()
+    seen = []
+    for res in _run_pool(slow_job, [{"i": i, "t": 0.2} for i in range(12)], 2, flag.is_set):
+        seen.append(res["key"])
+    assert sorted(seen, key=int) == [str(i) for i in range(12)]
+
+
+def test_cancelling_detection_with_a_pool_bigger_than_the_batch(src, tmp_path):
+    for i in range(5):
+        shutil.copy(src / "a_white.tif", src / f"b_{i}.tif")
+    out = tmp_path / "out"
+    flag, jobs = threading.Event(), []
+    threading.Timer(0.3, flag.set).start()
+    t0 = time.time()
+    summary = api.process([str(src)], str(out), api.make_settings(ppi=PPI, workers=8, export=False),
+                          cancel=flag.is_set, on_jobs=jobs.append)
+    took = time.time() - t0
+    assert summary["cancelled"] and jobs == [8] and took < 20
+    m = Manifest(str(out))
+    done = [k for k, e in m.items() if e.get("detection")]
+    assert len(done) < 7                                          # whatever finished is kept, the rest is not done
+    time.sleep(0.5)
+    assert multiprocessing.active_children() == []
+    # the next run does the rest and keeps what was done
+    stamp = {k: m.get(k)["detected_at"] for k in done}
+    again = api.process([str(src)], str(out), api.make_settings(ppi=PPI, workers=8, export=False), on_jobs=jobs.append)
+    m = Manifest(str(out))
+    assert not again["cancelled"] and jobs[-1] == 8 - len(done)
+    assert all(m.get(k)["detected_at"] == t for k, t in stamp.items())
+    assert sum(1 for _, e in m.items() if e.get("detection")) == 7
+
+
+def test_cancelling_an_export_leaves_no_partial_file_and_the_next_run_finishes(src, tmp_path):
+    import tifffile
+    for i in range(5):
+        shutil.copy(src / "a_white.tif", src / f"b_{i}.tif")
+    out = tmp_path / "out"
+    api.process([str(src)], str(out), api.make_settings(ppi=PPI, workers=2, export=False))
+    flag, jobs = threading.Event(), []
+
+    def on_jobs(n):
+        jobs.append(n)
+        if len(jobs) == 2:                                        # the export pass starts: cut it off a moment later
+            threading.Timer(0.5, flag.set).start()
+
+    exporting = api.make_settings(ppi=PPI, workers=8, derivatives=["web=800:jpg:85"])
+    t0 = time.time()
+    summary = api.process([str(src)], str(out), exporting, cancel=flag.is_set, on_jobs=on_jobs)
+    assert summary["cancelled"] and jobs == [1, 7] and time.time() - t0 < 25
+    m = Manifest(str(out))
+    for k, e in m.items():
+        outs = e.get("outputs") or {}
+        if outs:      # an entry that claims an export: its files are whole
+            assert e.get("export_key")
+            for rel in outs.values():
+                assert m.abs(rel).exists()
+            tifffile.imread(str(m.abs(outs["tiff"])))
+    cut = [k for k, e in m.items() if e.get("detection") and not e.get("export_key")]
+    assert cut                                                    # something was cut off, and is not marked exported
+    for f in out.rglob("*.tif"):                                  # every file with a final name reads back
+        assert tifffile.imread(str(f)).size
+    again = api.process([str(src)], str(out), exporting)
+    assert not again["cancelled"] and not list(out.rglob("*.part"))
+    m = Manifest(str(out))
+    assert sum(1 for _, e in m.items() if e.get("export_key")) == 7
+    for _, e in m.items():
+        if e.get("outputs"):
+            tifffile.imread(str(m.abs(e["outputs"]["tiff"])))
+
+
+def test_temporary_files_of_a_killed_run_are_cleaned_up_but_not_other_part_files(tmp_path):
+    out = tmp_path / "out"
+    (out / "web").mkdir(parents=True)
+    (out / "_overlays").mkdir()
+    (out / "_previews").mkdir()
+    gone = ["x.tif.part", "x2.tiff.part", "web/y.jpg.part", "web/y2.jpeg.part", "p.png.part", "_overlays/o.jpg.part"]
+    stay = ["_previews/z.jpg.part", "polaroid-manifest.json.7.8.part", "keep.tif", "movie.mp4.part",
+            "archive.zip.part", "web/download.part"]
+    for rel in gone + stay:
+        (out / rel).write_bytes(b"x")
+    _clean_partial(out)
+    left = sorted(str(p.relative_to(out)).replace("\\", "/") for p in out.rglob("*") if p.is_file())
+    assert left == sorted(stay)
+
+
+def test_the_app_cancel_stops_a_detect_run_within_seconds(app, src):
+    for i in range(6):
+        shutil.copy(src / "a_white.tif", src / f"b_{i}.tif")
+    app.json("/api/project/open", {"input": str(src)})
+    assert app.json("/api/project/detect", {})[0] == 200
+    time.sleep(0.5)
+    t0 = time.time()
+    assert app.json("/api/project/cancel", {})[0] == 200
+    prog = app.wait(lambda p: p["run"]["state"] not in ("running", "cancelling"), timeout=30)
+    assert prog["run"]["state"] == "cancelled" and time.time() - t0 < 15
+    assert prog["run"]["done"] < prog["run"]["total"]
+    app.json("/api/project/detect", {})                           # resumes with the rest
+    prog = app.wait(finished)
+    assert prog["counts"]["pending"] == 0 and prog["counts"]["detected"] == 0

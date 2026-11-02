@@ -7,7 +7,7 @@ import logging
 import os
 import sys
 import time
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -25,7 +25,7 @@ from .geometry import rectify, shift_side
 from .imageio import (SCAN_SUFFIXES, file_fingerprint, load_rgb, read_meta, resize_long_edge, set_resolution,
                       write_derivative, write_tiff)
 from .lock import RunLock
-from .manifest import Manifest, now, scan_key
+from .manifest import MANIFEST_NAME, Manifest, now, scan_key
 from .preview import LONG_EDGE, PREVIEW_DIR, write_preview
 from .render import overlay
 from .scale import Scale, batch_median_scale, explicit_scale, scale_from_size, scale_from_tag
@@ -316,10 +316,40 @@ def _crashed(job: dict) -> dict:
     return {"key": job["key"], "path": job["path"], "error": "worker process crashed on this scan"}
 
 
+def _kill_pool(ex: ProcessPoolExecutor) -> None:
+    """Stop the worker processes at once (there is no public way: the jobs in flight are lost).
+
+    The executor's feeder thread may be blocked writing a queued job into the pipe of a worker that no longer
+    reads it, and the executor then waits for that thread for ever. So the reading end is closed too (the writer
+    fails and ends) and the executor is told not to wait for the thread.
+    """
+    if hasattr(ex, "terminate_workers"):      # Python 3.14 and later
+        try:
+            ex.terminate_workers()
+        except Exception:  # noqa: BLE001
+            pass
+    for proc in list((getattr(ex, "_processes", None) or {}).values()):
+        try:
+            proc.terminate()
+        except Exception:  # noqa: BLE001
+            pass
+    q = getattr(ex, "_call_queue", None)
+    if q is not None:
+        try:
+            q.cancel_join_thread()
+            q._reader.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def _run_pool(fn: Callable, jobs: List[dict], workers: int, cancel: Optional[Callable[[], bool]] = None):
     """Run ``fn`` on every job in worker processes, yielding results as they finish.
 
-    When ``cancel()`` turns true the jobs not yet started are dropped; the ones in flight finish.
+    Only about ``workers`` jobs (plus two queued) are submitted at a time. When ``cancel()`` turns true (checked
+    four times a second) the results that are already in are yielded, the jobs not finished are dropped, and the
+    worker processes are terminated: the run stops within a moment, not after the scans in flight. A job that was
+    cut off leaves no result; its output files are written to a temporary name and renamed when complete, so no
+    partial file carries a final name.
 
     A worker that dies (a native crash in a decoder or OpenCV) breaks the whole pool. The
     jobs left over then run one by one, each in a fresh process, so only the scan that
@@ -329,20 +359,37 @@ def _run_pool(fn: Callable, jobs: List[dict], workers: int, cancel: Optional[Cal
         workers = 1
     done = set()
     try:
-        with ProcessPoolExecutor(max_workers=workers) as ex:
-            futs = {ex.submit(fn, j): i for i, j in enumerate(jobs)}
-            stopped = False
-            for fut in as_completed(futs):
-                if fut.cancelled():
-                    continue
-                res = fut.result()
-                done.add(futs[fut])
-                yield res
-                if cancel and not stopped and cancel():
-                    stopped = True
-                    for f in futs:
-                        f.cancel()
-        return
+        ex = ProcessPoolExecutor(max_workers=workers)
+        try:
+            queue = iter(enumerate(jobs))
+            pending = {}
+
+            def fill():
+                while len(pending) < workers + 2:
+                    nxt = next(queue, None)
+                    if nxt is None:
+                        return
+                    pending[ex.submit(fn, nxt[1])] = nxt[0]
+
+            fill()
+            while pending:
+                finished, _ = wait(list(pending), timeout=0.25, return_when=FIRST_COMPLETED)
+                if cancel and cancel():
+                    for fut in finished:
+                        if not fut.cancelled() and fut.exception() is None:
+                            done.add(pending.pop(fut))
+                            yield fut.result()
+                    _kill_pool(ex)
+                    return
+                for fut in finished:
+                    i = pending.pop(fut)
+                    res = fut.result()
+                    done.add(i)
+                    yield res
+                fill()
+            return
+        finally:
+            ex.shutdown(wait=True)
     except BrokenProcessPool:
         log.warning("a worker process crashed; running the remaining scans one by one")
     for i, j in enumerate(jobs):
@@ -356,6 +403,24 @@ def _run_pool(fn: Callable, jobs: List[dict], workers: int, cancel: Optional[Cal
         except BrokenProcessPool:
             res = _crashed(j)
         yield res
+
+
+PARTIAL_SUFFIXES = tuple(f"{ext}.part" for ext in (".tif", ".tiff", ".jpg", ".jpeg", ".png"))
+
+
+def _clean_partial(out: Path) -> None:
+    """Remove the temporary files a killed run left (exports are written to ``NAME.tif.part`` and so on, and
+    renamed). Only the names the export writers make are removed, not any ``*.part`` (a browser's partial download
+    has that name too). The previews are left alone: the app writes them without the run lock."""
+    if not out.is_dir():
+        return
+    for d in [out] + [x for x in out.iterdir() if x.is_dir() and x.name != "_previews"]:
+        for f in d.iterdir():
+            if f.is_file() and f.name.lower().endswith(PARTIAL_SUFFIXES):
+                try:
+                    f.unlink()
+                except OSError:
+                    pass
 
 
 # --------------------------------------------------------------------------- evaluation
@@ -753,6 +818,8 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
                 raise ValueError("output folder must differ from the input folder")
     manifest = Manifest(out_dir, persist=bool(out_dir) and not settings.dry_run)
     out_path = manifest.out_dir
+    if manifest.persist:
+        _clean_partial(out_path)
     manifest.data["settings"] = settings_to_dict(settings)
     keys = names
     explicit = explicit_scale(settings.ppi, settings.profile, settings.profiles_file)
@@ -814,7 +881,7 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
                 if k in manifest.fixed:
                     status, warnings, fmt = evaluate(e, scales[k], settings.rules, ref, settings.margin_mm,
                                                      settings.flatten, settings.flatten_params)
-            if status == "needs_review":
+            if status == "needs_review" and not (cancel and cancel()):    # (a refit loads the scan: not after a cancel)
                 cache = {}
 
                 def scan_rgb(path=e["input"], cache=cache):
@@ -878,7 +945,9 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
         workers = _workers_for(manifest, pass_b, settings)
         log.info("exporting %d scan(s) with %d worker(s)", len(pass_b), workers)
         xkeys = {j["key"]: (j["xkey"], j["xbase"]) for j in pass_b}
+        finished_keys = set()
         for res in _run_pool(_job, pass_b, workers, cancel):
+            finished_keys.add(res["key"])
             _store_job_result(manifest, res)
             e = manifest.entry(res["key"])
             if "error" in res:
@@ -890,6 +959,10 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
             if progress:
                 progress(res["key"], res.get("error") or "exported")
             saver.tick()
+        if cancel and cancel():
+            for j in pass_b:     # cut off while writing: its files may be half of a new export, so the old key goes
+                if j["key"] not in finished_keys:
+                    manifest.entry(j["key"]).pop("export_key", None)
         saver.flush()
 
     saver.flush()      # takes in fixes made during the export: the summary shows their status
