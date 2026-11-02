@@ -40,7 +40,7 @@ The current scans are tagged 600 dpi but measure ~128 px/mm (~3250 ppi), so the 
 ## Output
 
 - Default: full print, frame included, at measured size and native resolution. No forced aspect ratio. DPI tag written from the true px/mm.
-- Opt-in: photo area only. Rectangular windows cropped directly. Round windows: tight square crop with an alpha mask outside the circle (TIFF/PNG); JPG keeps the frame pixels in the corners.
+- Opt-in: photo area as an additional output, next to the full print (decided 2026-11-02, see "Photo-area crop: decisions").
 - Files:
   - Full-resolution TIFF master, lossless, same bit depth as input, ICC profile carried over. Always written.
   - Derivatives as a list of named size presets (e.g. `high`, `web`), each sized by long edge or scale, each JPG or PNG.
@@ -318,3 +318,37 @@ All three slices are done. The code is in `src/polaroid_processor/app/` (server,
 - **Cancel** (changed after the user's first test): it stops the work in flight, not only the scans not yet started. `_run_pool` submits about the worker count plus two jobs at a time, checks `cancel()` four times a second, yields the results already in, then terminates the worker processes (and closes the call queue's reading end, else the executor waits for ever on its feeder thread). The scans cut off are not done and the next run redoes them; a cut-off export loses its `export_key`. Exports write to `NAME.part` and rename, so no partial file has a final name; a run removes the leftover `*.part` files at its start (not in `_previews/`). After a cancel the run skips size refits and the export pass. The CLI's Ctrl+C is unchanged.
 - **Fix page in the app**: no `beforeunload` guard (the app closes the page; a save leaves nothing unsaved); the Grid button asks in the page before it drops unsaved drags. The standalone page keeps the browser's guard.
 - **Not done / ideas**: image editing and library management stay out of scope (decision 1); a "Detect again" of every scan (`--redetect`) and the strict export (`--strict`) are CLI only; export of a chosen subset of scans; per-scan margin.
+
+## Photo-area crop: decisions (grilling session, 2026-11-02)
+
+The user's goal: the crop to the photo area as an *additional* output, not instead of the full print. The full-print export (frame included) stays exactly as it is and is always written. Decided with the user, one question at a time:
+
+1. **Layout:** the photo crops go to `<out>/photo/`, mirroring the full print: `photo/high/<stem>.jpg` and `photo/web/<stem>.jpg` with the same derivative list as the full print, and optionally a master `photo/<stem>.tif`. File names equal the full print's, so pairs line up.
+2. **Setting:** one three-state option `photo_crop` = `off` | `derivatives` | `tiff` (derivatives plus the TIFF master). Default `off`. Per project in the settings panel (a dropdown), stored in the manifest settings, CLI `--photo-crop {off,derivatives,tiff}`, API and MCP. It is part of the export key, so changing it exports again.
+3. **Finding the window:** measured per scan by a border scan (as `.dev/compare/measure.py`: from each side inward past the frame, first drop below the frame level), with line fits (square windows) or an ellipse fit (round windows). The nominal window size per format is only a plausibility check; a mismatch means "window not found". No nominal fallback crop.
+4. **Rotation and shear:** the window is rectified to its own border. Its four border lines give a window quad, which is warped straight from the original scan (one resampling, as the full print). So a window rotated or sheared against the frame (up to 0.3-0.5 deg on some batches, see M3 part 1) comes out square to its own border. On flattened prints the window lies inside the fade-out zone, where the unwarp is the straight homography, so the quad maps back to the scan directly.
+5. **Round windows:** a tight square around the fitted circle. The TIFF master (when on) gets an alpha channel, transparent outside the circle. The JPG derivatives keep the frame pixels in the four corners.
+6. **Bleed:** the crop cuts `photo_bleed_mm` inward past the fitted border on every side, default 0.3 mm, a setting next to the margin (panel and CLI). It hides the soft step and the thin dark line at the window border.
+7. **Failure:** when the window is not found or fails the size check, the full print is exported as always, no `photo/` files are written for that scan, the manifest gets a warning, and the scan is `needs_review`. A failed window never fails the export.
+8. **Stage:** the window is found at Detect, on a reduced-size straightened copy in memory, and its quad (or circle) is stored in the manifest; Export uses the stored window. Review rules, the grid and the drag view see it before any export. The window step runs only when `photo_crop` is not `off`. Turning the option on for a detected project runs the window step for scans without a stored window, not a full re-detect; a hand fix of the print outline runs it again for that scan.
+9. **Review:** the drag view draws the window outline in a second colour with four draggable handles (round windows: the circle, edited through its bounding square). The MCP `polaroid_fix` can set window corners too. Accepting a scan without a window means: export without photo crop.
+10. **Camera shots:** the photo crop applies to them as well, with the same window finder on the straightened copy.
+11. **Invariance:** print outlines never change because of this feature, and Detect with `photo_crop` off produces the same results as before.
+
+### Photo-area crop: delivery
+
+Three slices, each built by an implementer session, checked by a reviewer session, and shown to the user before it is committed:
+
+1. **Window finder:** a module that finds the window in a straightened image (square and round), plus measurement over the labelled and sample scans (holder, Go, black, glitter, printed, gold, round windows, camera shots): found rate per frame type, measured size against nominal, and a contact sheet of the fitted windows for the user to judge. No pipeline change. The nominal window sizes per format are taken from these measurements.
+2. **Export:** the `photo_crop` and `photo_bleed_mm` settings; the window step at Detect with the stored window and the review rule; the photo export (rectified from the scan, alpha for round windows in the TIFF), `outputs`/`output_ppm` entries so retag covers them; CLI, API, MCP, settings panel, README and skill.
+3. **Review UI:** the window outline and handles in the drag view, window corners in `polaroid_fix`, accept without photo crop.
+
+### Photo-area crop: slice 1 status (2026-11-02)
+
+`window.py`: `find_window(img, px_per_mm, fmt)` on a straightened print. Square windows: per side a coarse line search that ignores artwork and dark edges, then about 1 mm segments where the colour leaves the frame colour, taken at half the step height (the outer flank when there is a thin dark line), and a robust line fit; the four lines give the window's own quad. Round windows: a circle search, rays from outside inward, a robust ellipse fit and a second ray pass around it; the quad is the bounding square. Square is tried first, then round. Every failure returns `found=False` with a reason. `WindowResult` has `scaled()`, `to_dict()` and `from_dict()` for the manifest.
+
+- **Scale basis:** the caller passes px/mm = straightened image width / (format width - 2 x margin), not the batch scale; the nominal sizes were measured on that basis.
+- **Nominal sizes** (measured): 600 square 76.9 x 78.9 mm (tolerance 1.0 mm), 600 round 76.7 mm diameter (1.0 mm, axis difference at most 1.0 mm), Go 46.0 x 46.9 mm (0.5 mm). The spread across prints is about 0.1-0.3 mm. Search zones around the nominal border: 2.5 mm (600), 1.5 mm (Go), 3.0 mm (round). Rotation search up to 1.2 deg; the steepest measured border is 0.71 deg (Misc_22).
+- **Found:** 105 of 107 labelled scans, 242 of 247 scans in the library and sample folders. Not found: printed sample `Polaroid_06` (artwork runs into a dark photo), camera shot `2023_09` (ragged developing edge), `Samsoe_06` (marginal, black artwork frame), two 600 camera shots that `classify()` calls Go (rejected on size, as intended), and `EmulsionLift_01` (detection fails before the window step).
+- **1/4 scale is enough:** over 40 scans (Go black, dark photos at the border, round windows, camera shots) the corners differ from a full-scale run by 0.019 mm on average, 0.156 mm at most (Go black `D0_05`), below the 0.3 mm bleed. No full-scale refinement at export. Time at 1/4 scale: median 0.37 s, p90 0.69 s per scan.
+- **For slice 2:** a `find_window_for_formats` helper tries the `classify()` format first, then the other, each on its own px basis, returns the winning format and notes a disagreement in the manifest. A wrong format cannot pass (a 600 window on the Go basis measures about 46.9 x 48.1 mm). Check once on zoomed black and printed frames that the 0.3 mm bleed hides the step.
