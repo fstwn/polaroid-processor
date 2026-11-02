@@ -19,7 +19,9 @@ does not threshold brightness; it asks "is there anything at all here":
    side moves inward when the two clearly disagree.
 9. Top and bottom: the print's rounded edge shows as a grey band behind the 50 % crossing.
    The side moves inward onto the band's inner end (knee of a two-line fit, median over the
-   side); a grey holder rim in front of the print is not taken for a band.
+   side); a grey holder rim in front of the print is not taken for a band. On a black frame
+   the band is a thin bright reflection between the dark holder and the dark frame instead:
+   the side moves onto its peak.
 
 Coordinates are full-resolution pixels, continuous, pixel ``i`` spanning ``[i, i+1)``.
 """
@@ -98,6 +100,12 @@ class DetectParams:
     dark_min_share: float = 0.25  # share of a side's stations that must be dark and show the edge
     dark_frame_share: float = 0.4  # share of all stations that must be dark: a black frame, not black artwork
     dark_min_move: int = 4  # cells; smaller disagreements with the line fit are left alone
+    # on a black frame the top and bottom edge band is a thin bright reflection: the peak of the
+    # side's median profile within ridge_search cells of the line, at least ridge_ratio times
+    # brighter than both of its sides, both darker than dark_level, and at least ridge_min
+    ridge_search: int = 10
+    ridge_ratio: float = 2.0
+    ridge_min: float = 6.0
     # black Go frames: only the photo window passes the speck thresholds. The frame is greenish
     # (G above R and B by 2-3 levels; holder, dust and the white holder circle are neutral), and the
     # print edge reflects as a thin bright ridge. A greenness mask around the found outline gives
@@ -474,6 +482,40 @@ def band_shift(mx: np.ndarray, quad: np.ndarray, side: str, p: DetectParams = De
     if len(shifts) < p.band_min_share * p.band_stations:
         return None
     return float(np.median(shifts))
+
+
+def ridge_shift(mx: np.ndarray, quad: np.ndarray, side: str, p: DetectParams = DetectParams(),
+                f: int = 4) -> Optional[float]:
+    """Outward distance (px) from ``side`` of ``quad`` to the peak of the edge reflection on a
+    black frame, from one median profile over ``band_stations`` stations; None without one."""
+    a, b = {"top": (0, 1), "right": (1, 2), "bottom": (3, 2), "left": (0, 3)}[side]
+    p0, p1 = quad[a], quad[b]
+    length = float(np.linalg.norm(p1 - p0))
+    t = (p1 - p0) / length
+    n = np.array([-t[1], t[0]])
+    if np.dot((p0 + p1) / 2 - quad.mean(axis=0), n) < 0:
+        n = -n  # outward
+    gap, wing = 5 * f, 12 * f
+    r = p.ridge_search * f + wing
+    d = np.arange(r, -r - 1, -1, dtype=np.float32)  # outside first
+    seg = max(8, int(length * (1 - 2 * p.corner_skip) / p.band_stations))
+    along = np.arange(seg, dtype=np.float32) - seg / 2
+    profs = []
+    for frac in np.linspace(p.corner_skip, 1 - p.corner_skip, p.band_stations):
+        c = p0 + (p1 - p0) * frac
+        X = (c[0] + along[None, :] * t[0] + d[:, None] * n[0] - 0.5).astype(np.float32)
+        Y = (c[1] + along[None, :] * t[1] + d[:, None] * n[1] - 0.5).astype(np.float32)
+        profs.append(np.median(cv2.remap(mx, X, Y, cv2.INTER_LINEAR), axis=1))
+    prof = np.median(np.array(profs), axis=0)
+    win = np.flatnonzero(np.abs(d) <= p.ridge_search * f)
+    k = int(win[np.argmax(prof[win])])
+    out = float(np.median(prof[k - wing: k - gap]))
+    inn = float(np.median(prof[k + gap: k + wing]))
+    if prof[k] < p.ridge_min or prof[k] < p.ridge_ratio * max(out, inn, 1.0) or max(out, inn) >= p.dark_level:
+        return None
+    y0, y1, y2 = (float(v) for v in prof[k - 1: k + 2])
+    curv = y0 - 2 * y1 + y2
+    return float(d[k] - (0.5 * (y0 - y2) / curv if curv < 0 else 0.0))  # d falls by 1 per sample
 
 
 def _ridge_points(mx: np.ndarray, quad: np.ndarray, side: str, p: DetectParams, f: int) -> Tuple[np.ndarray, int]:
@@ -1055,6 +1097,11 @@ def detect(rgb: np.ndarray, params: DetectParams = DetectParams(), debug: bool =
             edges[side] = edges[side].moved_inward(-out, "dark_px")
             dark.add(side)
     for side in params.band_sides if grown is None else ():
+        out = ridge_shift(a.mx, quad, side, params, a.f) if black else None
+        if out is not None and side in edges:  # a black frame's edge band is a bright reflection
+            quad = shift_side(quad, side, out)
+            edges[side] = edges[side].moved_inward(-out)
+            continue
         shift = None if side in dark else a.band_shift(quad, side)
         if shift is not None and side in edges:
             quad = shift_side(quad, side, -shift)

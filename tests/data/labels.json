@@ -319,8 +319,7 @@
      14010.8
     ]
    ],
-   "px_per_mm": 126.64,
-   "known_failure": "black printed frame: bottom corner 0.12 mm (bottom 0.08 mm outward, slightly tilted)"
+   "px_per_mm": 126.64
   },
   "260325_Samsoe/260315_Polaroids_Samsoe_09.tif": {
    "quad": [
@@ -364,7 +363,7 @@
     ]
    ],
    "px_per_mm": 126.64,
-   "known_failure": "black printed frame: top 0.13 mm outward (the dark edge band is not found on black frames), right corner 0.20 mm"
+   "known_failure": "black printed frame: left side 0.09 mm outward, corner 0.10 mm (top and bottom sit on the edge reflection)"
   },
   "260328_tttacho_IGNITION/260328_RollerRoids_tttacho_02-2.tif": {
    "quad": [
@@ -594,8 +593,7 @@
      13988.1
     ]
    ],
-   "px_per_mm": 126.64,
-   "known_failure": "black printed frame: top and bottom about 0.1 mm outward (the dark edge band is not found on black frames)"
+   "px_per_mm": 126.64
   },
   "260328_tttacho_IGNITION/260328_RollerRoids_tttacho_16-2.tif": {
    "quad": [

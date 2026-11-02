@@ -67,3 +67,24 @@ def test_rim_band_touching_the_print_is_repaired(frame):
     # without the repair the bottom follows the band (the edge-band shift off, it would walk part of the way)
     plain = detect(rgb, DetectParams(parallel_tol_deg=90, band_sides=()))
     assert np.linalg.norm(plain.quad - truth, axis=1).max() / PX_PER_MM > 0.3
+
+
+def _black_frame_top(ridge_row: int, inner: int):
+    """Black holder, black frame below row 400 (``inner`` from row 420 on), a bright reflection
+    peaking on ``ridge_row``; max(R, G, B) image and a quad whose top is row 400."""
+    rng = np.random.default_rng(5)
+    mx = rng.integers(0, 2, size=(800, 1600)).astype(np.uint8)
+    mx[400:] += 4
+    mx[420:] = np.maximum(mx[420:], inner)
+    mx[ridge_row - 1: ridge_row + 2] = 25
+    mx[ridge_row] = 50
+    quad = np.array([[100.0, 400.0], [1500.0, 400.0], [1500.0, 790.0], [100.0, 790.0]])
+    return mx, quad
+
+
+def test_black_frame_edge_moves_onto_the_reflection():
+    from polaroid_processor.detection import ridge_shift
+    mx, quad = _black_frame_top(394, inner=5)
+    assert ridge_shift(mx, quad, "top") == pytest.approx(5.5, abs=0.6)  # row 394 spans y 394..395
+    mx, quad = _black_frame_top(394, inner=200)  # white artwork next to the edge: no black frame there
+    assert ridge_shift(mx, quad, "top") is None
