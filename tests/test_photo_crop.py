@@ -259,6 +259,48 @@ def test_export_measures_a_window_of_another_outline_again(src, project, tmp_pat
     assert run(src, out)["exported"] == 0             # the key belongs to the new window: nothing to do again
 
 
+def test_a_window_lost_in_the_export_job_is_a_review_item_in_the_same_run(src, project, tmp_path, monkeypatch):
+    out = tmp_path / "out"
+    shutil.copytree(project, out)
+    time.sleep(1.1)
+    api.fix_scan(str(out), "sq.tif", shifts={"right": [80.0]}, author="agent")           # an outline the window no longer fits
+    real_pool = pipeline._run_pool
+    monkeypatch.setattr(pipeline, "_run_pool", lambda fn, jobs, workers, cancel=None:
+                        iter(()) if fn is pipeline._window_job else real_pool(fn, jobs, workers, cancel))
+    run(src, out)
+    monkeypatch.undo()
+    e = entry(out, "sq.tif")
+    assert window_current(e) and not e["window"]["found"]
+    assert any(w.startswith("photo window not found: ") for w in e["warnings"])        # the fix is an override: status stays ok
+    assert not (out / "photo" / "sq.tif").exists() and not (out / "photo" / "high" / "sq.jpg").exists()
+
+
+def test_a_window_lost_in_the_export_job_makes_a_refit_scan_needs_review(tmp_path, monkeypatch):
+    one = write_scans(tmp_path / "one", which=("sq",))
+    out = tmp_path / "out"
+    real_evaluate, real_pool = pipeline.evaluate, pipeline._run_pool
+
+    def evaluate(entry, *a, **kw):                       # needs_review until the (patched) refit has been applied
+        status, warnings, fmt = real_evaluate(entry, *a, **kw)
+        return ("needs_review" if not (entry.get("detection") or {}).get("refit") else status), warnings, fmt
+
+    def size_refit(entry, *a, **kw):                     # the left side moves 80 px outward: the window no longer fits
+        quad = np.array(entry["detection"]["quad"], float)
+        quad[[0, 3], 0] -= 80.0
+        return quad, {"side": "left", "shift_px": 80.0}
+
+    monkeypatch.setattr(pipeline, "evaluate", evaluate)
+    monkeypatch.setattr(pipeline, "size_refit", size_refit)
+    monkeypatch.setattr(pipeline, "_run_pool", lambda fn, jobs, workers, cancel=None:
+                        iter(()) if fn is pipeline._window_job else real_pool(fn, jobs, workers, cancel))
+    run(one, out, photo_crop="tiff", flatten="off")
+    monkeypatch.undo()
+    e = entry(out, "sq.tif")
+    assert e["detection"]["refit"] and not e.get("override") and window_current(e) and not e["window"]["found"]
+    assert e["status"] == "needs_review" and any(w.startswith("photo window not found: ") for w in e["warnings"])
+    assert not (out / "photo" / "sq.tif").exists() and not (out / "photo" / "high" / "sq.jpg").exists()
+
+
 # --------------------------------------------------------------------------- accept
 def test_accepting_a_scan_without_a_window_exports_the_print_without_a_crop(project, tmp_path):
     out = tmp_path / "out"

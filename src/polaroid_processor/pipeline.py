@@ -374,6 +374,7 @@ def _job(job: dict) -> dict:
                                curves=(det or {}).get("curves"),
                                override=manual_outline(job.get("override"), det), window=window))
             res["export_px_per_mm"] = px
+            res["export_outline"] = outline_id(quad)
     except Exception as e:  # noqa: BLE001
         res["error"] = f"{type(e).__name__}: {e}"
     finally:
@@ -928,6 +929,10 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
     dupes = {n for n in names if names.count(n) > 1}
     if dupes:
         raise ValueError(f"duplicate scan file names (outputs would collide): {sorted(dupes)}")
+    stems = [Path(n).stem.casefold() for n in names]      # case-folded: A.tif and a.tif collide on Windows and macOS
+    shared = sorted(n for n, st in zip(names, stems) if stems.count(st) > 1)
+    if shared:      # a.tif next to a.tiff: both write <stem>.tif, <stem>.jpg ...
+        raise ValueError(f"scan file names with the same stem (outputs would collide): {shared}")
     if out_dir:
         out_res = Path(out_dir).resolve()
         for f in files:
@@ -953,7 +958,7 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
                "flatten": settings.flatten, "flatten_params": settings.flatten_params
                } if manifest.persist and settings.previews else None
     exported_now: Dict[str, bool] = {}
-    win_used: Dict[str, str] = {}      # outline of the window a scan's export (pass A) was cut from
+    exp_outline: Dict[str, str] = {}   # outline_id of the outline a scan's export (pass A) was cut from
     saver = _Saver(manifest, settings)
 
     # ---- pass A: detect new or changed scans, export them from the same decode ----------
@@ -979,8 +984,8 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
         for res in _run_pool(_job, jobs, workers, cancel):
             _store_job_result(manifest, res)
             exported_now[res["key"]] = "outputs" in res
-            if "outputs" in res and "window" in res:
-                win_used[res["key"]] = res["window"]["outline"]
+            if "outputs" in res:
+                exp_outline[res["key"]] = res["export_outline"]
             log.info("%s: %s in %.1fs", res["key"], res.get("error") or "done", res["time_s"])
             if progress:
                 progress(res["key"], res.get("error") or "detected")
@@ -1079,8 +1084,8 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
         outs = e.get("outputs") or {}
         missing = not outs or any(not manifest.abs(p).exists() for p in outs.values())
         if exported_now.get(k):
-            if (retag_ok(e, final, settings, curves, manual)      # cut at a scale within 0.5 % of the final one
-                    and (settings.photo_crop == "off" or win_used.get(k) == (win or {}).get("outline"))):
+            # cut at a scale within 0.5 % of the final one, from the outline the scan has now (a refit or a merged fix moved it)
+            if exp_outline.get(k) == outline_id(quad) and retag_ok(e, final, settings, curves, manual):
                 retag(manifest, e, final)
                 e["export_key"], e["export_base"] = xkey, xbase
                 continue
@@ -1115,6 +1120,12 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
                 if "window" in res:      # measured again in the job: the key is that of the window the photo was cut from
                     e["export_key"] = settings.export_key(*xargs[res["key"]], res["window"])
                     e["export_base"] = settings.export_base(*xargs[res["key"]], res["window"])
+                    if res["key"] in scales and (e.get("detection") or e.get("override")):    # a window lost here is a review item
+                        status, warnings, fmt = evaluate(e, scales[res["key"]], settings.rules, ref_of.get(res["key"]),
+                                                         settings.margin_mm, settings.flatten, settings.flatten_params,
+                                                         settings.photo_crop)
+                        e.update(scale=scales[res["key"]].to_dict(), format=fmt, status=status, warnings=warnings,
+                                 error=None)
                 exported_now[res["key"]] = True
             log.info("%s: exported in %.1fs", res["key"], res["time_s"])
             if progress:

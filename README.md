@@ -111,7 +111,7 @@ profiles:
   epson-v850-3200: 3200
 ```
 
-Scan file names must be unique within one output folder. Use one output folder per input folder.
+Scan file names must be unique within one output folder, and so must their stems: `a.tif` next to `a.tiff` is refused because both would write `a.tif`, `a.jpg`... Use one output folder per input folder.
 
 ### `detect`
 
