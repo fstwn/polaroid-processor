@@ -11,8 +11,15 @@ Routes::
     GET  /api/stamp                               changes when the manifest on disk does
     GET  /api/scans/<key>/tiles                   tile descriptors of one scan at its current outline
     GET  /api/scans/<key>/tile/<name>.png?rev=N   one tile (raw pixels; the overview is downscaled)
-    POST /api/scans/<key>/confirm                 accept the current outline
-    POST /api/scans/<key>/save                    body {"corners": {"tl": [x, y], ...}}: store all four corners
+    POST /api/scans/<key>/confirm                 accept the current outline (and a missing photo window)
+    POST /api/scans/<key>/save                    body {"corners": {"tl": [x, y], ...}}: store all four corners;
+                                                  with "window": {"corners": {...}, "kind": ...} the hand-set photo
+                                                  window in the same fix (both or neither)
+    POST /api/scans/<key>/window                  body {"corners": {...}, "kind": "square"|"round"} store the photo
+                                                  window; {"none": true} no photo crop; {"reset": true} automatic again
+
+The tile routes take ``?of=window[&kind=square|round]``: the tiles then sit on the corners of the photo window (the
+stored one, else the nominal window of that kind).
 """
 from __future__ import annotations
 
@@ -27,7 +34,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, List, Optional, Tuple
-from urllib.parse import quote, unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 import cv2
 import numpy as np
@@ -36,6 +43,7 @@ from .. import api
 from ..imageio import load_rgb, read_meta, to_uint8
 from ..manifest import MANIFEST_NAME, Manifest
 from ..render import CORNERS, _stretch, inspect_points, is_dark, quad_summary, raw_tile
+from ..scan_window import accept_valid, effective_window, fix_outside, fix_window, nominal_window, window_state
 
 log = logging.getLogger("polaroid_processor.review")
 
@@ -68,7 +76,48 @@ class ReviewApp:
             raise api.UsageError(f"no manifest in {self.output}")
 
     # ---- records -------------------------------------------------------
-    def _record(self, m: Manifest, key: str) -> dict:
+    def _window_info(self, m: Manifest, e: dict, quad: np.ndarray, suggest: Optional[str]) -> Optional[dict]:
+        """The photo window as the page needs it (None when the project has no photo crop): its state (found,
+        none = no photo crop by choice, missing, unknown = not looked for yet), kind, quad, who set it, whether a
+        hand-set window lies outside the outline, and the nominal windows a missing one can be placed from.
+        ``suggest``: the kind a new window starts as (the batch's majority when None)."""
+        if (m.data.get("settings") or {}).get("photo_crop", "off") == "off":
+            return None
+        suggest = suggest or api.batch_window_kind(m)
+        outside = fix_outside(e, quad)
+        w = fix_window(e) if outside else effective_window(e, quad)      # outside: the page shows the hand-set window
+        state = window_state(w) if w else "unknown"
+        info = {"state": state, "source": (w or {}).get("source", "auto"), "reason": (w or {}).get("reason", ""),
+                "kind": w.get("kind") if state == "found" else None, "quad": w["quad"] if state == "found" else None,
+                "accepted": accept_valid(e, quad), "outside": outside, "suggest": suggest}
+        if outside:      # what the export cuts meanwhile: the automatic window, else no photo crop
+            info["cut"] = "auto" if window_state(e.get("window")) == "found" else "none"
+        if (w or {}).get("source") == "manual":
+            info.update({k: w.get(k) for k in ("author", "at", "note")})
+        if state != "found":
+            info["nominal"] = {}
+            for kind in api.KINDS:
+                try:
+                    info["nominal"][kind] = nominal_window(quad, kind, (e.get("window") or {}).get("format"))["quad"]
+                except ValueError:
+                    pass
+        return info
+
+    def _window_quad(self, m: Manifest, e: dict, kind: Optional[str]) -> np.ndarray:
+        """Where the window tiles sit: the stored window, else the nominal window of ``kind``."""
+        if (m.data.get("settings") or {}).get("photo_crop", "off") == "off":
+            raise api.UsageError("this project has no photo crop")
+        quad = Manifest.effective_quad(e)
+        w = fix_window(e) if fix_outside(e, quad) else effective_window(e, quad)
+        if window_state(w) == "found":
+            return np.array(w["quad"], float)
+        kind = kind or api.batch_window_kind(m)
+        try:
+            return np.array(nominal_window(quad, kind, (e.get("window") or {}).get("format"))["quad"], float)
+        except ValueError as ex:
+            raise api.UsageError(str(ex)) from None
+
+    def _record(self, m: Manifest, key: str, suggest: Optional[str] = None) -> dict:
         e = m.get(key)
         quad = Manifest.effective_quad(e)
         hist = [h for h in e.get("history", []) if h.get("action") in ("accept", "fix")]
@@ -76,7 +125,7 @@ class ReviewApp:
         review = None
         if e.get("override") and hist:
             review = {k: hist[-1].get(k) for k in ("action", "author", "at", "note")}
-        return {
+        rec = {
             "key": key,
             "status": e.get("status", "pending"),
             "warnings": e.get("warnings", []),
@@ -87,6 +136,10 @@ class ReviewApp:
             "rev": len(e.get("history", [])),
             "review": review,
         }
+        win = self._window_info(m, e, quad, suggest)
+        if win is not None:
+            rec["window"] = win
+        return rec
 
     def stamp(self) -> str:
         """Changes whenever the manifest file does; a page polls it to reload. Only the file's stamp is
@@ -106,8 +159,9 @@ class ReviewApp:
             m = Manifest(self.output)
             keys = [k for k, e in sorted(m.items())
                     if Manifest.effective_quad(e) is not None and (self.show_all or e.get("status") == "needs_review")]
+            suggest = api.batch_window_kind(m) if (m.data.get("settings") or {}).get("photo_crop", "off") != "off" else None
             return {"output": str(m.out_dir), "all": self.show_all, "author": self.author, "export": self.export,
-                    "tile_px": TILE_PX, "scans": [self._record(m, k) for k in keys]}
+                    "tile_px": TILE_PX, "scans": [self._record(m, k, suggest) for k in keys]}
 
     def _entry(self, key: str) -> Tuple[Manifest, dict]:
         m = Manifest(self.output)
@@ -132,15 +186,16 @@ class ReviewApp:
         f = min(1.0, OVERVIEW_PX / max(h, w))
         return max(1, round(w * f)), max(1, round(h * f))
 
-    def tile_specs(self, key: str) -> dict:
+    def tile_specs(self, key: str, of: str = "print", kind: Optional[str] = None) -> dict:
         """Where each tile sits for the current outline: scan window (x0, y0, size) and tile image size.
 
         A scan point (x, y) lies at ((x - x0) * size_w / window_w, (y - y0) * size_h / window_h)
-        in the tile image.
+        in the tile image. ``of="window"``: the tiles sit on the photo window's corners (see
+        :meth:`_window_quad`) instead of the print's.
         """
         with self._lock:
             m, e = self._entry(key)
-            quad = Manifest.effective_quad(e)
+            quad = self._tile_quad(m, e, of, kind)
             meta = e.get("meta") or {}
             if meta.get("width"):
                 w, h = meta["width"], meta["height"]
@@ -153,16 +208,24 @@ class ReviewApp:
                 by_name[name] = {"x0": int(round(p[0])) - TILE_PX // 2, "y0": int(round(p[1])) - TILE_PX // 2,
                                  "window": [TILE_PX, TILE_PX], "size": [TILE_PX, TILE_PX]}
             by_name["overview"] = {"x0": 0, "y0": 0, "window": [w, h], "size": list(self._overview_size(w, h))}
-            tiles = [{"name": n, **by_name[n], "url": f"{self.api_prefix}/{quote(key)}/tile/{n}.png?rev={rev}"}
+            extra = f"&of=window&kind={kind}" if of == "window" and kind else ("&of=window" if of == "window" else "")
+            tiles = [{"name": n, **by_name[n], "url": f"{self.api_prefix}/{quote(key)}/tile/{n}.png?rev={rev}{extra}"}
                      for n in TILE_NAMES]
             return {"key": key, "rev": rev, "scan_px": [w, h], "tiles": tiles}
 
-    def tile_png(self, key: str, name: str) -> bytes:
+    def _tile_quad(self, m: Manifest, e: dict, of: str, kind: Optional[str]) -> np.ndarray:
+        if of not in ("print", "window"):
+            raise api.UsageError(f"of must be print or window, not {of!r}")
+        if kind not in (None, *api.KINDS):
+            raise api.UsageError(f"kind must be square or round, not {kind!r}")
+        return self._window_quad(m, e, kind) if of == "window" else Manifest.effective_quad(e)
+
+    def tile_png(self, key: str, name: str, of: str = "print", kind: Optional[str] = None) -> bytes:
         if name not in TILE_NAMES:
             raise NotFound(name)
         with self._lock:
             m, e = self._entry(key)
-            quad = Manifest.effective_quad(e)
+            quad = self._tile_quad(m, e, of, kind)
             rgb = self._rgb(e)
             if name == "overview":
                 h, w = rgb.shape[:2]
@@ -184,15 +247,43 @@ class ReviewApp:
                                export=self.export)
             return self._saved(key, rec)
 
-    def save(self, key: str, corners: Any) -> dict:
+    @staticmethod
+    def _corners(corners: Any) -> dict:
         if not isinstance(corners, dict) or set(corners) != set(CORNERS):
             raise api.UsageError(f"corners must hold exactly {', '.join(CORNERS)}")
         sets = api.check_fix_values(corners, CORNERS, 2, "corners")
         if not all(np.isfinite(v).all() for v in sets.values()):
             raise api.UsageError("corners must be finite numbers")
+        return sets
+
+    def save(self, key: str, corners: Any, window: Any = None) -> dict:
+        """Store the corrected outline and, in the same fix (so both or neither), a hand-set photo window:
+        ``window`` is ``{"corners": {...}, "kind": "square"|"round"}`` as for :meth:`window`."""
+        sets = self._corners(corners)
+        wsets, wkind = None, None
+        if window is not None:
+            if not isinstance(window, dict):
+                raise api.UsageError("window must be an object with corners and kind")
+            wsets, wkind = self._corners(window.get("corners")), window.get("kind")
         with self._lock:
             self._entry(key)
-            rec = api.fix_scan(self.output, key, sets=sets, author=self.author, note=f"{NOTE}: corrected",
+            rec = api.fix_scan(self.output, key, sets=sets, window_sets=wsets, window_kind=wkind, author=self.author,
+                               note=f"{NOTE}: corrected", export=self.export)
+            return self._saved(key, rec)
+
+    def window(self, key: str, body: dict) -> dict:
+        """Store the photo window: ``corners`` (all four) and/or ``kind``; ``none`` = no photo crop by choice;
+        ``reset`` = back to the automatic window."""
+        corners, kind = body.get("corners"), body.get("kind")
+        sets = self._corners(corners) if corners is not None else None
+        none, reset = bool(body.get("none")), bool(body.get("reset"))
+        if not (sets or kind or none or reset):
+            raise api.UsageError("window needs corners, kind, none or reset")
+        what = "no photo crop" if none else "automatic again" if reset else "corrected"
+        with self._lock:
+            self._entry(key)
+            rec = api.fix_scan(self.output, key, window_sets=sets, window_kind=kind, no_photo_crop=none,
+                               reset_window=reset, author=self.author, note=f"{NOTE}: photo window {what}",
                                export=self.export)
             return self._saved(key, rec)
 
@@ -263,15 +354,22 @@ class Handler(BaseHTTPRequestHandler):
             if segs == ["api", "stamp"]:
                 return self._json({"stamp": app.stamp()})
             if len(segs) == 4 and segs[:2] == ["api", "scans"] and segs[3] == "tiles":
-                return self._json(app.tile_specs(segs[2]))
+                return self._json(app.tile_specs(segs[2], *self._tile_args()))
             if len(segs) == 5 and segs[:2] == ["api", "scans"] and segs[3] == "tile" and segs[4].endswith(".png"):
-                return self._send(200, app.tile_png(segs[2], segs[4][:-4]), "image/png")
-        elif method == "POST" and len(segs) == 4 and segs[:2] == ["api", "scans"] and segs[3] in ("confirm", "save"):
+                return self._send(200, app.tile_png(segs[2], segs[4][:-4], *self._tile_args()), "image/png")
+        elif method == "POST" and len(segs) == 4 and segs[:2] == ["api", "scans"] and segs[3] in ("confirm", "save", "window"):
             body = self._body()
             if segs[3] == "confirm":
                 return self._json(app.confirm(segs[2]))
-            return self._json(app.save(segs[2], body.get("corners")))
+            if segs[3] == "window":
+                return self._json(app.window(segs[2], body))
+            return self._json(app.save(segs[2], body.get("corners"), body.get("window")))
         raise NotFound("/".join(segs))
+
+    def _tile_args(self) -> Tuple[str, Optional[str]]:
+        """``of`` and ``kind`` of a tile request's query string."""
+        q = parse_qs(urlsplit(self.path).query)
+        return q.get("of", ["print"])[0], q.get("kind", [None])[0]
 
     def _body(self) -> dict:
         if self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":

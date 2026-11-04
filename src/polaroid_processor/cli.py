@@ -89,12 +89,12 @@ def cmd_detect(a) -> int:
 # --------------------------------------------------------------------------- inspect
 def cmd_inspect(a) -> int:
     rec, _ = api.inspect_scan(a.scan, a.manifest, image=a.image, window=a.window, zoom=a.zoom, grid=a.grid,
-                              stretch=a.stretch)
+                              stretch=a.stretch, of=a.of)
     if a.json:
         _emit(rec)
     else:
         print(f"inspect image: {rec['image']}")
-        for n, c in rec["corners"].items():
+        for n, c in (rec.get("window_corners") or rec["corners"]).items():
             print(f"  {n}: {c[0]:.1f}, {c[1]:.1f}")
     return 0
 
@@ -117,7 +117,10 @@ def cmd_fix(a) -> int:
     emit = _emit if a.json else _human
     rec = api.fix_scan(a.output, a.scan, sets=_parse_pairs(a.set, "--set"),
                        nudges=_parse_pairs(a.nudge, "--nudge"), shifts=_parse_pairs(a.shift, "--shift"),
-                       accept=a.accept, reset=a.reset, author=a.author, note=a.note, export=a.export, emit=emit)
+                       accept=a.accept, reset=a.reset, window_sets=_parse_pairs(a.window_set, "--window-set"),
+                       window_nudges=_parse_pairs(a.window_nudge, "--window-nudge"), window_kind=a.window_kind,
+                       no_photo_crop=a.no_photo_crop, reset_window=a.reset_window,
+                       author=a.author, note=a.note, export=a.export, emit=emit)
     summary = rec.pop("summary", None)
     if summary is not None:
         emit(summary)
@@ -219,6 +222,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--grid", type=int, default=50, help="grid spacing in scan pixels")
     sp.add_argument("--stretch", choices=("auto", "on", "off"), default="auto",
                     help="contrast stretch for dark tiles (auto: tiles that are dark throughout)")
+    sp.add_argument("--of", choices=("print", "window"), default="print",
+                    help="window: tiles on the corners of the photo window (cyan), needs --manifest with the "
+                         "photo crop on; a scan without a window shows the nominal one")
     common(sp)
     sp.set_defaults(fn=cmd_inspect)
 
@@ -230,6 +236,15 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--shift", action="append", metavar="SIDE=D", help="move a side outward (+) or inward (-)")
     sp.add_argument("--accept", action="store_true", help="accept the current quad as reviewed")
     sp.add_argument("--reset", action="store_true", help="drop the manual fix, back to automatic detection")
+    sp.add_argument("--window-set", action="append", metavar="CORNER=X,Y",
+                    help="set a corner of the photo window (photo crop on); a scan without a window starts "
+                         "from the nominal one")
+    sp.add_argument("--window-nudge", action="append", metavar="CORNER=DX,DY", help="move a window corner by pixels")
+    sp.add_argument("--window-kind", choices=api.KINDS,
+                    help="kind of the window: alone it changes the kind; where none was found it picks "
+                         "the nominal window to start from (default: what most scans of the batch have)")
+    sp.add_argument("--no-photo-crop", action="store_true", help="export this scan without a photo crop, by choice")
+    sp.add_argument("--reset-window", action="store_true", help="take the hand-set window away, back to the automatic one")
     sp.add_argument("--author", default="human", help="who made the fix (human, agent, or a name)")
     sp.add_argument("--note", default="")
     sp.add_argument("--export", action="store_true", help="re-export this scan right away")

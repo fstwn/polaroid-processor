@@ -130,6 +130,8 @@ polaroid inspect path/to/scan.tif --image review.png
 
 Writes a PNG with eight full-resolution tiles (four corners, four edge midpoints) and an overview. The grid is labelled in absolute scan pixels; the green line is the current crop edge. Tiles that are dark throughout (black, glitter or gold frames on the black holder) are contrast-stretched and marked `stretched`; `--stretch on|off` overrides. Use it to check a flagged scan or to read off exact coordinates for `fix`. It never writes into the input folder.
 
+With the photo crop on, `--of window` puts the tiles on the corners of the photo window instead: its border is cyan (a round window: its bounding square and the circle in it), the print outline stays green. A scan without a window shows the nominal window of its format, which `fix --window-set` / `--window-nudge` start from.
+
 ### `fix`
 
 ```bash
@@ -137,9 +139,15 @@ polaroid fix OUTPUT NAME --nudge tl=4,-2 --shift right=-12 --export
 polaroid fix OUTPUT NAME --set bl=265,13868
 polaroid fix OUTPUT NAME --accept
 polaroid fix OUTPUT NAME --reset
+polaroid fix OUTPUT NAME --window-nudge br=-4,-3 --window-set tl=610,905
+polaroid fix OUTPUT NAME --window-kind round
+polaroid fix OUTPUT NAME --no-photo-crop
+polaroid fix OUTPUT NAME --reset-window
 ```
 
 Corners are `tl`, `tr`, `br`, `bl`; sides are `top`, `right`, `bottom`, `left`. `--shift` moves a side outward (positive) or inward (negative). `--accept` marks the current outline as reviewed. Every change is stored in the manifest with author (`--author`, default `human`), time, note and previous value. `--export` re-exports that scan right away; otherwise the next `process` run does it.
+
+The `--window-*` options fix the photo window and need the photo crop on in that output folder (see [Photo area crop](#photo-area-crop)): `--window-set` / `--window-nudge` move its corners (a scan without a window starts from the nominal one for its format), `--window-kind square|round` changes the kind, or picks the nominal window to start from (default: what most scans of the batch have), `--no-photo-crop` exports this scan without a photo crop by choice, `--reset-window` takes a hand-set window away. The scan's status is judged again at once.
 
 ### `app` and `review`
 
@@ -153,6 +161,7 @@ polaroid review OUTPUT [--all] [--port N] [--author NAME] [--no-browser]
 - Drag a magenta corner, or the green grip on an edge tile (moves the whole side), onto the print edge.
 - Click a tile to enlarge it; there the arrow keys move 1 px and `Shift` + arrow 10 px. `Esc` closes.
 - **Confirm** stores the current outline as reviewed (`fix --accept`) and goes to the next scan. **Save correction** stores the moved corners and cuts the tiles again at the new outline. **Reset** drops edits that are not saved yet. **Skip** goes on without writing.
+- **Photo window.** With the photo crop on, the window is drawn in cyan (a round one as its circle) in every tile and the overview, and the side panel has a "Photo window" section. **Photo window** switches the tiles to the window's corners and edges: drag the cyan handles onto the picture's edge, then Save correction (a hand-set window is stored with author, time and the previous window). **Print outline** switches back. Where no window was found, **Place square window** / **Place round window** start from the nominal window of the format, placed from the print outline; then drag its corners. **Square** / **Round** change the kind (a round window is edited through its bounding square), **No photo crop** exports this print without a photo crop by choice (the scan is ok), **Back to automatic** takes a hand-set window away. Window corners must run clockwise (tl, tr, br, bl) and lie inside the print outline; a round window is cut as the ellipse inscribed in its four corners, the shape drawn in the page. Save correction stores a moved outline and a moved window in one fix: both or neither. Without the photo crop none of this is shown. The grid cards show the window as a cyan outline over the crop preview, and tag a scan with a hand-set window "window by hand" and one with the choice of no photo crop "no photo crop".
 
 Saves go through the same code as `fix` (history with author, time, note and previous outline; author is `--author`, default `human`); the scan is judged again on the new outline and its preview renewed. Export from the app's Export button, or run `process` again. Tiles are cut from the input scans, which are only read. The URL is printed.
 
@@ -171,11 +180,12 @@ An extra output, off by default: next to the full print (frame included, always 
 | `<out>/photo/high/<name>.jpg`, `<out>/photo/web/<name>.jpg` | The same derivative list and sizes as the full print |
 | `<out>/photo/<name>.tif` | Only with `tiff`: lossless master, same ICC profile, compression and resolution tag |
 
-- **The window** is measured per scan at Detect, on a quarter-scale straightened copy (about 0.4 s a scan), and its four corners are stored in the manifest in scan pixels (`window` of the scan's entry, with the outline it was found from). A hand fix, a rim refit or a re-detect makes it stale and finds it again; turning the crop on for an already detected project runs only this step. Square windows are cut along their own border, so a window that sits a fraction of a degree rotated or sheared against the frame comes out square. Round windows are a tight square around the circle.
+- **The window** is measured per scan at Detect, on a quarter-scale straightened copy (about 0.4 s a scan), and its four corners are stored in the manifest in scan pixels (`window` of the scan's entry, with the outline it was found from). A hand fix of the outline, a rim refit or a re-detect makes an automatic window stale and finds it again; turning the crop on for an already detected project runs only this step. Square windows are cut along their own border, so a window that sits a fraction of a degree rotated or sheared against the frame comes out square. Round windows are a tight square around the circle.
 - **Bleed.** The crop is cut `--photo-bleed-mm` (default 0.3) inside the measured border on every side, which hides the soft step and the thin dark line at the window edge. The photo is warped straight from the original scan (one resampling, as the full print); edge shadow correction is not applied, as it only touches the frame.
 - **Round windows.** The `tiff` master has an alpha channel, transparent outside the circle; the JPG derivatives keep the frame pixels in the four corners.
-- **Window not found.** The full print is exported as always, no `photo/` files are written for that scan, the manifest gets the warning `photo window not found: <reason>` and the scan is `needs_review`. Accepting the scan (`fix --accept`, the app's Confirm) means: export the full print without a photo crop. An export that makes no photo crop for a scan (window lost after a fix, crop turned off) removes that scan's older files in `photo/`.
-- **Results.** With the crop on, `process`/`status` records carry `window` (found, kind, format, size, corners, reason); `outputs` has `photo_tiff`, `photo_high`, `photo_web`.
+- **Window not found.** The full print is exported as always, no `photo/` files are written for that scan, the manifest gets the warning `photo window not found: <reason>` and the scan is `needs_review`, until you do one of three things: set a window by hand (`fix --window-set` / `--window-nudge`, or the drag view's Place window), choose no photo crop (`fix --no-photo-crop`, the drag view's No photo crop: the scan is ok and gets no photo files), or accept the scan (`fix --accept`, the app's Confirm: the full print is exported without a photo crop, the warning stays). A fix of the print outline alone does not clear it. An export that makes no photo crop for a scan (window lost after a fix, crop turned off) removes that scan's older files in `photo/`.
+- **Hand-set window.** Your window choices (a hand-set window, no photo crop, an accept) are stored in `window_fix` of the scan's entry, which only `fix` writes; the run keeps writing `window`, the automatic window, and never touches your choice, also when a fix is saved while a run works. A hand-set window has `source: "manual"`, author, time and note; the history keeps the previous choice, and `fix --reset-window` (the drag view's Back to automatic) takes it away. It is a place on the scan, independent of the print outline: a later fix of the outline keeps it, as long as it still lies inside the new outline. If it does not (or a re-detect or refit moved the outline), the scan is `needs_review` with the warning `photo window set by hand lies outside the print outline` and the automatic window is cut meanwhile (no photo crop when that is missing too), also after you accept the scan, until you move the window inside or take it away. An accept is stored only while there is something to accept (a window not found, or a hand-set window outside the outline), and `fix --reset` of the outline revokes it. An automatic window is found again whenever the outline changes. An accept (`fix --accept`, the app's Confirm) belongs to the outline it was given for and lapses when the outline changes; it survives a new detection that leaves the outline as it is. A hand-set window and a no-photo-crop choice are dropped (history `window-drop`) only when the scan file itself changed. Manifests made before hand-set windows existed: a missing window counted as accepted by any outline fix; such a window (no `accept_needed` key) still does, until it is found again.
+- **Results.** With the crop on, `process`/`status` records carry `window` (`state` found, missing or none, kind, format, size, corners, reason, source, and for a hand-set window who set it; `accepted` when the scan is accepted for its outline; `outside_outline` with the hand-set window's kind, corners and author when the outline moved away from it, in which case `window` describes the automatic window that is cut meanwhile); `outputs` has `photo_tiff`, `photo_high`, `photo_web`.
 
 ## Machine-readable output
 
@@ -231,7 +241,7 @@ Writers merge before they save: the manifest is re-read under a short lock and m
 
 1. `polaroid process IN -o OUT --json` and collect scans with `status: needs_review`.
 2. For each: `polaroid inspect NAME -m OUT --json`, open the PNG, compare the green line with the print edge.
-3. Correct with `polaroid fix OUT NAME --nudge/--shift/--set ... --author agent --note "why"`, or confirm with `--accept --author agent`.
+3. Correct with `polaroid fix OUT NAME --nudge/--shift/--set ... --author agent --note "why"`, or confirm with `--accept --author agent`. A scan flagged `photo window not found` (photo crop on): `polaroid inspect NAME -m OUT --of window` shows the nominal window and the print; place it with `--window-set` / `--window-nudge`, or use `--no-photo-crop`, or `--accept` to export the full print without the crop.
 4. `polaroid process IN -o OUT --json` again, or pass `--export` to `fix`.
 
 Agents never need to touch the input folder; all state lives in the output folder's manifest.
@@ -252,8 +262,8 @@ Use the full path to `polaroid-mcp` (for example `.../envs/<env>/Scripts/polaroi
 |---|---|
 | `polaroid_process` | `process` a batch; returns the summary and per-scan results (full records for flagged scans). Sends a progress notification per finished scan. |
 | `polaroid_detect` | Detect outlines, write nothing |
-| `polaroid_inspect` | Review sheet as an inline image plus corner coordinates; also saved to `<output>/_inspect/` |
-| `polaroid_fix` | `set` / `nudge` / `shift` / `accept` / `reset` as JSON objects, author `agent` by default, re-exports by default |
+| `polaroid_inspect` | Review sheet as an inline image plus corner coordinates; also saved to `<output>/_inspect/`; `of: "window"` centres it on the photo window |
+| `polaroid_fix` | `set` / `nudge` / `shift` / `accept` / `reset` as JSON objects, author `agent` by default, re-exports by default; with the photo crop on also `window_set` / `window_nudge` / `window_kind` / `no_photo_crop` / `reset_window` |
 | `polaroid_status` | Counts and the scans that need review |
 
 Tool errors (bad arguments, missing manifest, another run working on the output folder) come back as tool results with `isError`, so the agent can correct itself. A refused run is not a failure of the scans: wait and try again. `polaroid_fix` with `export` while another run holds the folder still saves the fix; its result says the export was skipped.

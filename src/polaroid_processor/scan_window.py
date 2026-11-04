@@ -9,16 +9,16 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-from typing import Tuple
+from typing import Optional, Tuple
 
 import cv2
 import numpy as np
 
 from .detection import quad_size
-from .formats import classify
+from .formats import classify, get_format
 from .geometry import homography, rectify
 from .manifest import Manifest
-from .window import WindowParams, find_window_for_formats
+from .window import NOMINAL, WindowParams, find_window_for_formats
 
 
 def outline_id(quad: np.ndarray) -> str:
@@ -26,10 +26,123 @@ def outline_id(quad: np.ndarray) -> str:
     return hashlib.sha1(json.dumps(np.round(np.asarray(quad, float), 1).tolist()).encode()).hexdigest()[:12]
 
 
-def window_current(entry: dict) -> bool:
-    """True when the entry's stored window was computed from the entry's present outline."""
-    w, quad = entry.get("window"), Manifest.effective_quad(entry)
+def is_manual(w: Optional[dict]) -> bool:
+    return bool(w) and w.get("source") == "manual"
+
+
+def window_state(w: Optional[dict]) -> str:
+    """"found" (a window with a quad), "none" (the user chose no photo crop) or "missing" (no window found)."""
+    if w and w.get("found") and w.get("quad"):
+        return "found"
+    return "none" if is_manual(w) else "missing"
+
+
+def inside_outline(points: np.ndarray, quad: np.ndarray) -> bool:
+    """True when every point lies inside (or on) the print outline."""
+    q = np.asarray(quad, np.float32).reshape(-1, 1, 2)
+    return all(cv2.pointPolygonTest(q, (float(x), float(y)), False) >= 0 for x, y in np.asarray(points, float))
+
+
+def auto_valid(w: Optional[dict], quad: Optional[np.ndarray]) -> bool:
+    """True when the automatic window ``w`` was found for the print outline ``quad`` (its ``outline``)."""
     return bool(w) and quad is not None and w.get("outline") == outline_id(quad)
+
+
+# The user's window choices live in ``entry["window_fix"]``, which only ``fix`` writes (like ``override``):
+# ``{"window": hand-set window or no-photo-crop choice or None, "accepted": accept mark or None}``. The batch
+# owns ``entry["window"]``, the automatic window, and never writes the other.
+def fix_window(entry: dict) -> Optional[dict]:
+    """The hand-set window or the no-photo-crop choice of an entry (None when the user made none)."""
+    return (entry.get("window_fix") or {}).get("window")
+
+
+def fix_in_force(entry: dict, quad: Optional[np.ndarray] = None) -> Optional[dict]:
+    """The user's window choice when it holds for the outline: a hand-set window lying inside the outline, or the
+    no-photo-crop choice (which holds for any outline). A hand-set window outside the outline is not in force."""
+    w = fix_window(entry)
+    if not w:
+        return None
+    if window_state(w) == "none":
+        return w
+    quad = Manifest.effective_quad(entry) if quad is None else quad
+    return w if quad is not None and inside_outline(np.asarray(w["quad"], float), quad) else None
+
+
+def fix_outside(entry: dict, quad: Optional[np.ndarray] = None) -> bool:
+    """True when the entry has a hand-set window that does not lie inside its outline (a fix of the outline,
+    a refit or a new detection moved the outline away from it)."""
+    w = fix_window(entry)
+    return bool(w) and window_state(w) == "found" and fix_in_force(entry, quad) is None
+
+
+def effective_window(entry: dict, quad: Optional[np.ndarray] = None) -> Optional[dict]:
+    """The window the export and the status use: the user's choice when it holds for the outline, else the
+    automatic window (None when there is none yet; it can also be one found for an earlier outline)."""
+    return fix_in_force(entry, quad) or entry.get("window")
+
+
+def window_current(entry: dict) -> bool:
+    """True when the window in force holds for the entry's present outline: a hand-set window or the
+    no-photo-crop choice, else an automatic window found for this outline."""
+    quad = Manifest.effective_quad(entry)
+    return fix_in_force(entry, quad) is not None or auto_valid(entry.get("window"), quad)
+
+
+def window_shape(w: Optional[dict]) -> Optional[list]:
+    """What an export cuts from a window: ``[kind, corners]``, or None when it cuts no photo crop (the identity of
+    the photo part of an export; see ``Settings.export_key``)."""
+    if w and w.get("found") and w.get("quad"):
+        return [w.get("kind"), np.round(np.asarray(w["quad"], float), 1).tolist()]
+    return None
+
+
+def accept_valid(entry: dict, quad: Optional[np.ndarray] = None) -> bool:
+    """True when the user accepted the scan for its present outline (``fix --accept``, the app's Confirm): the
+    mark belongs to the outline it was given for and lapses when the outline changes."""
+    acc = (entry.get("window_fix") or {}).get("accepted")
+    quad = Manifest.effective_quad(entry) if quad is None else quad
+    return bool(acc) and quad is not None and acc.get("outline") == outline_id(quad)
+
+
+def nominal_window(quad: np.ndarray, kind: str = "square", format_name: Optional[str] = None) -> dict:
+    """The nominal window of the print ``quad`` (tl, tr, br, bl in scan px): where a window of its format sits
+    on a print of this size, as a window dict without provenance (``found``, ``kind``, ``quad``, ``size_mm``,
+    ``format``). Square for every format, round for the 600 only (``ValueError`` otherwise). ``format_name`` is
+    the format the window finder picked for the scan, when known (a 600 shot that ``classify`` takes for a Go);
+    else the format the print's size gives."""
+    quad = np.asarray(quad, np.float64)
+    w, h = quad_size(quad)
+    if w > h:
+        raise ValueError("print outline is landscape")
+    try:
+        fmt = get_format(format_name) if format_name else classify((w, h))
+    except (KeyError, ValueError):
+        fmt = classify((w, h))
+    spec = NOMINAL.get((fmt.name, kind))
+    if spec is None:
+        raise ValueError(f"no {kind} window known for {fmt.name}")
+    px = w / fmt.width_mm
+    box = np.array([[spec.left, spec.top], [spec.left + spec.width, spec.top],
+                    [spec.left + spec.width, spec.top + spec.height], [spec.left, spec.top + spec.height]]) * px
+    Hm, _ = homography(quad, 0.0)
+    pts = cv2.perspectiveTransform((box - 0.5).reshape(-1, 1, 2), np.linalg.inv(Hm)).reshape(-1, 2) + 0.5
+    return {"found": True, "kind": kind, "quad": np.round(pts, 2).tolist(), "format": fmt.name,
+            "size_mm": [spec.width, spec.height]}
+
+
+def window_size_mm(window_quad: np.ndarray, quad: np.ndarray, format_name: Optional[str] = None) -> list:
+    """Width and height of a window in mm, on the basis the finder measures (print width over format width)."""
+    quad = np.asarray(quad, np.float64)
+    pw, ph = quad_size(quad)
+    try:
+        fmt = get_format(format_name) if format_name else classify((pw, ph))
+    except (KeyError, ValueError):
+        fmt = classify((pw, ph))
+    px = pw / fmt.width_mm
+    q = np.asarray(window_quad, np.float64)
+    wd = (np.linalg.norm(q[1] - q[0]) + np.linalg.norm(q[2] - q[3])) / 2 / px
+    ht = (np.linalg.norm(q[3] - q[0]) + np.linalg.norm(q[2] - q[1])) / 2 / px
+    return [round(float(wd), 3), round(float(ht), 3)]
 
 
 def window_for_scan(rgb: np.ndarray, quad: np.ndarray, scale: float = 0.25,
@@ -41,13 +154,15 @@ def window_for_scan(rgb: np.ndarray, quad: np.ndarray, scale: float = 0.25,
     :func:`find_window_for_formats`; the window quad is mapped back through the homography. A round window is
     stored as its bounding square, which a hand-set quad can replace; the circle is the one inscribed in it.
     Returns ``(window dict, seconds)``. Keys: ``found``, ``reason``, ``kind``, ``quad`` (tl, tr, br, bl, scan
-    px), ``size_mm``, ``format``, ``notes``, ``outline``, ``source`` ("auto").
+    px), ``size_mm``, ``format``, ``notes``, ``outline``, ``source`` ("auto"), ``accept_needed`` (True: a window
+    not found stays a review item until the scan is accepted; windows made before this key existed were
+    accepted by any fix of the outline).
     """
     t0 = time.perf_counter()
     quad = np.asarray(quad, np.float64)
     w, h = quad_size(quad)
     out = {"found": False, "reason": "", "kind": None, "format": None, "notes": [], "outline": outline_id(quad),
-           "source": "auto"}
+           "source": "auto", "accept_needed": True}
     if w > h:
         out["reason"] = "print outline is landscape"
         return out, time.perf_counter() - t0

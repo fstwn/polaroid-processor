@@ -14,14 +14,19 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import quote
 
+import cv2
+import numpy as np
+
 from .. import api
 from ..detection import quad_size
+from ..geometry import homography
 from ..imageio import load_rgb
 from ..lock import holder
 from ..manifest import MANIFEST_NAME, Manifest
 from ..pipeline import collect_inputs, manual_outline, reevaluate, resolve_scales, retag_ok, settings_from_dict
 from ..preview import LONG_EDGE, PREVIEW_DIR, preview_key, write_preview
 from ..scale import scale_from_size
+from ..scan_window import effective_window, fix_in_force, window_state
 from .settings import defaults_of, from_panel, to_panel
 
 log = logging.getLogger("polaroid_processor.app")
@@ -72,8 +77,9 @@ def export_plan(m: Manifest, settings) -> Dict[str, tuple]:
         e = m.get(k)
         if k in scales and e.get("status") != "failed":
             quad, curves, manual = Project._quad_curves(e)
-            out[k] = (settings.export_key(quad, scales[k], curves, manual, e.get("window")),
-                      settings.export_base(quad, scales[k], curves, manual, e.get("window")),
+            win = effective_window(e, quad) if settings.photo_crop != "off" else None
+            out[k] = (settings.export_key(quad, scales[k], curves, manual, win),
+                      settings.export_base(quad, scales[k], curves, manual, win),
                       retag_ok(e, scales[k], settings, curves, manual))
     return out
 
@@ -204,6 +210,22 @@ class Project:
         manual = manual_outline((e.get("override") or {}).get("quad"), det)
         return Manifest.effective_quad(e), det.get("curves"), manual
 
+    @staticmethod
+    def _window_box(e: dict, quad, margin_mm: float) -> Optional[dict]:
+        """The photo window as fractions of the crop preview (the straightened print without the margin), for the
+        outline on a grid card; None without a window. A flattened print is drawn as if straight: the window lies
+        where the unwarp equals the plain homography."""
+        w = effective_window(e, quad)
+        if window_state(w) != "found":
+            return None
+        pw, ph = quad_size(quad)
+        px = (e.get("scale") or {}).get("px_per_mm") or scale_from_size((pw, ph)).px_per_mm
+        m = margin_mm * px
+        H, _ = homography(quad, 0.0)
+        pts = cv2.perspectiveTransform((np.asarray(w["quad"], float) - 0.5).reshape(-1, 1, 2), H).reshape(-1, 2) + 0.5
+        box = np.stack([(pts[:, 0] - m) / (pw - 2 * m), (pts[:, 1] - m) / (ph - 2 * m)], axis=1)
+        return {"kind": w.get("kind"), "box": np.round(box, 4).tolist(), "source": w.get("source", "auto")}
+
     def _record(self, m: Optional[Manifest], key: str, e: Optional[dict], margin: float, flatten: str,
                 plans: Dict[str, tuple], settings) -> dict:
         status = entry_status(e)
@@ -228,6 +250,13 @@ class Project:
             else:
                 rec["stale"] = True
             rec["_want"] = want
+            if settings is not None and settings.photo_crop != "off":
+                box = self._window_box(e, quad, margin)
+                if box:
+                    rec["window"] = box
+                chosen = fix_in_force(e, quad)       # the user's window choice, for the card's tag
+                if chosen:
+                    rec["window_fix"] = "none" if window_state(chosen) == "none" else "hand"
         return rec
 
     @property
@@ -248,7 +277,8 @@ class Project:
             settings = settings_from_dict(m.data.get("settings") or {}) if m else None
             if m:
                 # a scan fixed by hand (here, on the command line, by an agent) is judged again, in memory only
-                fixed = [k for k, e in m.items() if e.get("override") and e.get("status") == "needs_review"]
+                fixed = [k for k, e in m.items()
+                         if (e.get("override") or e.get("window_fix")) and e.get("status") == "needs_review"]
                 if fixed:
                     reevaluate(m, fixed, settings)
                 plans = export_plan(m, settings)

@@ -29,7 +29,8 @@ from .manifest import MANIFEST_NAME, Manifest, now, scan_key
 from .preview import LONG_EDGE, PREVIEW_DIR, write_preview
 from .render import overlay
 from .scale import Scale, batch_median_scale, explicit_scale, scale_from_size, scale_from_tag
-from .scan_window import outline_id, window_current, window_for_scan
+from .scan_window import (accept_valid, auto_valid, effective_window, fix_outside, fix_window, outline_id,
+                          window_current, window_for_scan, window_shape, window_state)
 from .window import inset_quad
 
 log = logging.getLogger("polaroid_processor")
@@ -141,10 +142,7 @@ class Settings:
             "shadows": self.shadows,
         }
         if self.photo_crop != "off":      # absent when off: the keys of exports made before stay valid
-            shape = None
-            if window and window.get("found") and window.get("quad"):
-                shape = [window.get("kind"), np.round(np.asarray(window["quad"], float), 1).tolist()]
-            payload["photo"] = [self.photo_crop, self.photo_bleed_mm, shape]
+            payload["photo"] = [self.photo_crop, self.photo_bleed_mm, window_shape(window)]
         if px_per_mm is not None:
             payload["px_per_mm"] = px_per_mm
         if scale_kind is not None:
@@ -253,14 +251,15 @@ def _write_images(img: np.ndarray, out_dir: Path, stem: str, px_per_mm: float, i
 def photo_image(rgb: np.ndarray, window: dict, px_per_mm: float, bleed_mm: float,
                 interpolation: str) -> Tuple[np.ndarray, Optional[np.ndarray]]:
     """The photo crop: the window quad cut ``bleed_mm`` inward on every side, warped straight from the scan
-    (one resampling). Round window: also the alpha plane, 0 outside the circle inscribed in the crop."""
+    (one resampling). Round window: also the alpha plane, 0 outside the ellipse inscribed in the crop (a circle
+    for a square crop; the drawing of the window, ``render.circle_of``, is the same ellipse)."""
     img = rectify(rgb, inset_quad(np.asarray(window["quad"], float), bleed_mm * px_per_mm), 0.0, interpolation)
     if window.get("kind") != "round":
         return img, None
     h, w = img.shape[:2]
     yy, xx = np.mgrid[:h, :w]
-    dist = np.hypot(xx + 0.5 - w / 2, yy + 0.5 - h / 2)
-    cover = np.clip((h + w) / 4 - dist + 0.5, 0.0, 1.0)
+    r = np.hypot((xx + 0.5 - w / 2) / (w / 2), (yy + 0.5 - h / 2) / (h / 2))      # 1 on the ellipse
+    cover = np.clip((1.0 - r) * (h + w) / 4 + 0.5, 0.0, 1.0)
     top = 65535 if img.dtype == np.uint16 else 255
     return img, np.round(cover * top).astype(img.dtype)
 
@@ -357,11 +356,18 @@ def _job(job: dict) -> dict:
             curves = flat.trace(rgb, np.array(det["quad"], dtype=np.float64), px, det.get("speck_threshold") or 30,
                                 ex["flatten_params"])
             det["curves"] = {k: c.to_dict() for k, c in curves.items()}
-        window = job.get("window")
-        # a window of another outline (a fix landed after the window pass, or that pass lost the scan) is measured again here
-        if ex.get("photo_crop", "off") != "off" and (job["detect"] or not (window and window.get("outline") == outline_id(quad))):
-            window, res["window_time_s"] = _window_step(rgb, quad)
-            res["window"] = window
+        window = None
+        if ex.get("photo_crop", "off") != "off":
+            fix = job.get("window_fix")
+            if fix and job["detect"] and job.get("fingerprint") and job["fingerprint"] != res.get("fingerprint"):
+                fix = None      # the scan changed under a hand-set window: it described another picture
+            # the automatic window of this outline (a fix landed after the window pass, or that pass lost the scan);
+            # the user's choice, when it holds for the outline, is cut instead. The batch never stores the choice.
+            auto = job.get("window")
+            if not auto_valid(auto, quad):
+                auto, res["window_time_s"] = _window_step(rgb, quad)
+                res["window"] = auto
+            window = effective_window({"window": auto, "window_fix": fix}, quad)
         if job.get("preview"):
             try:  # a preview that fails must not fail the scan
                 res["preview"] = write_preview(rgb, quad, px, (det or {}).get("curves"),
@@ -375,6 +381,7 @@ def _job(job: dict) -> dict:
                                override=manual_outline(job.get("override"), det), window=window))
             res["export_px_per_mm"] = px
             res["export_outline"] = outline_id(quad)
+            res["export_window"] = window      # what the photo crop was cut from: the key and the reconcile need it
     except Exception as e:  # noqa: BLE001
         res["error"] = f"{type(e).__name__}: {e}"
     finally:
@@ -389,7 +396,7 @@ def _window_step(rgb: np.ndarray, quad: np.ndarray) -> Tuple[dict, float]:
     except Exception as e:  # noqa: BLE001
         log.warning("window step failed: %s", e)
         return {"found": False, "reason": f"window step failed: {type(e).__name__}: {e}", "kind": None,
-                "format": None, "notes": [], "outline": outline_id(quad), "source": "auto"}, 0.0
+                "format": None, "notes": [], "outline": outline_id(quad), "source": "auto", "accept_needed": True}, 0.0
 
 
 def _window_job(job: dict) -> dict:
@@ -724,11 +731,23 @@ def evaluate(entry: dict, scale: Scale, rules: ReviewRules,
             if abs(st["bow_px"]) / scale.px_per_mm > rules.edge_bow_mm:
                 warnings.append(f"edge_curved:{side}:{st['bow_px'] / scale.px_per_mm:+.2f}mm")
                 review = True
-    win = entry.get("window")
-    if photo_crop != "off" and win and not win.get("found") and window_current(entry):
-        # a window not found is a review item; accepting the scan (an override) exports the print without a crop
-        warnings.append(f"photo window not found: {win.get('reason') or 'unknown'}")
-        review = review or not override
+    if photo_crop != "off":
+        # The window in force is the user's (a hand-set window inside the outline, or no photo crop by choice),
+        # else the automatic one. A window not found, or a hand-set window the outline moved away from, is a review
+        # item until the user sets a window, chooses no photo crop or accepts the scan for this outline (what is
+        # cut then stays as it is: no photo crop for a missing window, the automatic window when only the hand-set
+        # window is outside and an automatic one was found). A fix of the outline alone does not count. An automatic window
+        # made before the accept mark existed (no ``accept_needed``) was accepted by any override.
+        fix_out = fix_outside(entry, quad)
+        win = entry.get("window")
+        missing = bool(win) and window_state(effective_window(entry, quad)) == "missing"
+        if fix_out or missing:
+            accepted = accept_valid(entry, quad) or (missing and "accept_needed" not in win and bool(override))
+            if fix_out:
+                warnings.append("photo window set by hand lies outside the print outline")
+            if missing:
+                warnings.append(f"photo window not found: {win.get('reason') or 'unknown'}")
+            review = review or not accepted
     if any(w.startswith("edge_curved") for w in warnings) and flatten == "off":
         warnings.append("hint:process with flatten on to unwarp curved edges")
     return ("needs_review" if review else "ok"), warnings, fmt
@@ -770,9 +789,19 @@ class _Saver:
 
 def window_record(e: dict) -> dict:
     """The photo window of a manifest entry as the result records show it."""
-    w = e.get("window") or {}
+    quad = Manifest.effective_quad(e)
+    w = effective_window(e, quad) or {}      # the window in force: the user's choice, else the automatic window
     rec = {k: w[k] for k in ("found", "kind", "format", "size_mm", "quad", "reason") if w.get(k) not in (None, "")}
     rec["found"] = bool(w.get("found"))
+    rec["state"] = window_state(w)      # found, none (no photo crop by choice) or missing
+    rec["source"] = w.get("source", "auto")
+    if rec["source"] == "manual":
+        rec.update({k: w[k] for k in ("author", "at", "note") if w.get(k)})
+    if fix_outside(e, quad):      # a hand-set window the outline moved away from: flagged, not in force; the corners
+        hw = fix_window(e)         # are what a window fix edits and `inspect --of window` shows
+        rec["outside_outline"] = {k: hw[k] for k in ("kind", "quad", "author", "at", "note") if hw.get(k)}
+    if accept_valid(e, quad):
+        rec["accepted"] = True
     rec["current"] = window_current(e)
     if w.get("notes"):
         rec["notes"] = w["notes"]
@@ -802,7 +831,7 @@ def result_record(manifest: Manifest, key: str, exported: bool = False) -> dict:
         "exported": exported,
         "error": e.get("error"),
     }
-    if e.get("window") and manifest.data.get("settings", {}).get("photo_crop", "off") != "off":
+    if (e.get("window") or fix_window(e)) and manifest.data.get("settings", {}).get("photo_crop", "off") != "off":
         rec["window"] = window_record(e)
     return rec
 
@@ -838,8 +867,14 @@ def _store_job_result(manifest: Manifest, res: dict) -> None:
     key = res["key"]
     e = manifest.entry(key)
     if res.get("fingerprint"):
-        if e.get("fingerprint") and e["fingerprint"] != res["fingerprint"] and e.get("override"):
-            manifest.set_override(key, None, "system", "input content changed; manual fix dropped", "reset")
+        if e.get("fingerprint") and e["fingerprint"] != res["fingerprint"]:
+            if e.get("override"):
+                manifest.set_override(key, None, "system", "input content changed; manual fix dropped", "reset")
+            if e.get("window_fix"):      # the choice and the accept mark: both described the old picture
+                if fix_window(e):
+                    manifest.set_window_fix(key, None, "system", "input content changed; window choice dropped",
+                                            "window-drop")
+                e["window_fix"] = None
         e["fingerprint"] = res["fingerprint"]
     for k in ("meta", "size_bytes", "mtime"):
         if k in res:
@@ -959,6 +994,7 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
                } if manifest.persist and settings.previews else None
     exported_now: Dict[str, bool] = {}
     exp_outline: Dict[str, str] = {}   # outline_id of the outline a scan's export (pass A) was cut from
+    exp_window: Dict[str, Optional[list]] = {}   # window_shape of the window its photo crop was cut from
     saver = _Saver(manifest, settings)
 
     # ---- pass A: detect new or changed scans, export them from the same decode ----------
@@ -975,6 +1011,8 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
         prov = explicit or (history.get(_group(e)) if e else None)
         jobs.append({"key": key, "path": str(f), "detect": True, "detection": None,
                      "override": None, "export": export_now, "scale": prov.px_per_mm if prov else None,
+                     "window": None, "window_fix": e.get("window_fix"),
+                     "fingerprint": e.get("fingerprint"),
                      "export_settings": ex_settings, "detect_params": settings.detect_params, "preview": preview})
     if on_jobs:
         on_jobs(len(jobs))
@@ -986,6 +1024,7 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
             exported_now[res["key"]] = "outputs" in res
             if "outputs" in res:
                 exp_outline[res["key"]] = res["export_outline"]
+                exp_window[res["key"]] = window_shape(res["export_window"])
             log.info("%s: %s in %.1fs", res["key"], res.get("error") or "done", res["time_s"])
             if progress:
                 progress(res["key"], res.get("error") or "detected")
@@ -1036,7 +1075,7 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
         for k in keys:
             e = manifest.entry(k)
             quad = Manifest.effective_quad(e)
-            if quad is not None and e.get("status") != "failed" and e.get("input") and not window_current(e):
+            if quad is not None and e.get("status") != "failed" and e.get("input") and not auto_valid(e.get("window"), quad):
                 w_jobs.append({"key": k, "path": e["input"], "quad": quad.tolist()})
         if w_jobs:      # not counted as jobs (the app's "exported N scans" counts scans), the phase says what runs
             if on_phase:
@@ -1063,7 +1102,7 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
     if fixed:
         reevaluate(manifest, fixed, settings)
     pass_b = []
-    xargs: Dict[str, tuple] = {}      # quad, scale, curves, manual of each export job: for the key of a window found in the job
+    xargs: Dict[str, tuple] = {}      # quad, scale, curves, manual of each export job: for the key of the window it cut
     retagged = 0
     for k in keys:
         e = manifest.entry(k)
@@ -1078,14 +1117,16 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
         final = scales[k]
         curves = (e.get("detection") or {}).get("curves")
         manual = manual_outline((e.get("override") or {}).get("quad"), e.get("detection"))
-        win = e.get("window")
+        win = effective_window(e, quad) if settings.photo_crop != "off" else None      # what the photo crop is cut from
         xkey = settings.export_key(quad, final, curves, manual, win)
         xbase = settings.export_base(quad, final, curves, manual, win)
         outs = e.get("outputs") or {}
         missing = not outs or any(not manifest.abs(p).exists() for p in outs.values())
         if exported_now.get(k):
-            # cut at a scale within 0.5 % of the final one, from the outline the scan has now (a refit or a merged fix moved it)
-            if exp_outline.get(k) == outline_id(quad) and retag_ok(e, final, settings, curves, manual):
+            # cut at a scale within 0.5 % of the final one, from the outline and the window the scan has now (a refit or
+            # a fix merged during the run moved them: the files then are not what the key would say)
+            if (exp_outline.get(k) == outline_id(quad) and exp_window.get(k) == window_shape(win)
+                    and retag_ok(e, final, settings, curves, manual)):
                 retag(manifest, e, final)
                 e["export_key"], e["export_base"] = xkey, xbase
                 continue
@@ -1100,14 +1141,14 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
         xargs[k] = (quad, final, curves, manual)
         pass_b.append({"key": k, "path": e["input"], "detect": False, "detection": e.get("detection"),
                        "override": e["override"]["quad"] if e.get("override") else None, "export": True,
-                       "scale": final.px_per_mm, "export_settings": ex_settings, "window": win,
-                       "detect_params": settings.detect_params, "xkey": xkey, "xbase": xbase})
+                       "scale": final.px_per_mm, "export_settings": ex_settings, "window": e.get("window"),
+                       "window_fix": e.get("window_fix"),
+                       "detect_params": settings.detect_params})
     if pass_b:
         if on_jobs:
             on_jobs(len(pass_b))
         workers = _workers_for(manifest, pass_b, settings)
         log.info("exporting %d scan(s) with %d worker(s)", len(pass_b), workers)
-        xkeys = {j["key"]: (j["xkey"], j["xbase"]) for j in pass_b}
         finished_keys = set()
         for res in _run_pool(_job, pass_b, workers, cancel):
             finished_keys.add(res["key"])
@@ -1116,10 +1157,11 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
             if "error" in res:
                 e["error"] = f"export failed: {res['error']}"
             else:
-                e["export_key"], e["export_base"] = xkeys[res["key"]]
-                if "window" in res:      # measured again in the job: the key is that of the window the photo was cut from
-                    e["export_key"] = settings.export_key(*xargs[res["key"]], res["window"])
-                    e["export_base"] = settings.export_base(*xargs[res["key"]], res["window"])
+                # the key is that of the window the photo was cut from (the job may have cut another one than the
+                # reconcile expected: a window fix or a new measurement landed meanwhile)
+                e["export_key"] = settings.export_key(*xargs[res["key"]], res["export_window"])
+                e["export_base"] = settings.export_base(*xargs[res["key"]], res["export_window"])
+                if "window" in res:      # measured again in the job
                     if res["key"] in scales and (e.get("detection") or e.get("override")):    # a window lost here is a review item
                         status, warnings, fmt = evaluate(e, scales[res["key"]], settings.rules, ref_of.get(res["key"]),
                                                          settings.margin_mm, settings.flatten, settings.flatten_params,

@@ -33,7 +33,10 @@ folder per input folder); for every scan with status needs_review call polaroid_
 compare the green line with the print edge, then polaroid_fix (set/nudge/shift corners, or
 accept) with a note saying why. Coordinates are full-resolution scan pixels; shift is positive
 outward. Warnings starting with hint: name a concrete fix. With photo_crop on, a scan flagged "photo
-window not found" is resolved by accepting it: its full print is then exported without the photo crop.
+window not found" is resolved in one of three ways: polaroid_inspect it with of=window (it shows the
+nominal window and the print), then polaroid_fix window_set / window_nudge to place a window; or
+no_photo_crop to export it without a crop by choice; or accept to export the full print without the crop.
+Check a window that was found with of=window too: the cyan border should lie on the picture's edge.
 Escalate to a human when the edge is not visible even in stretched tiles or is physically curved (they
 open `polaroid review <output>`, the local web app). Never write into input folders. One run works on an output folder at a time:
 when polaroid_process says another run is working there, wait and try again; polaroid_fix still
@@ -112,7 +115,10 @@ TOOLS: List[Dict[str, Any]] = [
             "Review sheet of one scan as an image: eight full-resolution tiles (corners and edge midpoints) "
             "with a grid in absolute scan pixels, the current crop line in green, plus an overview. Dark "
             "tiles are contrast-stretched. Use it to verify a flagged scan and to read exact coordinates "
-            "for polaroid_fix."),
+            "for polaroid_fix. With of=window (output given, photo_crop on) the tiles sit on the corners of "
+            "the photo window instead, its border in cyan (a round window: bounding square and circle) and "
+            "the print outline in green; a scan without a window shows the nominal window for its format, "
+            "which window_set / window_nudge of polaroid_fix start from."),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -122,6 +128,8 @@ TOOLS: List[Dict[str, Any]] = [
                 "zoom": {"type": "integer", "default": 1, "minimum": 1, "maximum": 4},
                 "grid": {"type": "integer", "default": 50},
                 "stretch": {"type": "string", "enum": ["auto", "on", "off"], "default": "auto"},
+                "of": {"type": "string", "enum": ["print", "window"], "default": "print",
+                       "description": "print: tiles on the print outline's corners; window: on the photo window's"},
                 "save": {"type": "boolean", "default": True,
                          "description": "also save the PNG to <output>/_inspect/ (only with output)"},
             },
@@ -137,7 +145,16 @@ TOOLS: List[Dict[str, Any]] = [
             "set: absolute corner positions; nudge: corner offsets; shift: move a whole side outward "
             "(positive) or inward (negative); accept: mark the current outline as reviewed (a scan whose "
             "photo window was not found then exports its full print without the photo crop); reset: back "
-            "to automatic detection. Every change is logged with author, time, note and previous value. "
+            "to automatic detection. With photo_crop on, the photo window can be fixed too: window_set / "
+            "window_nudge move its corners (tl, tr, br, bl, scan pixels; check with polaroid_inspect of=window; "
+            "a scan whose window was not found starts from the nominal window for its format, window_kind picks "
+            "square or round, default what most scans of the batch have); window_kind alone changes the kind; "
+            "no_photo_crop exports this scan without a photo crop by choice; reset_window takes a hand-set window "
+            "away. Use window options when the window is not found (and the print has one), or when the cyan "
+            "border misses the picture's edge. A hand-set window stays through later outline fixes while it lies "
+            "inside the outline; otherwise the scan needs review again until you move it inside or take it away "
+            "(reset_window). A fix of the outline alone "
+            "does not clear \"photo window not found\". Every change is logged with author, time, note and previous value. "
             "While another run works on the output folder the fix is saved and the export is skipped "
             "(the result has a note)."),
         "inputSchema": {
@@ -152,6 +169,14 @@ TOOLS: List[Dict[str, Any]] = [
                           "additionalProperties": False, "description": "e.g. {\"bottom\": -59}"},
                 "accept": {"type": "boolean", "default": False},
                 "reset": {"type": "boolean", "default": False},
+                "window_set": {**_CORNER_MAP, "description": "photo window corners, e.g. {\"tl\": [610, 905]}"},
+                "window_nudge": {**_CORNER_MAP, "description": "photo window corner offsets, e.g. {\"br\": [-3, 2]}"},
+                "window_kind": {"type": "string", "enum": ["square", "round"],
+                                "description": "kind of the photo window (round: the corners are its bounding square)"},
+                "no_photo_crop": {"type": "boolean", "default": False,
+                                  "description": "export this scan without a photo crop, by choice"},
+                "reset_window": {"type": "boolean", "default": False,
+                                 "description": "take the hand-set photo window away"},
                 "author": {"type": "string", "default": "agent"},
                 "note": {"type": "string", "description": "why; shown in the history"},
                 "export": {"type": "boolean", "default": True},
@@ -164,7 +189,9 @@ TOOLS: List[Dict[str, Any]] = [
         "name": "polaroid_status",
         "title": "Batch status",
         "description": ("State of an output folder from its manifest: counts and per-scan status; with the "
-                        "photo crop on, each scan's photo window (found, kind, format, quad in scan pixels)."),
+                        "photo crop on, each scan's photo window (state found | missing | none, kind, format, "
+                        "quad in scan pixels, source auto | manual, who set it, accepted; outside_outline holds a hand-set "
+                        "window the outline moved away from, while the automatic window is cut)."),
         "inputSchema": {
             "type": "object",
             "properties": {"output": {"type": "string"},
@@ -240,14 +267,17 @@ def tool_inspect(args: dict, progress) -> dict:
     output = args.get("output")
     rec, sheet = api.inspect_scan(args["scan"], output, write=bool(output) and args.get("save", True),
                                   window=int(args.get("window", 360)), zoom=int(args.get("zoom", 1)),
-                                  grid=int(args.get("grid", 50)), stretch=args.get("stretch", "auto"))
+                                  grid=int(args.get("grid", 50)), stretch=args.get("stretch", "auto"),
+                                  of=args.get("of", "print"))
     return {"content": [_text(rec), _jpeg(sheet)], "structuredContent": rec, "isError": False}
 
 
 def tool_fix(args: dict, progress) -> dict:
     rec = api.fix_scan(args["output"], args["scan"], sets=args.get("set"), nudges=args.get("nudge"),
                        shifts=args.get("shift"), accept=args.get("accept", False), reset=args.get("reset", False),
-                       author=args.get("author", "agent"), note=args.get("note", ""),
+                       window_sets=args.get("window_set"), window_nudges=args.get("window_nudge"),
+                       window_kind=args.get("window_kind"), no_photo_crop=args.get("no_photo_crop", False),
+                       reset_window=args.get("reset_window", False), author=args.get("author", "agent"), note=args.get("note", ""),
                        export=args.get("export", True))
     failed = bool((rec.get("summary") or {}).get("failed"))
     return {"content": [_text(rec)], "structuredContent": rec, "isError": failed}

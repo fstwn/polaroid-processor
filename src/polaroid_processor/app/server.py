@@ -23,7 +23,7 @@ mapping come from the review server). Routes::
     GET  /api/project/preview/<key>.jpg         the crop preview of a scan
     GET  /fix                                   the drag-to-fix page (the review page, bound to the project)
     ...  /api/fix/...                           that page's API: the review server's routes (stamp, scans,
-                                                scans/<key>/tiles, tile/<name>.png, confirm, save)
+                                                scans/<key>/tiles, tile/<name>.png, confirm, save, window)
 """
 from __future__ import annotations
 
@@ -281,14 +281,16 @@ class AppHandler(Handler):
             if rest == ["scans"]:
                 return self._json(fx.list_scans())
             if len(rest) == 3 and rest[0] == "scans" and rest[2] == "tiles":
-                return self._json(fx.tile_specs(rest[1]))
+                return self._json(fx.tile_specs(rest[1], *self._tile_args()))
             if len(rest) == 4 and rest[0] == "scans" and rest[2] == "tile" and rest[3].endswith(".png"):
-                return self._send(200, fx.tile_png(rest[1], rest[3][:-4]), "image/png")
-        elif len(rest) == 3 and rest[0] == "scans" and rest[2] in ("confirm", "save"):
+                return self._send(200, fx.tile_png(rest[1], rest[3][:-4], *self._tile_args()), "image/png")
+        elif len(rest) == 3 and rest[0] == "scans" and rest[2] in ("confirm", "save", "window"):
             body = self._body()
             if rest[2] == "confirm":
                 return self._json(fx.confirm(rest[1]))
-            return self._json(fx.save(rest[1], body.get("corners")))
+            if rest[2] == "window":
+                return self._json(fx.window(rest[1], body))
+            return self._json(fx.save(rest[1], body.get("corners"), body.get("window")))
         raise NotFound("/".join(rest))
 
     def _static(self, name: str) -> None:

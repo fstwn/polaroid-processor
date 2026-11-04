@@ -271,7 +271,8 @@ def test_a_window_lost_in_the_export_job_is_a_review_item_in_the_same_run(src, p
     monkeypatch.undo()
     e = entry(out, "sq.tif")
     assert window_current(e) and not e["window"]["found"]
-    assert any(w.startswith("photo window not found: ") for w in e["warnings"])        # the fix is an override: status stays ok
+    assert any(w.startswith("photo window not found: ") for w in e["warnings"])
+    assert e["status"] == "needs_review"                       # a fix of the outline does not accept a missing window
     assert not (out / "photo" / "sq.tif").exists() and not (out / "photo" / "high" / "sq.jpg").exists()
 
 

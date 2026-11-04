@@ -8,7 +8,7 @@
 <style>
 :root {
   --bg: #15161a; --panel: #1e2026; --line: #343740; --text: #e6e7ea; --dim: #9a9ea8;
-  --green: #28e628; --magenta: #ff00ff; --amber: #ffc83d; --red: #ff6b6b; --blue: #6aa8ff;
+  --green: #28e628; --cyan: #00dcff; --magenta: #ff00ff; --amber: #ffc83d; --red: #ff6b6b; --blue: #6aa8ff;
   font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 * { box-sizing: border-box; }
@@ -29,6 +29,9 @@ button.primary { background: #1f6b1f; border-color: #2c8f2c; }
 button.primary:hover:not(:disabled) { background: #268526; }
 button.warn { background: #6b4e12; border-color: #94701c; }
 button.warn:hover:not(:disabled) { background: #85621a; }
+button.win { background: #0e4a57; border-color: #1b7f93; }
+button.win:hover:not(:disabled) { background: #146072; }
+button.on { outline: 2px solid var(--cyan); outline-offset: -2px; }
 button:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
 
 #grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; max-width: 1480px; margin: 0 auto; }
@@ -52,6 +55,8 @@ ul.warn li.hint { color: var(--amber); }
 .row { display: flex; gap: 8px; flex-wrap: wrap; }
 .row button { flex: 1 1 auto; }
 .dim { color: var(--dim); }
+#winbox .st { margin-bottom: 6px; word-break: break-word; }
+#winbox .sw { display: inline-block; width: 10px; height: 10px; border: 2px solid var(--cyan); border-radius: 2px; margin-right: 6px; }
 #msg { padding: 8px 10px; border-radius: 6px; background: #4a1f1f; border: 1px solid var(--red); display: none; word-break: break-word; }
 #msg.info { background: #1f3a4a; border-color: var(--blue); }
 #list { overflow: auto; max-height: 40vh; border: 1px solid var(--line); border-radius: 6px; }
@@ -120,9 +125,28 @@ kbd { background: #2b2e37; border: 1px solid var(--line); border-radius: 4px; pa
       <button id="skip" title="Next scan, nothing is written">Skip</button>
     </div>
   </div>
+  <div id="winbox" hidden>
+    <h2>Photo window</h2>
+    <div class="st" id="winstate"></div>
+    <div class="row">
+      <button id="m-print" title="Show the tiles at the print outline's corners and edges">Print outline</button>
+      <button id="m-win" class="win" title="Show the tiles at the photo window's corners and edges">Photo window</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button id="w-sq" class="win" title="Start from the nominal square window for this print, then drag its corners">Place square window</button>
+      <button id="w-rd" class="win" title="Start from the nominal round window for this print, then drag its corners (the bounding square's corners)">Place round window</button>
+      <button id="k-sq" title="The window is square">Square</button>
+      <button id="k-rd" title="The window is round: its circle is inscribed in the four corners">Round</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button id="w-none" title="Export this print without a photo crop, by choice: the scan is ok and gets no photo files">No photo crop</button>
+      <button id="w-reset" title="Throw away the hand-set window, back to the automatic one">Back to automatic</button>
+    </div>
+  </div>
   <div class="dim">
     Drag a <span style="color:var(--magenta)">magenta corner</span> or the <span style="color:var(--green)">green grip</span>
-    on an edge tile onto the print edge. Click a tile to enlarge it: arrow keys move 1&nbsp;px,
+    on an edge tile onto the print edge.<span id="winhelp" hidden> With a photo crop on, the <span style="color:var(--cyan)">cyan</span> line is the
+    photo window: switch to <b>Photo window</b> and drag its corners onto the picture's edge.</span> Click a tile to enlarge it: arrow keys move 1&nbsp;px,
     <kbd>Shift</kbd> + arrow 10&nbsp;px, <kbd>Esc</kbd> closes.
   </div>
   <div>
@@ -158,17 +182,34 @@ const HIT = 18;           // css px around a handle that grabs it
 
 const S = {
   scans: [], idx: 0, marks: {},     // marks: key -> "confirmed" | "fixed" | "skipped"
-  cur: null,                        // {rec, specs, imgs, quad, orig, load}
+  cur: null,                        // {rec, specs, imgs, quad, orig, win, wspecs, wimgs}
+  mode: "print",                    // what the tiles are centred on and what the handles move: "print" | "window"
   busy: false, zoom: null,          // zoom: tile name shown enlarged
   meta: null,
 };
+const CYAN = "#00dcff";
 const cells = {};                   // name -> {cell, canvas, cap, handles}
 
 // ---------------------------------------------------------------- helpers
 const clone = (q) => q.map((p) => p.slice());
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
-const isDirty = () => !!S.cur && S.cur.quad.some((p, i) => dist(p, S.cur.orig[i]) > 0.005);
-
+const printDirty = () => !!S.cur && S.cur.quad.some((p, i) => dist(p, S.cur.orig[i]) > 0.005);
+// the photo window: win.quad is null while there is none; orig is the stored quad (null for a window placed here)
+const winDirty = () => {
+  const w = S.cur && S.cur.win;
+  if (!w || !w.quad) return false;
+  return !w.orig || w.kind !== w.origKind || w.quad.some((p, i) => dist(p, w.orig[i]) > 0.005);
+};
+const isDirty = () => printDirty() || winDirty();
+const hasWin = () => !!(S.cur && S.cur.rec.window);                    // the project has a photo crop
+const inWin = () => S.mode === "window" && !!S.cur && !!S.cur.win.quad && !!S.cur.wspecs;
+// what the tiles show and the handles edit now
+function M() {
+  const c = S.cur;
+  return inWin() ? { specs: c.wspecs, imgs: c.wimgs, quad: c.win.quad, orig: c.win.orig || c.win.quad }
+                 : { specs: c.specs, imgs: c.imgs, quad: c.quad, orig: c.orig };
+}
+function setQuad(q) { if (inWin()) S.cur.win.quad = q; else S.cur.quad = q; }
 function sideNormal(quad, side) {
   const [a, b] = SIDE_CORNERS[side].map((i) => quad[i]);
   const t = [b[0] - a[0], b[1] - a[1]], l = Math.hypot(t[0], t[1]) || 1;
@@ -232,6 +273,23 @@ function xform(canvas, t) {
   return { kx, ky, X: (x) => (x - t.x0) * kx, Y: (y) => (y - t.y0) * ky };
 }
 
+// the window as the export sees it: a square window is its quad, a round one the circle in its bounding square
+function strokeWindow(ctx, T, quad, kind, dpr, faintSquare) {
+  ctx.strokeStyle = CYAN;
+  ctx.lineWidth = Math.max(1, 1.5 * dpr);
+  const path = () => { ctx.beginPath(); quad.forEach((p, i) => (i ? ctx.lineTo(T.X(p[0]), T.Y(p[1])) : ctx.moveTo(T.X(p[0]), T.Y(p[1])))); ctx.closePath(); };
+  if (kind === "round") {
+    if (faintSquare) { ctx.save(); ctx.globalAlpha = 0.45; ctx.setLineDash([5 * dpr, 4 * dpr]); path(); ctx.stroke(); ctx.restore(); }
+    const cx = quad.reduce((a, p) => a + p[0], 0) / 4, cy = quad.reduce((a, p) => a + p[1], 0) / 4;
+    const top = [quad[1][0] - quad[0][0], quad[1][1] - quad[0][1]], left = [quad[3][0] - quad[0][0], quad[3][1] - quad[0][1]];
+    ctx.beginPath();
+    ctx.ellipse(T.X(cx), T.Y(cy), Math.hypot(top[0], top[1]) / 2 * T.kx, Math.hypot(left[0], left[1]) / 2 * T.ky, Math.atan2(top[1], top[0]), 0, 2 * Math.PI);
+    ctx.stroke();
+  } else {
+    path(); ctx.stroke();
+  }
+}
+
 function handlesFor(name, quad) {
   if (name in CORNER_IDX) return [{ type: "corner", i: CORNER_IDX[name], p: quad[CORNER_IDX[name]] }];
   if (name in SIDE_CORNERS) return [{ type: "side", side: name, p: mid(quad, name) }];
@@ -240,7 +298,8 @@ function handlesFor(name, quad) {
 
 function drawTile(c, name, opts) {
   const cur = S.cur;
-  const t = cur && cur.specs.tiles.find((x) => x.name === name);
+  const m = cur && M();
+  const t = cur && m.specs.tiles.find((x) => x.name === name);
   const canvas = c.canvas;
   if (!t) { canvas.width = canvas.height = 1; return; }
   const dpr = window.devicePixelRatio || 1;
@@ -248,22 +307,25 @@ function drawTile(c, name, opts) {
   const w = Math.round(cssW * dpr), h = Math.round(cssH * dpr);
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
   const ctx = canvas.getContext("2d");
-  const img = cur.imgs[name];
+  const img = m.imgs[name];
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, w, h);
   ctx.imageSmoothingEnabled = cssW < t.size[0];     // upscaled tiles stay pixel-exact
   if (img && img.complete && img.naturalWidth) ctx.drawImage(img, 0, 0, w, h);
   const T = xform(canvas, t);
-  const q = cur.quad;
+  const win = inWin();
+  const pq = cur.quad;                 // the print outline: edited in print mode, context in window mode
   ctx.lineJoin = "round";
   ctx.strokeStyle = "#28e628";
-  ctx.lineWidth = Math.max(1, 1.5 * dpr);
+  ctx.lineWidth = Math.max(1, (win ? 1 : 1.5) * dpr);
   ctx.beginPath();
-  q.forEach((p, i) => (i ? ctx.lineTo(T.X(p[0]), T.Y(p[1])) : ctx.moveTo(T.X(p[0]), T.Y(p[1]))));
+  pq.forEach((p, i) => (i ? ctx.lineTo(T.X(p[0]), T.Y(p[1])) : ctx.moveTo(T.X(p[0]), T.Y(p[1]))));
   ctx.closePath();
   ctx.stroke();
+  if (hasWin() && cur.win.quad) strokeWindow(ctx, T, cur.win.quad, cur.win.kind, dpr, win);
+  const q = m.quad;                    // the quad the handles belong to
   if (name === "overview") {
-    ctx.strokeStyle = "#ff00ff";
+    ctx.strokeStyle = win ? CYAN : "#ff00ff";
     ctx.lineWidth = Math.max(1, dpr);
     for (const p of q) { const x = T.X(p[0]), y = T.Y(p[1]), r = 6 * dpr;
       ctx.beginPath(); ctx.moveTo(x - r, y); ctx.lineTo(x + r, y); ctx.moveTo(x, y - r); ctx.lineTo(x, y + r); ctx.stroke(); }
@@ -271,7 +333,7 @@ function drawTile(c, name, opts) {
   for (const hd of handlesFor(name, q)) {
     const x = T.X(hd.p[0]), y = T.Y(hd.p[1]);
     if (hd.type === "corner") {
-      ctx.strokeStyle = "#ff00ff";
+      ctx.strokeStyle = win ? CYAN : "#ff00ff";
       ctx.lineWidth = Math.max(1.5, 1.5 * dpr);
       const r = 10 * dpr, s = 4 * dpr;
       ctx.beginPath(); ctx.arc(x, y, r, 0, 2 * Math.PI); ctx.stroke();
@@ -283,8 +345,8 @@ function drawTile(c, name, opts) {
       ctx.translate(x, y);
       ctx.rotate(ang);
       const gw = 34 * dpr, gh = 9 * dpr;
-      ctx.fillStyle = "rgba(40,230,40,.85)";
-      ctx.strokeStyle = "#04300a";
+      ctx.fillStyle = win ? "rgba(0,220,255,.85)" : "rgba(40,230,40,.85)";
+      ctx.strokeStyle = win ? "#032d36" : "#04300a";
       ctx.lineWidth = dpr;
       ctx.beginPath();
       if (ctx.roundRect) ctx.roundRect(-gw / 2, -gh / 2, gw, gh, gh / 2); else ctx.rect(-gw / 2, -gh / 2, gw, gh);
@@ -296,7 +358,7 @@ function drawTile(c, name, opts) {
 }
 
 function caption(c, name) {
-  const cur = S.cur;
+  const cur = M();
   c.cap.textContent = "";
   const l = document.createElement("span"), r = document.createElement("span");
   l.textContent = name;
@@ -312,6 +374,7 @@ function caption(c, name) {
   } else {
     l.textContent = "overview";
   }
+  if (inWin() && name !== "overview") l.textContent = "window " + l.textContent;
   c.cap.append(l, r);
 }
 
@@ -325,7 +388,7 @@ function drawAll() {
 function layout() {
   if (!S.cur) return;
   for (const name of NAMES) {
-    const c = cells[name], t = S.cur.specs.tiles.find((x) => x.name === name);
+    const c = cells[name], t = M().specs.tiles.find((x) => x.name === name);
     fitCanvas(c.canvas, { w: c.cell.clientWidth - 2, h: c.cell.clientHeight - 2 }, t);
   }
   drawAll();
@@ -336,19 +399,19 @@ function attachPointer(canvas, nameOrFn, isZoom) {
   let drag = null;
   const nm = () => (typeof nameOrFn === "function" ? nameOrFn() : nameOrFn);
   const toScan = (e) => {
-    const t = S.cur.specs.tiles.find((x) => x.name === nm());
+    const t = M().specs.tiles.find((x) => x.name === nm());
     const r = canvas.getBoundingClientRect();
     const fx = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), fy = Math.min(1, Math.max(0, (e.clientY - r.top) / r.height));
     return [t.x0 + fx * t.window[0], t.y0 + fy * t.window[1]];
   };
   const toCss = (p) => {
-    const t = S.cur.specs.tiles.find((x) => x.name === nm());
+    const t = M().specs.tiles.find((x) => x.name === nm());
     const r = canvas.getBoundingClientRect();
     return [r.left + ((p[0] - t.x0) / t.window[0]) * r.width, r.top + ((p[1] - t.y0) / t.window[1]) * r.height];
   };
   const pick = (e) => {
     if (!S.cur || S.busy || nm() === "overview") return null;
-    for (const hd of handlesFor(nm(), S.cur.quad)) {
+    for (const hd of handlesFor(nm(), M().quad)) {
       const c = toCss(hd.p);
       if (Math.hypot(e.clientX - c[0], e.clientY - c[1]) <= HIT) return hd;
     }
@@ -358,14 +421,14 @@ function attachPointer(canvas, nameOrFn, isZoom) {
     if (!S.cur || e.button !== 0) return;
     const hd = pick(e);
     canvas.setPointerCapture(e.pointerId);
-    drag = { hd, start: toScan(e), q0: clone(S.cur.quad), moved: false, x: e.clientX, y: e.clientY };
+    drag = { hd, start: toScan(e), q0: clone(M().quad), moved: false, x: e.clientX, y: e.clientY, win: inWin() };
     e.preventDefault();
   });
   canvas.addEventListener("pointermove", (e) => {
     if (!S.cur) return;
     if (!drag) { canvas.style.cursor = pick(e) ? "grab" : (isZoom ? "crosshair" : "zoom-in"); return; }
     if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) > 3) drag.moved = true;
-    if (!drag.hd || !drag.moved) return;
+    if (!drag.hd || !drag.moved || drag.win !== inWin()) return;
     const p = toScan(e), dx = p[0] - drag.start[0], dy = p[1] - drag.start[1];
     const q = clone(drag.q0);
     if (drag.hd.type === "corner") {
@@ -374,7 +437,7 @@ function attachPointer(canvas, nameOrFn, isZoom) {
       const n = sideNormal(drag.q0, drag.hd.side), d = dx * n[0] + dy * n[1];
       for (const i of SIDE_CORNERS[drag.hd.side]) q[i] = [q[i][0] + d * n[0], q[i][1] + d * n[1]];
     }
-    S.cur.quad = clampQuad(q);
+    setQuad(clampQuad(q));
     canvas.style.cursor = "grabbing";
     drawAll();
   });
@@ -403,19 +466,19 @@ function openZoom(name) {
 }
 function closeZoom() { S.zoom = null; $("zoom").style.display = "none"; }
 function drawZoom(resize) {
-  const t = S.cur.specs.tiles.find((x) => x.name === S.zoom);
+  const t = M().specs.tiles.find((x) => x.name === S.zoom);
   const canvas = $("zcanvas");
   if (resize || !canvas.style.width) {
     const box = { w: Math.min(window.innerWidth - 40, 1100), h: window.innerHeight - 90 };
     fitCanvas(canvas, box, t);
   }
   drawTile({ canvas, cap: document.createElement("div") }, S.zoom);
-  const q = S.cur.quad;
+  const q = M().quad;
   if (S.zoom in CORNER_IDX) {
     const p = q[CORNER_IDX[S.zoom]];
     $("zinfo").textContent = `(${p[0].toFixed(1)}, ${p[1].toFixed(1)})`;
   } else if (S.zoom in SIDE_CORNERS) {
-    const n = sideNormal(S.cur.orig, S.zoom), m = mid(q, S.zoom), m0 = mid(S.cur.orig, S.zoom);
+    const n = sideNormal(M().orig, S.zoom), m = mid(q, S.zoom), m0 = mid(M().orig, S.zoom);
     $("zinfo").textContent = `moved ${((m[0] - m0[0]) * n[0] + (m[1] - m0[1]) * n[1]).toFixed(1)} px (+ outward)`;
   } else {
     $("zinfo").textContent = "overview";
@@ -425,7 +488,7 @@ function drawZoom(resize) {
 function nudge(dx, dy) {
   const name = S.zoom;
   if (!S.cur || S.busy || !name || name === "overview") return;
-  const q = clone(S.cur.quad);
+  const q = clone(M().quad);
   if (name in CORNER_IDX) {
     const i = CORNER_IDX[name];
     q[i] = [q[i][0] + dx, q[i][1] + dy];
@@ -435,7 +498,7 @@ function nudge(dx, dy) {
     const step = Math.sign(d) * Math.max(Math.abs(dx), Math.abs(dy));
     for (const i of SIDE_CORNERS[name]) q[i] = [q[i][0] + step * n[0], q[i][1] + step * n[1]];
   }
-  S.cur.quad = clampQuad(q);
+  setQuad(clampQuad(q));
   drawAll();
 }
 
@@ -453,10 +516,18 @@ $("zoom").addEventListener("pointerdown", (e) => { if (e.target === $("zoom")) c
 attachPointer($("zcanvas"), () => S.zoom, true);
 
 // ---------------------------------------------------------------- scans
+// the stored photo window of a record as the editor holds it
+function winOf(rec) {
+  const w = rec.window;
+  if (!w) return { quad: null, orig: null, kind: "square", origKind: null };
+  return { quad: w.quad ? clone(w.quad) : null, orig: w.quad ? clone(w.quad) : null, kind: w.kind || w.suggest, origKind: w.kind || null };
+}
+
 async function loadScan(i) {
   closeZoom();
   S.changedElsewhere = false;
   S.idx = i;
+  S.mode = "print";
   const rec = S.scans[i];
   S.cur = null;
   renderSide();
@@ -466,7 +537,7 @@ async function loadScan(i) {
   try { specs = await api(`${API}/scans/${encodeURIComponent(rec.key)}/tiles`); }
   catch (e) { showMsg(e.message); return; }
   if (S.idx !== i) return;
-  const cur = { rec, specs, imgs: {}, quad: clone(rec.quad), orig: clone(rec.quad) };
+  const cur = { rec, specs, imgs: {}, quad: clone(rec.quad), orig: clone(rec.quad), win: winOf(rec), wspecs: null, wimgs: null };
   S.cur = cur;
   layout();
   let pending = specs.tiles.length;
@@ -482,7 +553,39 @@ async function loadScan(i) {
     img.src = t.url;
     cur.imgs[t.name] = img;
   }
+  renderSide();
   updateButtons();
+}
+
+// Window mode: the tiles are cut at the window's corners (the stored window, else the nominal one of the kind).
+async function setMode(mode) {
+  const cur = S.cur;
+  if (!cur || S.busy || mode === S.mode) return;
+  if (mode === "window") {
+    if (!cur.win.quad) return;
+    const stored = cur.rec.window.state === "found";
+    const q = stored ? "" : `&kind=${cur.win.kind}`;
+    if (!cur.wspecs || cur.wkind !== (stored ? "" : cur.win.kind)) {
+      let specs;
+      try { specs = await api(`${API}/scans/${encodeURIComponent(cur.rec.key)}/tiles?of=window${q}`); }
+      catch (e) { showMsg(e.message); return; }
+      if (S.cur !== cur) return;
+      cur.wspecs = specs;
+      cur.wkind = stored ? "" : cur.win.kind;
+      cur.wimgs = { overview: cur.imgs.overview };
+      for (const t of specs.tiles) {
+        if (t.name === "overview") continue;
+        const img = new Image();
+        img.onload = img.onerror = () => { if (S.cur === cur) { drawTile(cells[t.name], t.name); if (S.zoom === t.name) drawZoom(); } };
+        img.src = t.url;
+        cur.wimgs[t.name] = img;
+      }
+    }
+  }
+  closeZoom();
+  S.mode = mode;
+  renderSide();
+  drawAll();
 }
 
 function renderSide() {
@@ -505,6 +608,42 @@ function renderSide() {
     ul.append(li);
   }
   $("warnbox").style.display = warns.length ? "" : "none";
+  renderWindow(rec);
+}
+
+function renderWindow(rec) {
+  const w = rec && rec.window;
+  $("winbox").hidden = $("winhelp").hidden = !w;
+  $("confirm").title = "The outline is right: store it as reviewed, go to the next scan"
+    + (w ? ". A photo window that was not found is accepted too: this print is exported without a photo crop" : "");
+  $("save").title = w ? "Store the moved outline and photo window in the manifest" : "Store the moved outline in the manifest";
+  if (!w) return;
+  const cur = S.cur && S.cur.rec === rec ? S.cur : null;
+  const st = $("winstate");
+  st.textContent = "";
+  const sw = document.createElement("span");
+  sw.className = "sw";
+  const by = w.source === "manual" && w.author ? `, set by ${w.author}${w.at ? " " + w.at.replace("T", " ").slice(0, 16) : ""}` : "";
+  let text;
+  if (w.state === "found") text = `${w.kind} window, ${w.source === "manual" ? "set by hand" : "automatic"}${by}`
+    + (w.outside ? ". It lies outside the print outline: move it inside, or take it away with Back to automatic. "
+      + (w.cut === "auto" ? "The automatic window is cut meanwhile." : "No photo crop is cut meanwhile.") : "");
+  else if (w.state === "none") text = `No photo crop, by choice${by}`;
+  else if (w.state === "unknown") text = "The window has not been looked for yet (run Detect).";
+  else text = `Not found${w.reason ? ": " + w.reason : ""}${w.accepted ? " (accepted: no photo crop)" : ""}`;
+  st.append(sw, text);
+  const placed = cur && cur.win.quad;
+  const missing = w.state !== "found";
+  const nominal = w.nominal || {};
+  $("w-sq").hidden = !(missing && !placed && nominal.square);
+  $("w-rd").hidden = !(missing && !placed && nominal.round);
+  $("k-sq").hidden = $("k-rd").hidden = !placed;
+  $("k-sq").classList.toggle("on", !!placed && cur.win.kind === "square");
+  $("k-rd").classList.toggle("on", !!placed && cur.win.kind === "round");
+  $("w-none").hidden = w.state === "none";
+  $("w-reset").hidden = w.source !== "manual";
+  $("m-print").classList.toggle("on", S.mode === "print");
+  $("m-win").classList.toggle("on", S.mode === "window");
 }
 
 function renderList() {
@@ -535,6 +674,14 @@ function updateButtons() {
   $("skip").disabled = !has || busy;
   $("prev").disabled = busy || S.idx <= 0;
   $("next").disabled = busy || S.idx >= S.scans.length - 1;
+  const win = has && hasWin();
+  $("m-print").disabled = !win || busy;
+  $("m-win").disabled = !win || busy || !S.cur.win.quad;
+  $("m-win").title = win && !S.cur.win.quad ? "There is no window yet: place one first" : "Show the tiles at the photo window's corners and edges";
+  for (const id of ["w-sq", "w-rd"]) $(id).disabled = !win || busy;
+  for (const id of ["k-sq", "k-rd"]) $(id).disabled = !win || busy;
+  $("w-none").disabled = !win || busy || dirty;
+  $("w-reset").disabled = !win || busy || dirty;
 }
 
 // Asks in the page (not with the browser's dialogs) whether unsaved drags may go; resolves true to leave.
@@ -555,21 +702,36 @@ async function go(i) {
   loadScan(i);
 }
 
+// the corners of a window run clockwise on the scan (tl, tr, br, bl), else its photo would be mirrored
+const clockwise = (q) => q.reduce((a, p, i) => a + p[0] * q[(i + 1) % 4][1] - q[(i + 1) % 4][0] * p[1], 0) > 0;
+
 async function commit(kind) {
   const cur = S.cur;
   if (!cur || S.busy) return;
+  if (kind !== "confirm" && winDirty() && !clockwise(cur.win.quad)) {
+    showMsg("Not saved: the window corners must run clockwise, tl, tr, br, bl (the photo would be mirrored).");
+    return;
+  }
   S.busy = true;
   updateButtons();
   showMsg(S.meta && S.meta.export ? "Saving and exporting…" : "Saving…", true);
   const key = cur.rec.key;
+  const corners = (q) => Object.fromEntries(Object.entries(CORNER_IDX).map(([n, i]) => [n, q[i].map((v) => Math.round(v * 100) / 100)]));
+  const url = (what) => `${API}/scans/${encodeURIComponent(key)}/${what}`;
   try {
-    const body = kind === "confirm" ? {} : { corners: Object.fromEntries(Object.entries(CORNER_IDX).map(([n, i]) => [n, cur.quad[i].map((v) => Math.round(v * 100) / 100)])) };
-    const rec = await api(`${API}/scans/${encodeURIComponent(key)}/${kind}`, body);
+    let rec;
+    if (kind === "confirm") rec = await api(url("confirm"), {});
+    else {
+      // one fix for both: either both are stored or neither (a window outside the new outline is refused)
+      const win = winDirty() ? { corners: corners(cur.win.quad), kind: cur.win.kind } : null;
+      if (printDirty()) rec = await api(url("save"), { corners: corners(cur.quad), window: win });
+      else if (win) rec = await api(url("window"), win);
+    }
     S.scans[S.idx] = rec;
     S.marks[key] = kind === "confirm" ? "confirmed" : "fixed";
     S.busy = false;
     showMsg(kind === "confirm" ? `Confirmed ${key}` : `Saved ${key}${rec.exported ? " and exported" : ""}`, true);
-    if (EMBED) { cur.orig = clone(cur.quad); toApp({ type: "fix-saved", key }); return; }   // nothing unsaved is left
+    if (EMBED) { markClean(); toApp({ type: "fix-saved", key }); return; }   // nothing unsaved is left
     if (kind === "confirm" && S.idx < S.scans.length - 1) loadScan(S.idx + 1);
     else loadScan(S.idx);       // re-cut tiles at the stored outline
   } catch (e) {
@@ -584,15 +746,72 @@ $("save").onclick = () => commit("save");
 $("reset").onclick = () => {
   if (!S.cur) return;
   if (S.changedElsewhere) { loadScan(S.idx); return; }     // take over the outline stored meanwhile
-  S.cur.quad = clone(S.cur.orig); drawAll();
+  S.cur.quad = clone(S.cur.orig);
+  Object.assign(S.cur.win, winOf(S.cur.rec));
+  if (S.mode === "window" && !S.cur.win.quad) S.mode = "print";
+  renderSide();
+  drawAll();
 };
+
+// ---- the photo window
+$("m-print").onclick = () => setMode("print");
+$("m-win").onclick = () => setMode("window");
+async function place(kind) {
+  const cur = S.cur;
+  if (!cur || S.busy || !hasWin()) return;
+  const nom = (cur.rec.window.nominal || {})[kind];
+  if (!nom) return;
+  cur.win = { quad: clone(nom), orig: null, kind, origKind: null };
+  cur.wspecs = null;
+  S.mode = "print";        // setMode does nothing for the mode it is in; the tiles are cut again for the new window
+  await setMode("window");
+}
+$("w-sq").onclick = () => place("square");
+$("w-rd").onclick = () => place("round");
+function setKind(kind) {
+  const cur = S.cur;
+  if (!cur || S.busy || !cur.win.quad || cur.win.kind === kind) return;
+  if (!cur.win.orig) { place(kind); return; }              // a window placed here starts again from the nominal one of that kind
+  cur.win.kind = kind;
+  renderSide();
+  drawAll();
+}
+$("k-sq").onclick = () => setKind("square");
+$("k-rd").onclick = () => setKind("round");
+async function windowAction(body, text) {
+  const cur = S.cur;
+  if (!cur || S.busy) return;
+  S.busy = true;
+  updateButtons();
+  showMsg("Saving…", true);
+  const key = cur.rec.key;
+  try {
+    const rec = await api(`${API}/scans/${encodeURIComponent(key)}/window`, body);
+    S.scans[S.idx] = rec;
+    S.marks[key] = "fixed";
+    S.busy = false;
+    showMsg(`${text} ${key}`, true);
+    if (EMBED) { markClean(); toApp({ type: "fix-saved", key }); return; }
+    loadScan(S.idx);
+  } catch (e) {
+    S.busy = false;
+    showMsg("Not saved: " + e.message);
+    updateButtons();
+  }
+}
+$("w-none").onclick = () => windowAction({ none: true }, "No photo crop for");
+$("w-reset").onclick = () => windowAction({ reset: true }, "Automatic photo window again for");
 async function closeToApp() {
   if (isDirty() && !(await askDiscard())) return false;
   markClean();
   toApp({ type: "fix-close" });
   return true;
 }
-function markClean() { if (S.cur) S.cur.orig = clone(S.cur.quad); }
+function markClean() {
+  if (!S.cur) return;
+  S.cur.orig = clone(S.cur.quad);
+  if (S.cur.win.quad) { S.cur.win.orig = clone(S.cur.win.quad); S.cur.win.origKind = S.cur.win.kind; }
+}
 $("back").onclick = closeToApp;
 // browser Back in the app: the app asks the page to close; the page answers, after asking about unsaved drags
 window.addEventListener("message", async (e) => {
@@ -651,8 +870,18 @@ async function refreshScans() {
   if (!S.cur || i < 0) { renderSide(); updateButtons(); return; }
   const rec = S.scans[i];
   if (rec.rev === S.cur.rec.rev && sameQuad(rec.quad, S.cur.rec.quad)) {
+    // a run may have found another window (it writes no history entry): take it over, unless the window has edits
+    const winChanged = JSON.stringify(rec.window) !== JSON.stringify(S.cur.rec.window);
     S.cur.rec = rec;
+    if (winChanged && !winDirty()) {
+      const was = S.mode;
+      S.cur.win = winOf(rec);
+      S.cur.wspecs = null;
+      S.mode = "print";
+      if (was === "window" && S.cur.win.quad) await setMode("window");
+    }
     renderSide();
+    drawAll();
   } else if (!isDirty()) {
     S.note = "This scan was changed elsewhere; showing the new outline.";
     loadScan(i);

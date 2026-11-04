@@ -241,5 +241,28 @@ class Manifest:
         else:
             e["override"] = {"quad": np.round(quad, 2).tolist(), "author": author, "at": rec["at"], "note": note}
 
+    def set_window_fix(self, key: str, window: Optional[Dict[str, Any]], author: str, note: str = "",
+                       action: str = "window") -> None:
+        """Store the user's window choice (a hand-set window, or the no-photo-crop choice; ``None`` takes it
+        away) in ``window_fix`` and log it like an outline fix: author, time, note and the previous choice.
+        Only fixes write ``window_fix`` (the batch owns ``window``, the automatic window)."""
+        e = self.entry(key)
+        fix = dict(e.get("window_fix") or {})
+        e.setdefault("history", []).append({
+            "action": action, "author": author, "at": now(), "note": note,
+            "window_before": fix.get("window"), "window_after": window,
+        })
+        fix["window"] = window
+        e["window_fix"] = fix if fix.get("window") or fix.get("accepted") else None
+
+    def set_window_accept(self, key: str, outline: Optional[str], author: str, note: str = "") -> None:
+        """Mark the scan as accepted for the outline ``outline`` (an outline id; ``None`` clears the mark): a
+        window not found is then no review item while the outline stays. The accept is an entry of the
+        outline's own history (``accept`` / ``fix``), so nothing is logged here."""
+        e = self.entry(key)
+        fix = dict(e.get("window_fix") or {})
+        fix["accepted"] = None if outline is None else {"outline": outline, "author": author, "at": now(), "note": note}
+        e["window_fix"] = fix if fix.get("window") or fix.get("accepted") else None
+
     def history(self, key: str) -> List[Dict[str, Any]]:
         return list(self.entry(key).get("history", []))

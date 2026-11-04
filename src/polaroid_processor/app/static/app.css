@@ -66,6 +66,8 @@ label { display: block; color: var(--dim); font-size: 12px; margin: 10px 0 4px; 
 .card:hover { border-color: var(--blue); }
 .card .img { height: 230px; background: #0c0d10; display: flex; align-items: center; justify-content: center; position: relative; }
 .card .img img { max-width: 100%; max-height: 100%; display: block; }
+.card .img svg.win { position: absolute; pointer-events: none; }
+.card .img svg.win polygon { fill: none; stroke: #00dcff; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
 .card .img .none { color: var(--dim); font-size: 12px; }
 .card .img .stale { position: absolute; top: 6px; right: 6px; font-size: 11px; color: var(--dim); background: rgba(0,0,0,.6);
   border-radius: 8px; padding: 0 6px; }

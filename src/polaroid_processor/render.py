@@ -11,14 +11,32 @@ from .imageio import to_uint8
 
 CORNERS = ("tl", "tr", "br", "bl")
 GREEN = (40, 230, 40)
+CYAN = (0, 220, 255)
 MAGENTA = (255, 0, 255)
 YELLOW = (255, 220, 0)
 WHITE = (255, 255, 255)
 
 
+def circle_of(quad: np.ndarray) -> Tuple[Tuple[float, float], Tuple[float, float], float]:
+    """Centre, semi axes and angle (deg) of the ellipse inscribed in a (round window's) bounding quad."""
+    q = np.asarray(quad, np.float64)
+    top, left = q[1] - q[0], q[3] - q[0]
+    return tuple(q.mean(axis=0)), (float(np.hypot(*top)) / 2, float(np.hypot(*left)) / 2), \
+        float(np.degrees(np.arctan2(top[1], top[0])))
+
+
+def _draw_circle(img: np.ndarray, quad: np.ndarray, scale: float, shift: Tuple[float, float], color, thickness: int) -> None:
+    (cx, cy), (a, b), ang = circle_of(quad)
+    cv2.ellipse(img, (int(round((cx - shift[0]) * scale)), int(round((cy - shift[1]) * scale))),
+                (max(1, int(round(a * scale))), max(1, int(round(b * scale)))), ang, 0, 360, color, thickness,
+                cv2.LINE_AA)
+
+
 def overlay(rgb: np.ndarray, quad: np.ndarray, long_edge: int = 1200,
-            points: Optional[Dict[str, np.ndarray]] = None) -> np.ndarray:
-    """Downscaled scan with the quad (and optional edge points) drawn."""
+            points: Optional[Dict[str, np.ndarray]] = None, color=GREEN, ref: Optional[np.ndarray] = None,
+            circle: bool = False) -> np.ndarray:
+    """Downscaled scan with the quad (and optional edge points) drawn. ``ref``: a second quad (the print
+    outline when ``quad`` is a photo window), drawn in green; ``circle``: also the circle inscribed in ``quad``."""
     h, w = rgb.shape[:2]
     f = long_edge / max(h, w)
     small = cv2.resize(to_uint8(rgb), (max(1, round(w * f)), max(1, round(h * f))), interpolation=cv2.INTER_AREA)
@@ -27,8 +45,12 @@ def overlay(rgb: np.ndarray, quad: np.ndarray, long_edge: int = 1200,
         for pts in points.values():
             for x, y in pts[::6]:
                 cv2.circle(small, (int(x * f), int(y * f)), 1, YELLOW, -1)
+    if ref is not None:
+        cv2.polylines(small, [np.round(ref * f).astype(np.int32).reshape(-1, 1, 2)], True, GREEN, 2, cv2.LINE_AA)
     q = np.round(quad * f).astype(np.int32).reshape(-1, 1, 2)
-    cv2.polylines(small, [q], True, GREEN, 2, cv2.LINE_AA)
+    cv2.polylines(small, [q], True, color, 2, cv2.LINE_AA)
+    if circle:
+        _draw_circle(small, quad, f, (0.0, 0.0), color, 2)
     for name, (x, y) in zip(CORNERS, quad * f):
         cv2.putText(small, name, (int(x) + 6, int(y) + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, MAGENTA, 1, cv2.LINE_AA)
     return small
@@ -67,11 +89,13 @@ def raw_tile(rgb: np.ndarray, centre: Tuple[float, float], window: int,
 
 
 def _tile(rgb: np.ndarray, centre: Tuple[float, float], window: int, zoom: int, quad: np.ndarray,
-          title: str, grid: int, stretch: str = "auto", outline: Optional[np.ndarray] = None) -> np.ndarray:
+          title: str, grid: int, stretch: str = "auto", outline: Optional[np.ndarray] = None, color=GREEN,
+          ref: Optional[np.ndarray] = None, circle: bool = False) -> np.ndarray:
     """Full-resolution crop around ``centre`` with a coordinate grid and the crop edge drawn.
 
     The crop edge is ``outline`` (a curved, closed polyline) when given, else the quad; with an
-    outline the straight quad is drawn faintly for reference."""
+    outline the straight quad is drawn faintly for reference. ``ref`` is a second quad drawn in green (the print
+    outline, when ``quad`` is a photo window in ``color``); ``circle`` adds the circle inscribed in ``quad``."""
     tile, x0, y0, stretched = raw_tile(rgb, centre, window, stretch)
     if stretched:
         title += " stretched"
@@ -86,12 +110,17 @@ def _tile(rgb: np.ndarray, centre: Tuple[float, float], window: int, zoom: int, 
         cv2.line(tile, (0, py), (tile.shape[1] - 1, py), (90, 90, 160), 1)
         cv2.putText(tile, str(gy), (2, py - 2), cv2.FONT_HERSHEY_PLAIN, 0.8, (160, 160, 255), 1, cv2.LINE_AA)
     q = np.round((quad - [x0, y0]) * zoom).astype(np.int32).reshape(-1, 1, 2)
+    if ref is not None:
+        cv2.polylines(tile, [np.round((ref - [x0, y0]) * zoom).astype(np.int32).reshape(-1, 1, 2)], True, GREEN, 1,
+                      cv2.LINE_AA)
     if outline is not None:
         cv2.polylines(tile, [q], True, (110, 110, 110), 1, cv2.LINE_AA)
         o = np.round((outline - [x0, y0]) * zoom).astype(np.int32).reshape(-1, 1, 2)
         cv2.polylines(tile, [o], True, GREEN, 1, cv2.LINE_AA)
     else:
-        cv2.polylines(tile, [q], True, GREEN, 1, cv2.LINE_AA)
+        cv2.polylines(tile, [q], True, color, 1, cv2.LINE_AA)
+    if circle:
+        _draw_circle(tile, quad, zoom, (x0, y0), color, 1)
     for (x, y) in quad:
         px, py = int(round((x - x0) * zoom)), int(round((y - y0) * zoom))
         cv2.drawMarker(tile, (px, py), MAGENTA, cv2.MARKER_CROSS, 14, 1)
@@ -110,18 +139,21 @@ def inspect_points(quad: np.ndarray) -> List[Tuple[str, Tuple[float, float]]]:
 
 
 def inspect_sheet(rgb: np.ndarray, quad: np.ndarray, window: int = 360, zoom: int = 1, grid: int = 50,
-                  header: str = "", stretch: str = "auto", outline: Optional[np.ndarray] = None) -> np.ndarray:
+                  header: str = "", stretch: str = "auto", outline: Optional[np.ndarray] = None, color=GREEN,
+                  ref: Optional[np.ndarray] = None, circle: bool = False) -> np.ndarray:
     """Overview plus 8 full-resolution tiles (corners and edge midpoints), 4 per row.
 
-    ``outline``: the curved crop edge of a flattened print (drawn instead of the quad)."""
+    ``outline``: the curved crop edge of a flattened print (drawn instead of the quad). For a photo window
+    ``quad`` is the window in ``color``, ``ref`` the print outline (green) and ``circle`` a round window."""
     tiles = []
     for name, p in inspect_points(quad):
         title = f"{name} ({p[0]:.0f}, {p[1]:.0f})"
-        tiles.append(_tile(rgb, p, window, zoom, quad, title, grid, stretch, outline))
+        tiles.append(_tile(rgb, p, window, zoom, quad, title, grid, stretch, outline, color, ref, circle))
     ts = window * zoom
     rows = [np.concatenate(tiles[:4], axis=1), np.concatenate(tiles[4:], axis=1)]
     grid_img = np.concatenate([rows[0], np.full((4, ts * 4, 3), 40, np.uint8), rows[1]], axis=0)
-    ov = overlay(rgb, quad, long_edge=grid_img.shape[0], points={"outline": outline} if outline is not None else None)
+    ov = overlay(rgb, quad, long_edge=grid_img.shape[0], points={"outline": outline} if outline is not None else None,
+                 color=color, ref=ref, circle=circle)
     sheet_h = grid_img.shape[0]
     pad = np.full((sheet_h, ov.shape[1] + 8, 3), 40, np.uint8)
     pad[: ov.shape[0], 8:] = ov

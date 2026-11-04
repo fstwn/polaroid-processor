@@ -192,7 +192,34 @@ function warnItems(scan) {
 }
 
 function sig(scan) {
-  return JSON.stringify([scan.status, scan.preview && scan.preview.url, scan.stale, scan.warnings, scan.error, scan.export, scan.quad_source]);
+  return JSON.stringify([scan.status, scan.preview && scan.preview.url, scan.stale, scan.warnings, scan.error, scan.export, scan.quad_source, scan.window, scan.window_fix]);
+}
+
+// The photo window (cyan) over a card's crop preview, placed on the image as it is shown in the box.
+function windowOverlay(box, im, w) {
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("class", "win");
+  svg.setAttribute("viewBox", "0 0 1 1");
+  svg.setAttribute("preserveAspectRatio", "none");
+  const q = w.box;
+  let pts = q;
+  if (w.kind === "round") {      // the circle in the bounding square, as a polygon (the mapping to the card is affine)
+    const c = [0, 1].map((k) => (q[0][k] + q[1][k] + q[2][k] + q[3][k]) / 4);
+    const t = [0, 1].map((k) => (q[1][k] - q[0][k]) / 2), l = [0, 1].map((k) => (q[3][k] - q[0][k]) / 2);
+    pts = Array.from({ length: 48 }, (_, i) => { const a = (i / 48) * 2 * Math.PI; return [c[0] + Math.cos(a) * t[0] + Math.sin(a) * l[0], c[1] + Math.cos(a) * t[1] + Math.sin(a) * l[1]]; });
+  }
+  const poly = document.createElementNS(NS, "polygon");
+  poly.setAttribute("points", pts.map((p) => p.join(",")).join(" "));
+  svg.append(poly);
+  const place = () => {
+    svg.style.left = im.offsetLeft + "px"; svg.style.top = im.offsetTop + "px";
+    svg.style.width = im.clientWidth + "px"; svg.style.height = im.clientHeight + "px";
+  };
+  im.addEventListener("load", place);
+  if (im.complete) place();
+  if (window.ResizeObserver) new ResizeObserver(place).observe(box);
+  return svg;
 }
 
 function buildCard(scan) {
@@ -203,6 +230,7 @@ function buildCard(scan) {
     const im = el("img", null, null, { alt: scan.key, loading: "lazy" });
     im.src = scan.preview.url;
     img.append(im);
+    if (scan.window && !scan.stale) img.append(windowOverlay(img, im, scan.window));
     if (scan.stale) img.append(el("span", "stale", "updating…"));
   } else {
     img.append(el("span", "none", scan.status === "failed" ? "no outline" : scan.status === "pending" ? "waiting for detection" : "preview pending"));
@@ -212,6 +240,8 @@ function buildCard(scan) {
   const tags = el("div", "tags");
   tags.append(el("span", "badge " + scan.status, scan.status.replace("_", " ")));
   if (scan.quad_source === "override") tags.append(el("span", "x", "fixed"));
+  if (scan.window_fix === "hand") tags.append(el("span", "x", "window by hand"));
+  else if (scan.window_fix === "none") tags.append(el("span", "x", "no photo crop"));
   if (scan.export === "done") tags.append(el("span", "x", "exported"));
   else if (scan.export === "tags") tags.append(el("span", "x", "exported, tags to update"));
   else if (scan.export === "outdated") tags.append(el("span", "x warnx", "export outdated"));
