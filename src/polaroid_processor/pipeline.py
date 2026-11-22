@@ -22,8 +22,11 @@ from . import shading
 from .detection import DetectionError, DetectParams, band_shift, detect, quad_size
 from .formats import classify, match_format
 from .geometry import rectify, shift_side
+from . import metadata as meta_mod
 from .imageio import (SCAN_SUFFIXES, file_fingerprint, load_rgb, read_meta, resize_long_edge, set_resolution,
                       write_derivative, write_tiff)
+from .meta_patch import PatchError, set_metadata
+from .metadata import FileMeta
 from .lock import RunLock
 from .manifest import MANIFEST_NAME, Manifest, now, scan_key
 from .preview import LONG_EDGE, PREVIEW_DIR, write_preview
@@ -40,6 +43,7 @@ GB = 1024 ** 3
 PHOTO_CROP = ("off", "derivatives", "tiff")  # photo-area crop next to the full print: none, JPG derivatives, + TIFF master
 PHOTO_BLEED_MM = 0.3
 PHOTO_DIR = "photo"
+SOFTWARE = f"polaroid-processor {__version__}"      # the Software tag of every export
 
 
 # --------------------------------------------------------------------------- settings
@@ -112,6 +116,9 @@ class Settings:
     shading_params: shading.ShadingParams = field(default_factory=shading.ShadingParams)
     photo_crop: Optional[str] = "off"        # None only from api.make_settings: run_batch fills in the manifest's value
     photo_bleed_mm: Optional[float] = PHOTO_BLEED_MM
+    # the project's metadata (see metadata.py); not part of the export key. From api.make_settings: only the fields
+    # the caller gave (None: none), merged over the manifest's by run_batch
+    metadata: Optional[dict] = None
 
     def export_key(self, quad: np.ndarray, scale: Scale, curves: Optional[dict] = None,
                    override: bool = False, window: Optional[dict] = None) -> str:
@@ -231,19 +238,20 @@ def flatten_plan(curves: Optional[dict], px_per_mm: float, mode: str, override: 
 
 
 def _write_images(img: np.ndarray, out_dir: Path, stem: str, px_per_mm: float, icc: Optional[bytes], ex: dict,
-                  prefix: str = "", alpha: Optional[np.ndarray] = None, tiff: bool = True) -> Tuple[dict, dict]:
+                  prefix: str = "", alpha: Optional[np.ndarray] = None, tiff: bool = True,
+                  fm: Optional[FileMeta] = None) -> Tuple[dict, dict]:
     """TIFF master (``out_dir/STEM.tif``) and the derivatives (``out_dir/NAME/STEM.EXT``) of ``img``.
     Returns outputs and their px/mm, named ``prefix`` + ``tiff`` / the derivative's name."""
     outputs, ppm = {}, {}
     if tiff:
         tiff_path = out_dir / f"{stem}.tif"
-        write_tiff(str(tiff_path), img, px_per_mm, icc, ex["tiff_compression"], alpha=alpha)
+        write_tiff(str(tiff_path), img, px_per_mm, icc, ex["tiff_compression"], alpha=alpha, meta=fm)
         outputs[prefix + "tiff"], ppm[prefix + "tiff"] = str(tiff_path), px_per_mm
     for d in ex["derivatives"]:
         small = resize_long_edge(img, d["long_edge"], d["scale"])
         f = small.shape[1] / img.shape[1]
         p = out_dir / d["name"] / f"{stem}.{d['fmt']}"
-        write_derivative(str(p), small, d["fmt"], d["quality"], px_per_mm * f * 25.4, icc)
+        write_derivative(str(p), small, d["fmt"], d["quality"], px_per_mm * f * 25.4, icc, meta=fm)
         outputs[prefix + d["name"]], ppm[prefix + d["name"]] = str(p), px_per_mm * f
     return outputs, ppm
 
@@ -279,7 +287,8 @@ def remove_photo_files(out_dir: Path, stem: str) -> None:
 
 
 def _export(rgb: np.ndarray, quad: np.ndarray, px_per_mm: float, icc: Optional[bytes], key: str, ex: dict,
-            curves: Optional[dict] = None, override: bool = False, window: Optional[dict] = None) -> dict:
+            curves: Optional[dict] = None, override: bool = False, window: Optional[dict] = None,
+            fm: Optional[FileMeta] = None) -> dict:
     """Rectify (or unwarp), remove edge shadows, write master + derivatives (+ overlay), and with a photo
     window and ``photo_crop`` on the photo crop (``photo/``) from the same scan.
 
@@ -297,12 +306,12 @@ def _export(rgb: np.ndarray, quad: np.ndarray, px_per_mm: float, icc: Optional[b
         img, shade = shading.correct(img, px_per_mm, ex["shading_params"])
     stem = Path(key).stem
     out_dir = Path(ex["out_dir"])
-    outputs, ppm = _write_images(img, out_dir, stem, px_per_mm, icc, ex)
+    outputs, ppm = _write_images(img, out_dir, stem, px_per_mm, icc, ex, fm=fm)
     photo = ex.get("photo_crop", "off") != "off" and window and window.get("found") and window.get("quad")
     if photo:     # no shadow correction here: it only touches the frame
         crop, alpha = photo_image(rgb, window, px_per_mm, ex["photo_bleed_mm"], ex["interpolation"])
         o, r = _write_images(crop, out_dir / PHOTO_DIR, stem, px_per_mm, icc, ex, "photo_", alpha,
-                             tiff=ex["photo_crop"] == "tiff")
+                             tiff=ex["photo_crop"] == "tiff", fm=fm)
         outputs.update(o)
         ppm.update(r)
     if not photo:
@@ -316,6 +325,52 @@ def _export(rgb: np.ndarray, quad: np.ndarray, px_per_mm: float, icc: Optional[b
         outputs["overlay"] = str(p)
     return {"outputs": outputs, "output_ppm": ppm, "output_size_px": [int(img.shape[1]), int(img.shape[0])],
             "flatten": fplan.to_dict(), "shadows": shade}
+
+
+def file_meta(project_meta: Optional[dict], key: str, input_path: str, fmt: Optional[dict],
+              size_px: Optional[Tuple[float, float]], make: str = "", model: str = "") -> FileMeta:
+    """What an export of scan ``key`` carries: the project's metadata with the placeholders filled, the scanner's
+    Make and Model, and our Software string. ``fmt`` is the scan's format record (its shape decides when it has none)."""
+    return meta_mod.fill(project_meta, stem=Path(key).stem, project=Path(input_path).resolve().parent.name,
+                         format_name=meta_mod.format_label(fmt, size_px), make=make, model=model, software=SOFTWARE)
+
+
+def sync_metadata(manifest: Manifest, e: dict, key: str, settings: Settings,
+                  on_update: Optional[Callable[[], None]] = None) -> str:
+    """Bring the headers of a scan's exported files in line with the project's metadata, in place (no pixel is
+    touched). ``same``: nothing to do (also when no metadata is set and the export has no metadata key), ``updated``:
+    rewritten, ``failed``: a file is not the structure the writers expect, so the scan has to be exported again,
+    ``skipped``: a file could not be opened for writing (a viewer holds it); the old key stays and the next run
+    tries again (exporting again would fail on the same file). ``on_update`` is called before the first rewrite."""
+    quad = Manifest.effective_quad(e)
+    fm = file_meta(settings.metadata, key, e["input"], e.get("format"), None if quad is None else quad_size(quad))
+    want, have = fm.key(), e.get("metadata_key") or ""
+    if want == have:
+        return "same"
+    names = [n for n in (e.get("outputs") or {}) if n != "overlay"]
+    if not names:
+        return "failed"
+    if on_update:
+        on_update()
+    try:
+        try:
+            m = read_meta(e["input"])
+            fm = replace(fm, make=m.make, model=m.model)
+        except Exception:  # noqa: BLE001  (the scan is gone: the files get no Make and Model)
+            pass
+        for n in names:
+            set_metadata(str(manifest.abs(e["outputs"][n])), fm)
+    except OSError as ex:
+        log.warning("%s: headers could not be rewritten (%s), the next run tries again", key, ex)
+        return "skipped"
+    except Exception as ex:  # noqa: BLE001  (PatchError and anything unexpected)
+        log.warning("%s: headers could not be rewritten (%s: %s), exporting again", key, type(ex).__name__, ex)
+        return "failed"
+    if want:
+        e["metadata_key"] = want
+    else:
+        e.pop("metadata_key", None)
+    return "updated"
 
 
 def _job(job: dict) -> dict:
@@ -376,9 +431,11 @@ def _job(job: dict) -> dict:
             except Exception as e:  # noqa: BLE001
                 log.warning("preview of %s failed: %s", job["key"], e)
         if job["export"]:
+            fm = file_meta(ex.get("metadata"), job["key"], path, job.get("format"), quad_size(quad), meta.make, meta.model)
             res.update(_export(rgb, quad, px, meta.icc_profile, job["key"], ex,
                                curves=(det or {}).get("curves"),
-                               override=manual_outline(job.get("override"), det), window=window))
+                               override=manual_outline(job.get("override"), det), window=window, fm=fm))
+            res["metadata_key"] = fm.key()
             res["export_px_per_mm"] = px
             res["export_outline"] = outline_id(quad)
             res["export_window"] = window      # what the photo crop was cut from: the key and the reconcile need it
@@ -504,7 +561,8 @@ def _run_pool(fn: Callable, jobs: List[dict], workers: int, cancel: Optional[Cal
         yield res
 
 
-PARTIAL_SUFFIXES = tuple(f"{ext}.part" for ext in (".tif", ".tiff", ".jpg", ".jpeg", ".png"))
+PARTIAL_SUFFIXES = tuple(f"{ext}{tail}" for ext in (".tif", ".tiff", ".jpg", ".jpeg", ".png")
+                         for tail in (".part", ".patch", ".part.patch"))      # export, header rewrite, header write
 
 
 def _clean_partial(out: Path) -> None:
@@ -848,7 +906,8 @@ def _export_settings(settings: Settings, out_dir: Path) -> dict:
             "derivatives": [asdict(d) for d in settings.derivatives], "out_dir": str(out_dir),
             "flatten": settings.flatten, "shadows": settings.shadows,
             "flatten_params": settings.flatten_params, "shading_params": settings.shading_params,
-            "photo_crop": settings.photo_crop, "photo_bleed_mm": settings.photo_bleed_mm}
+            "photo_crop": settings.photo_crop, "photo_bleed_mm": settings.photo_bleed_mm,
+            "metadata": settings.metadata or {}}
 
 
 def _workers_for(manifest: Manifest, jobs: List[dict], settings: Settings) -> int:
@@ -898,6 +957,10 @@ def _store_job_result(manifest: Manifest, res: dict) -> None:
                  export_px_per_mm=res["export_px_per_mm"], export_geom_ppm=res["export_px_per_mm"],
                  exported_at=now(),
                  flatten=res.get("flatten"), shadows=res.get("shadows"))
+        if res.get("metadata_key"):
+            e["metadata_key"] = res["metadata_key"]
+        else:
+            e.pop("metadata_key", None)
 
 
 def retag_ok(e: dict, final: Scale, settings: Settings, curves: Optional[dict] = None, manual: bool = False) -> bool:
@@ -983,6 +1046,12 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
                            else settings.photo_crop,
                            photo_bleed_mm=stored.get("photo_bleed_mm", PHOTO_BLEED_MM) if settings.photo_bleed_mm is None
                            else settings.photo_bleed_mm)
+    try:      # fields the caller gave replace the project's, an empty one clears it, the others stay
+        settings = replace(settings, metadata=meta_mod.merge(stored.get("metadata"), settings.metadata))
+    except ValueError:      # a given dict that fails the checks (not from make_settings): read as saved values are
+        merged = meta_mod.normalize_stored(stored.get("metadata"))
+        merged.update(meta_mod.normalize_stored(settings.metadata))
+        settings = replace(settings, metadata=merged)
     manifest.data["settings"] = settings_to_dict(settings)
     keys = names
     explicit = explicit_scale(settings.ppi, settings.profile, settings.profiles_file)
@@ -1103,7 +1172,13 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
         reevaluate(manifest, fixed, settings)
     pass_b = []
     xargs: Dict[str, tuple] = {}      # quad, scale, curves, manual of each export job: for the key of the window it cut
-    retagged = 0
+    retagged = metadata_updated = 0
+    phased = []
+
+    def phase_once() -> None:
+        if on_phase and not phased:
+            phased.append(1)
+            on_phase("updating metadata")
     for k in keys:
         e = manifest.entry(k)
         if e.get("status") == "failed" or k not in scales or not manifest.persist or not settings.export:
@@ -1122,6 +1197,7 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
         xbase = settings.export_base(quad, final, curves, manual, win)
         outs = e.get("outputs") or {}
         missing = not outs or any(not manifest.abs(p).exists() for p in outs.values())
+        keep = False
         if exported_now.get(k):
             # cut at a scale within 0.5 % of the final one, from the outline and the window the scan has now (a refit or
             # a fix merged during the run moved them: the files then are not what the key would say)
@@ -1129,20 +1205,25 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
                     and retag_ok(e, final, settings, curves, manual)):
                 retag(manifest, e, final)
                 e["export_key"], e["export_base"] = xkey, xbase
-                continue
+                keep = True
         elif (not settings.force and not missing and e.get("export_key") != xkey and e.get("export_base") == xbase
               and retag_ok(e, final, settings, curves, manual)):
             retag(manifest, e, final)       # only the scale moved (the batch median): tags, no new pixels
             e["export_key"] = xkey
             retagged += 1
-            continue
+            keep = True
         elif not (settings.force or e.get("export_key") != xkey or missing):
-            continue
+            keep = True
+        if keep:      # the pixels stay; the headers follow the project's metadata (not part of the export key)
+            state = sync_metadata(manifest, e, k, settings, phase_once)
+            metadata_updated += state == "updated" and not exported_now.get(k)      # a fresh export is no news
+            if state != "failed":
+                continue
         xargs[k] = (quad, final, curves, manual)
         pass_b.append({"key": k, "path": e["input"], "detect": False, "detection": e.get("detection"),
                        "override": e["override"]["quad"] if e.get("override") else None, "export": True,
                        "scale": final.px_per_mm, "export_settings": ex_settings, "window": e.get("window"),
-                       "window_fix": e.get("window_fix"),
+                       "window_fix": e.get("window_fix"), "format": e.get("format"),
                        "detect_params": settings.detect_params})
     if pass_b:
         if on_jobs:
@@ -1177,6 +1258,7 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
             for j in pass_b:     # cut off while writing: its files may be half of a new export, so the old key goes
                 if j["key"] not in finished_keys:
                     manifest.entry(j["key"]).pop("export_key", None)
+                    manifest.entry(j["key"]).pop("metadata_key", None)
         saver.flush()
 
     saver.flush()      # takes in fixes made during the export: the summary shows their status
@@ -1193,6 +1275,7 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
         "counts": counts,
         "exported": sum(1 for k in keys if exported_now.get(k)),
         "retagged": retagged,
+        "metadata_updated": metadata_updated,
         "needs_review": sorted(k for k in keys if manifest.entry(k).get("status") == "needs_review"),
         "failed": sorted(k for k in keys if manifest.entry(k).get("status") == "failed"),
         "manifest": str(manifest.path) if manifest.persist else None,
@@ -1214,6 +1297,8 @@ def settings_to_dict(s: Settings) -> dict:
         d["photo_crop"] = s.photo_crop
     if s.photo_bleed_mm != PHOTO_BLEED_MM:
         d["photo_bleed_mm"] = s.photo_bleed_mm
+    if s.metadata:      # left out when empty: a manifest made without metadata stays as it was
+        d["metadata"] = s.metadata
     return d
 
 
@@ -1225,6 +1310,8 @@ def settings_from_dict(d: dict) -> Settings:
     for k in ("photo_crop", "photo_bleed_mm"):
         if k in d:
             setattr(s, k, d[k])
+    if d.get("metadata"):      # tolerant: a hand-edited manifest keeps its texts literally, never raises
+        s.metadata = meta_mod.normalize_stored(d["metadata"])
     if "derivatives" in d:
         s.derivatives = tuple(Derivative(**x) for x in d["derivatives"])
     if "rules" in d:

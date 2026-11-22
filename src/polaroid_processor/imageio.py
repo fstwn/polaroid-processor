@@ -16,6 +16,9 @@ import numpy as np
 import tifffile
 from PIL import Image
 
+from .meta_patch import set_metadata
+from .metadata import FileMeta
+
 Image.MAX_IMAGE_PIXELS = None
 
 SCAN_SUFFIXES = (".tif", ".tiff")
@@ -31,6 +34,8 @@ class ScanMeta:
     dpi_tag: Optional[Tuple[float, float]]
     icc_profile: Optional[bytes]
     bits: int
+    make: str = ""        # the scanner's Make and Model tags, carried over into the exports
+    model: str = ""
 
 
 def read_meta(path: str) -> ScanMeta:
@@ -51,7 +56,12 @@ def read_meta(path: str) -> ScanMeta:
                 val *= 2.54
             if val > 0:
                 dpi = (val, val)
-    return ScanMeta(str(path), int(w), int(h), dpi, icc_bytes, bits)
+        text = {}
+        for name in ("Make", "Model"):
+            tag = page.tags.get(name)
+            v = tag.value if tag is not None else ""
+            text[name] = v.strip("\x00 ") if isinstance(v, str) else ""
+    return ScanMeta(str(path), int(w), int(h), dpi, icc_bytes, bits, text["Make"], text["Model"])
 
 
 def load_rgb(path: str) -> np.ndarray:
@@ -105,9 +115,11 @@ def _atomic_target(path: Path) -> Path:
 
 def write_tiff(path: str, rgb: np.ndarray, px_per_mm: Optional[float], icc: Optional[bytes] = None,
                compression: Optional[str] = "zlib", compression_level: int = 1, threads: int = 8,
-               alpha: Optional[np.ndarray] = None) -> None:
+               alpha: Optional[np.ndarray] = None, meta: Optional[FileMeta] = None) -> None:
     """Lossless TIFF master with resolution tag (px/cm) and ICC profile. ``alpha``: a plane of the image's
-    dtype (0 = transparent), written as an unassociated alpha channel."""
+    dtype (0 = transparent), written as an unassociated alpha channel. ``meta``: the text headers (XMP and the
+    legacy fields, see :mod:`.meta_patch`); tifffile's own ``{"shape": ...}`` description and software string are
+    never written."""
     target = Path(path)
     tmp = _atomic_target(target)
     extratags = []
@@ -127,7 +139,9 @@ def write_tiff(path: str, rgb: np.ndarray, px_per_mm: Optional[float], icc: Opti
     if alpha is not None:
         rgb = np.concatenate([rgb, alpha[..., None]], axis=2)
         kwargs["extrasamples"] = ("unassalpha",)
-    tifffile.imwrite(str(tmp), rgb, photometric="rgb", extratags=extratags, **kwargs)
+    tifffile.imwrite(str(tmp), rgb, photometric="rgb", extratags=extratags, metadata=None, software=False, **kwargs)
+    if meta is not None:
+        set_metadata(str(tmp), meta)
     os.replace(tmp, target)
 
 
@@ -146,7 +160,9 @@ def resize_long_edge(rgb: np.ndarray, long_edge: Optional[int] = None, scale: Op
 
 
 def write_derivative(path: str, rgb: np.ndarray, fmt: str, quality: int, dpi: Optional[float],
-                     icc: Optional[bytes] = None, alpha: Optional[np.ndarray] = None) -> None:
+                     icc: Optional[bytes] = None, alpha: Optional[np.ndarray] = None,
+                     meta: Optional[FileMeta] = None) -> None:
+    """JPEG or PNG derivative; ``meta`` puts the text headers in (XMP and the legacy fields)."""
     target = Path(path)
     tmp = _atomic_target(target)
     img8 = to_uint8(rgb)
@@ -165,6 +181,8 @@ def write_derivative(path: str, rgb: np.ndarray, fmt: str, quality: int, dpi: Op
         pil.save(tmp, "PNG", compress_level=6, **params)
     else:
         raise ValueError(f"unsupported derivative format {fmt!r}")
+    if meta is not None:
+        set_metadata(str(tmp), meta)
     os.replace(tmp, target)
 
 

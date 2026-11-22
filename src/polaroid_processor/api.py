@@ -14,6 +14,7 @@ import numpy as np
 from . import flatten as flat
 from .detection import DetectionError, detect, quad_size
 from .geometry import shift_side
+from . import metadata as meta_mod
 from .imageio import load_rgb, write_derivative
 from .lock import RunLocked
 from .manifest import Manifest, now
@@ -53,9 +54,14 @@ def make_settings(*, margin_mm: float = 0.1, derivatives: Optional[Sequence[str]
                   redetect: bool = False, dry_run: bool = False, workers: Optional[int] = None,
                   flatten: str = "auto", shadows: str = "auto", export: bool = True,
                   previews: bool = False, photo_crop: Optional[str] = None,
-                  photo_bleed_mm: Optional[float] = None) -> Settings:
+                  photo_bleed_mm: Optional[float] = None, metadata: Optional[dict] = None) -> Settings:
     """``photo_crop`` / ``photo_bleed_mm`` left at None keep the value stored in the output folder's
-    manifest (off / 0.3 for a new folder); ``run_batch`` resolves them."""
+    manifest (off / 0.3 for a new folder); ``run_batch`` resolves them.
+
+    ``metadata`` (title, author, copyright, description, keywords (a list), date_taken (YYYY, YYYY-MM or
+    YYYY-MM-DD)) goes into every exported file; the texts may hold the placeholders {stem}, {n}, {project},
+    {format} (``{{`` and ``}}`` for literal braces). A field left out keeps the output folder's value, an empty
+    one (``""``, ``[]``) clears it; ``None`` keeps all. Bad values raise :class:`UsageError` here, never at export."""
     s = Settings()
     s.margin_mm = float(margin_mm)
     if derivatives is not None:
@@ -81,6 +87,10 @@ def make_settings(*, margin_mm: float = 0.1, derivatives: Optional[Sequence[str]
         raise UsageError("photo_bleed_mm must be between 0 and 3")
     s.photo_crop = photo_crop
     s.photo_bleed_mm = None if photo_bleed_mm is None else float(photo_bleed_mm)
+    try:
+        s.metadata = None if metadata is None else meta_mod.normalize(metadata, keep_empty=True)
+    except ValueError as e:
+        raise UsageError(str(e)) from None
     return s
 
 

@@ -55,10 +55,12 @@ TOOLS: List[Dict[str, Any]] = [
             "Detect, rectify and export scans into an output folder (TIFF master plus JPG/PNG derivatives, "
             "manifest polaroid-manifest.json). Resumable: unchanged scans are skipped. Returns a summary and "
             "per-scan results; status needs_review means check the scan with polaroid_inspect. The summary "
-            "says cancelled (stopped early: run again) and retagged (only resolution tags patched). Fails "
+            "says cancelled (stopped early: run again), retagged (only resolution tags patched) and metadata_updated "
+            "(only the text headers rewritten, no pixel touched). Fails "
             "while another run works on the same output folder. With photo_crop on, the photo window is "
             "also cropped into <output>/photo/ (high/, web/, and with tiff a TIFF master); results then carry "
-            "the scan's window. Can take several seconds per scan."),
+            "the scan's window. The metadata option puts title, author and so on into the headers of every export. "
+            "Can take several seconds per scan."),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -88,6 +90,27 @@ TOOLS: List[Dict[str, Any]] = [
                 "photo_bleed_mm": {"type": "number",
                                    "description": "cut the photo crop this far inside the window border (default 0.3; "
                                                   "leave out to keep the output folder's setting)"},
+                "metadata": {
+                    "type": "object",
+                    "description": (
+                        "text headers written into every exported file (TIFF master, derivatives, photo crops): XMP "
+                        "plus the EXIF/Windows fields Explorer shows (Title, Authors, Copyright, Tags, Date taken). "
+                        "Texts may hold the placeholders {stem} (file name without extension), {n} (the number the "
+                        "stem ends in), {project} (input folder name), {format} (600 or Go); {{ and }} are literal "
+                        "braces; an unknown placeholder is refused. Fields left out keep the output folder's value, "
+                        "an empty string (or empty keywords) clears one. Changing it later rewrites the headers of "
+                        "the files already exported in place, without exporting again (summary: metadata_updated)"),
+                    "properties": {
+                        "title": {"type": "string"},
+                        "author": {"type": "string"},
+                        "copyright": {"type": "string"},
+                        "description": {"type": "string"},
+                        "keywords": {**_STR_LIST, "description": "a list of keywords"},
+                        "date_taken": {"type": "string",
+                                       "description": "YYYY, YYYY-MM or YYYY-MM-DD (EXIF gets full dates only)"},
+                    },
+                    "additionalProperties": False,
+                },
                 "workers": {"type": "integer", "minimum": 1},
                 "details": {"type": "string", "enum": ["flagged", "all", "none"], "default": "flagged",
                             "description": "full records for flagged scans only (default), all scans, or none"},
@@ -233,7 +256,7 @@ def tool_process(args: dict, progress: Callable[[int, int, str], None]) -> dict:
         force=args.get("force", False), redetect=args.get("redetect", False), dry_run=args.get("dry_run", False),
         flatten=args.get("flatten", "auto"), shadows=args.get("shadows", "auto"),
         workers=args.get("workers"), photo_crop=args.get("photo_crop"),
-        photo_bleed_mm=args.get("photo_bleed_mm"))
+        photo_bleed_mm=args.get("photo_bleed_mm"), metadata=args.get("metadata"))
     recursive = args.get("recursive", False)
     total = len(collect_inputs(list(inputs), recursive))
     results: List[dict] = []

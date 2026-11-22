@@ -28,7 +28,9 @@ def _human(rec: dict) -> None:
     if rec.get("type") == "summary":
         c = rec["counts"]
         print(f"\n{rec['scans']} scan(s): " + ", ".join(f"{v} {k}" for k, v in sorted(c.items()))
-              + f" | exported {rec['exported']} | {rec['time_s']} s")
+              + f" | exported {rec['exported']}"
+              + (f" | metadata updated {rec['metadata_updated']}" if rec.get("metadata_updated") else "")
+              + f" | {rec['time_s']} s")
         for k in rec.get("needs_review", []):
             print(f"  needs review: {k}")
         for k in rec.get("failed", []):
@@ -62,7 +64,17 @@ def _settings_from_args(a) -> Settings:
         interpolation=a.interpolation, tiff_compression=a.tiff_compression, overlay=a.overlay,
         ppi=a.ppi, profile=a.profile, profiles=a.profiles, strict=a.strict, force=a.force,
         redetect=a.redetect, dry_run=a.dry_run, workers=a.workers, flatten=a.flatten, shadows=a.shadows,
-        photo_crop=a.photo_crop, photo_bleed_mm=a.photo_bleed_mm)
+        photo_crop=a.photo_crop, photo_bleed_mm=a.photo_bleed_mm, metadata=_metadata_from_args(a))
+
+
+def _metadata_from_args(a) -> Optional[dict]:
+    """The metadata fields given on the command line (None when none: the output folder's stay)."""
+    given = {f: getattr(a, f) for f in ("title", "author", "copyright", "description") if getattr(a, f) is not None}
+    if a.keyword is not None:
+        given["keywords"] = a.keyword
+    if a.date_taken is not None:
+        given["date_taken"] = a.date_taken
+    return given or None
 
 
 def cmd_process(a) -> int:
@@ -203,6 +215,17 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--photo-bleed-mm", type=float,
                     help=f"cut the photo crop this far inside the window border (default {PHOTO_BLEED_MM}; "
                          "left out: keep the output folder's setting)")
+    sp.add_argument("--title", help="metadata written into every exported file; the texts may hold {stem}, {n} "
+                    "(the number the file name ends in), {project} (input folder name), {format} (600 or Go); "
+                    "{{ and }} give literal braces. A field left out keeps the output folder's value, an empty "
+                    "one (\"\") clears it")
+    sp.add_argument("--author", help="metadata: author (Artist)")
+    sp.add_argument("--copyright", help="metadata: copyright notice")
+    sp.add_argument("--description", help="metadata: description (ImageDescription)")
+    sp.add_argument("--keyword", action="append", help="metadata: a keyword, repeatable (replaces the output "
+                    "folder's keywords; --keyword \"\" clears them)")
+    sp.add_argument("--date-taken", metavar="YYYY[-MM[-DD]]", help="metadata: when the picture was taken, to the year, "
+                    "month or day")
     sp.add_argument("-j", "--workers", type=int, help="parallel workers (default: from free RAM and CPUs)")
     common(sp)
     sp.set_defaults(fn=cmd_process)
