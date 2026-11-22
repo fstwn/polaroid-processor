@@ -99,3 +99,17 @@ label { display: block; color: var(--dim); font-size: 12px; margin: 10px 0 4px; 
 #settings summary { cursor: pointer; color: var(--dim); margin: 6px 0; }
 #settings .small { font-size: 12px; margin: 10px 0 0; }
 #settings input:disabled, #settings select:disabled { opacity: .5; }
+#settings fieldset.meta { border: 1px solid var(--line); border-radius: 6px; margin: 10px 0 6px; padding: 4px 12px 10px; }
+#settings fieldset.meta legend { color: var(--dim); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; padding: 0 6px; }
+#settings fieldset.meta label { display: block; }
+#settings fieldset.meta input[type=text], #settings fieldset.meta textarea { display: block; width: 100%; margin: 4px 0 0; }
+#settings fieldset.meta textarea { font: inherit; color: var(--text); background: #14151a; border: 1px solid var(--line);
+  border-radius: 6px; padding: 4px 8px; resize: vertical; }
+#settings fieldset.meta .bad { border-color: var(--red); }
+#settings .ferr { display: block; color: var(--red); font-size: 12px; min-height: 0; word-break: break-word; }
+#settings .ferr:empty { display: none; }
+#settings .preview { margin-top: 8px; padding: 6px 10px; background: #14151a; border: 1px solid var(--line); border-radius: 6px;
+  font-size: 13px; white-space: pre-wrap; word-break: break-word; }
+#settings .preview b { color: var(--text); font-weight: 600; }
+#settings .preview .small { margin: 0 0 2px; }
+#settings textarea:disabled { opacity: .5; }

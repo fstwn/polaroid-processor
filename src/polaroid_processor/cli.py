@@ -30,6 +30,8 @@ def _human(rec: dict) -> None:
         print(f"\n{rec['scans']} scan(s): " + ", ".join(f"{v} {k}" for k, v in sorted(c.items()))
               + f" | exported {rec['exported']}"
               + (f" | metadata updated {rec['metadata_updated']}" if rec.get("metadata_updated") else "")
+              + (f" | metadata NOT updated {rec['metadata_skipped']} (file in use? run again)"
+                 if rec.get("metadata_skipped") else "")
               + f" | {rec['time_s']} s")
         for k in rec.get("needs_review", []):
             print(f"  needs review: {k}")

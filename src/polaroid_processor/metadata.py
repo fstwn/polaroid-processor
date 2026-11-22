@@ -228,6 +228,16 @@ def merge(stored: Optional[Mapping[str, Any]], given: Optional[Mapping[str, Any]
             out.pop(f, None)
         else:
             out[f] = v
+    # the limits hold for the merged result, not only for what this call gave: saves of single fields add up. A saved
+    # value that would fail the checks on its own (a hand-edited literal) is left out of the count.
+    checkable: Dict[str, Any] = {}
+    for f, v in out.items():
+        try:
+            normalize({f: v})
+        except ValueError:
+            continue
+        checkable[f] = v
+    _check(checkable)
     return out
 
 

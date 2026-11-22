@@ -68,6 +68,20 @@
       <div class="deriv"><label><input id="s-web_on" type="checkbox"> JPG &ldquo;web&rdquo;</label>
         <span>long edge <input id="s-web_edge" type="number" min="100" max="30000" step="100"> px, quality <input id="s-web_quality" type="number" min="1" max="100"></span></div>
     </div>
+    <fieldset id="s-meta" class="meta">
+      <legend>Metadata</legend>
+      <p class="dim small">Written into the headers of every exported file (Explorer, Lightroom). Placeholders: <code>{stem}</code> file name, <code>{n}</code> trailing number, <code>{project}</code> input folder, <code>{format}</code> 600 or Go.</p>
+      <div class="grid2">
+        <label>Title <input id="m-title" type="text" spellcheck="false" placeholder="e.g. Roll 4, {stem}"><span class="ferr" id="e-title"></span></label>
+        <label>Author <input id="m-author" type="text" spellcheck="false"><span class="ferr" id="e-author"></span></label>
+        <label>Copyright <input id="m-copyright" type="text" spellcheck="false" placeholder="e.g. &copy; 2026 Name"><span class="ferr" id="e-copyright"></span></label>
+        <label>Date taken <input id="m-date_taken" type="text" spellcheck="false" placeholder="YYYY, YYYY-MM or YYYY-MM-DD"><span class="ferr" id="e-date_taken"></span></label>
+        <label>Keywords (comma-separated) <input id="m-keywords" type="text" spellcheck="false" placeholder="polaroid, {project}"><span class="ferr" id="e-keywords"></span></label>
+        <label>Description <textarea id="m-description" rows="3" spellcheck="false"></textarea><span class="ferr" id="e-description"></span></label>
+      </div>
+      <div id="m-all-err" class="ferr"></div>
+      <div id="m-preview" class="preview dim" aria-live="polite"></div>
+    </fieldset>
     <details><summary>Advanced</summary>
       <div class="grid2">
         <label>Scale: scanner resolution (ppi, empty = inferred) <input id="s-ppi" type="number" step="1" min="10" max="20000"></label>

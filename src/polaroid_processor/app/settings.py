@@ -2,13 +2,15 @@
 
 The panel edits a flat set of fields; the project stores them as the manifest's ``settings`` (the dict of
 ``pipeline.settings_to_dict``), so the CLI, MCP and the app read the same thing. Derivatives other than
-``high`` and ``web`` (made on the command line) are kept as they are.
+``high`` and ``web`` (made on the command line) are kept as they are. The export metadata is one nested field,
+``metadata``, with the six fields of ``metadata.py``; keywords are a list here (the page shows them comma-separated).
 """
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
 from .. import api
+from .. import metadata as meta_mod
 from ..pipeline import DEFAULT_DERIVATIVES, PHOTO_CROP, Derivative, settings_from_dict, settings_to_dict
 from ..scale import explicit_scale
 
@@ -16,7 +18,18 @@ HIGH_WEB = {d.name: d for d in DEFAULT_DERIVATIVES}
 CHOICES = {"flatten": ("auto", "off"), "shadows": ("auto", "off"), "tiff_compression": ("zlib", "none"),
            "interpolation": ("linear", "cubic", "lanczos"), "photo_crop": PHOTO_CROP}
 FIELDS = ("margin_mm", "photo_crop", "photo_bleed_mm", "flatten", "shadows", "high_on", "high_edge", "high_quality", "web_on", "web_edge",
-          "web_quality", "ppi", "profile", "tiff_compression", "interpolation", "overlay")
+          "web_quality", "ppi", "profile", "tiff_compression", "interpolation", "overlay", "metadata")
+# The metadata fields that carry over to new projects (decision 7): the ones that are about the person, not the project.
+METADATA_DEFAULTS = ("author", "copyright")
+
+
+class FieldErrors(api.UsageError):
+    """A panel update that fails the checks of some fields: ``fields`` maps a field name (``title``, ``date_taken``,
+    ... or ``metadata`` for a problem of the texts together) to its message; ``str()`` is the first one."""
+
+    def __init__(self, fields: Dict[str, str]):
+        super().__init__(next(iter(fields.values())))
+        self.fields = fields
 
 
 def to_panel(d: Optional[dict]) -> Dict[str, Any]:
@@ -33,6 +46,8 @@ def to_panel(d: Optional[dict]) -> Dict[str, Any]:
         out[f"{name}_on"] = x is not None
         out[f"{name}_edge"] = (x or default).long_edge
         out[f"{name}_quality"] = (x or default).quality
+    stored = s.metadata or {}
+    out["metadata"] = {f: stored.get(f, [] if f == "keywords" else "") for f in meta_mod.FIELDS}
     return out
 
 
@@ -52,13 +67,43 @@ def _flag(v: Any, what: str) -> bool:
     return v
 
 
+def check_metadata(given: Any) -> Dict[str, str]:
+    """The messages of the fields of ``given`` (the panel's metadata fields, as typed) that fail the checks of the CLI
+    and API, by field name; ``{}`` when all pass. A problem of the texts together (too long over all) is under
+    ``metadata``."""
+    if not isinstance(given, dict):
+        return {"metadata": "metadata must be an object with title, author, copyright, description, keywords, date_taken"}
+    errors: Dict[str, str] = {}
+    for f, v in given.items():
+        try:
+            meta_mod.normalize({f: v})
+        except ValueError as e:
+            errors[str(f)] = str(e)
+    if not errors:
+        try:
+            meta_mod.normalize(given)
+        except ValueError as e:
+            errors["metadata"] = str(e)
+    return errors
+
+
 def from_panel(current: Optional[dict], update: Dict[str, Any]) -> dict:
     """``current`` (a manifest settings dict) with the panel fields in ``update`` applied and checked; the
-    new settings dict. Unknown fields are refused."""
+    new settings dict. Unknown fields are refused. ``update["metadata"]`` holds the metadata fields to change:
+    a field in it replaces the stored one, ``""`` / ``[]`` clears it, one left out stays (as a run on the command
+    line does); a check that fails raises :class:`FieldErrors`."""
     unknown = set(update) - set(FIELDS)
     if unknown:
         raise api.UsageError(f"unknown setting: {', '.join(sorted(unknown))}")
     s = settings_from_dict(current or {})
+    if "metadata" in update:
+        errors = check_metadata(update["metadata"])
+        if errors:
+            raise FieldErrors(errors)
+        try:
+            s.metadata = meta_mod.merge(s.metadata, update["metadata"]) or None
+        except ValueError as e:      # the checks above cover what merge checks; kept as a guard
+            raise FieldErrors({"metadata": str(e)}) from None
     if "margin_mm" in update:
         s.margin_mm = _number(update["margin_mm"], "margin", 0.0, 5.0)
     if "photo_bleed_mm" in update:
@@ -109,9 +154,19 @@ def _derivative(name: str, old: Derivative, update: Dict[str, Any]) -> Derivativ
 
 
 def defaults_of(d: dict) -> Dict[str, Any]:
-    """The panel fields of ``d`` as the defaults for new projects (the scale is not carried over: it belongs to a
-    scanner setting, not to a user's habit)."""
+    """The panel fields of ``d`` as the defaults for new projects. The scale is not carried over: it belongs to a
+    scanner setting, not to a user's habit. Of the metadata only author and copyright are (they are about the person;
+    title, description, keywords and date taken belong to a project)."""
     p = to_panel(d)
     p.pop("other_derivatives")
     p["ppi"], p["profile"] = None, None
+    keep = {}
+    for f in METADATA_DEFAULTS:      # a saved literal that fails the checks (hand-edited manifest) is not a default
+        try:
+            meta_mod.normalize({f: p["metadata"][f]})
+        except ValueError:
+            keep[f] = ""
+        else:
+            keep[f] = p["metadata"][f]
+    p["metadata"] = keep
     return p

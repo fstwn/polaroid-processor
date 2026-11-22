@@ -5,7 +5,8 @@ let startFilter = new URLSearchParams(location.search).get("filter");
 if (startFilter) history.replaceState(null, "", location.pathname);
 const SETTING_FIELDS = ["margin_mm", "photo_crop", "photo_bleed_mm", "flatten", "shadows", "high_on", "high_edge", "high_quality", "web_on", "web_edge",
   "web_quality", "ppi", "profile", "tiff_compression", "interpolation", "overlay"];
-const S = { view: "home", project: null, rev: null, filter: "all", cards: new Map(), keys: [], scans: [], prog: null, timer: null };
+const META_FIELDS = ["title", "author", "copyright", "description", "keywords", "date_taken"];
+const S = { shownMeta: {}, view: "home", project: null, rev: null, filter: "all", cards: new Map(), keys: [], scans: [], prog: null, timer: null };
 
 // ---------------------------------------------------------------- helpers
 function el(tag, cls, text, attrs) {
@@ -28,7 +29,11 @@ async function api(path, body) {
   const r = await fetch(path, opt);
   let data = null;
   try { data = await r.json(); } catch (e) { /* not JSON */ }
-  if (!r.ok) throw new Error((data && data.error) || `${r.status} ${r.statusText}`);
+  if (!r.ok) {
+    const err = new Error((data && data.error) || `${r.status} ${r.statusText}`);
+    if (data && data.fields) err.fields = data.fields;      // a settings field that failed its check, by name
+    throw err;
+  }
   return data;
 }
 
@@ -244,6 +249,7 @@ function buildCard(scan) {
   else if (scan.window_fix === "none") tags.append(el("span", "x", "no photo crop"));
   if (scan.export === "done") tags.append(el("span", "x", "exported"));
   else if (scan.export === "tags") tags.append(el("span", "x", "exported, tags to update"));
+  else if (scan.export === "headers") tags.append(el("span", "x", "exported, metadata to update"));
   else if (scan.export === "outdated") tags.append(el("span", "x warnx", "export outdated"));
   meta.append(tags);
   const w = warnItems(scan);
@@ -339,6 +345,11 @@ function renderProgress(p) {
       cls = "done"; frac = 1;
       const did = { detect: "Detected", export: "Exported", all: "Detected and exported" }[run.mode] || "Processed";
       text = total ? `${did} ${plural(run.done, "scan")} in ${fmtTime(run.elapsed)}` + (run.errors ? ` · ${run.errors} failed` : "") : "Nothing new to do";
+      if (run.metadata_updated) text = (total ? text + " · " : "") + `Updated the text headers of ${plural(run.metadata_updated, "scan")} (metadata)`;
+      if (run.metadata_skipped) {
+        text = (text ? text + " · " : "") + `${plural(run.metadata_skipped, "scan")} could not get new metadata (file in use?); the next run tries again`;
+        cls = "locked";
+      }
     } else if (run.state === "cancelled") {
       frac = total ? run.done / total : 0;
       text = `Cancelled: ${run.done} of ${total} done. Start it again to continue with the rest.`;
@@ -380,10 +391,13 @@ function renderActions(p) {
     d.disabled = !p.can_run || locked;
     d.title = p.can_run ? "Find the print in every scan and store the outlines; nothing is exported" : "The input folder of this project is not known or not found";
     d.onclick = start("detect");
-    const n = c.to_export, t = c.to_retag;
+    const e = c.to_export, h = c.to_headers || 0, t = c.to_retag;
+    const n = e + h;      // scans whose files the run touches: a new export, or only new text headers (metadata)
     const x = el("button", started ? "primary" : "", n ? `Export (${n})` : t ? `Update tags (${t})` : "Export");
     x.disabled = !(n || t) || locked;
-    x.title = n ? "Export the detected scans that have no up to date export" + (t ? `; ${t} more only get new resolution tags` : "")
+    x.title = n ? (e ? `Export the detected scans that have no up to date export (${e})` : "")
+        + (e && h ? "; " : "") + (h ? `${plural(h, "scan")} only get new text headers (metadata), nothing is encoded` : "")
+        + (t ? `; ${t} more only get new resolution tags` : "")
       : t ? "Only the scale changed: the resolution tags of these exports are written again, nothing is encoded" : "Nothing to export";
     x.onclick = start("export");
     const all = el("button", null, "Detect + export");
@@ -411,6 +425,14 @@ async function loadSettings() {
     if (e.type === "checkbox") e.checked = !!v[f]; else e.value = v[f] === null || v[f] === undefined ? "" : v[f];
     e.disabled = r.running || !!r.locked_by;
   }
+  for (const f of META_FIELDS) {
+    const e = $("m-" + f), saved = (v.metadata && v.metadata[f]) || (f === "keywords" ? [] : "");
+    e.value = f === "keywords" ? saved.join(", ") : saved;
+    S.shownMeta[f] = e.value;       // the text as the field holds it (a textarea turns \r\n into \n): the base of "changed"
+    e.disabled = r.running || !!r.locked_by;
+  }
+  showMetaErrors({});
+  refreshMetaPreview(true);
   $("s-save").disabled = r.running || !!r.locked_by;
   $("s-note").textContent = r.running ? "A run is going: settings apply to the next one."
     : r.locked_by ? `Another process (${r.locked_by}) is working here.`
@@ -425,12 +447,66 @@ async function saveSettings() {
     const old = S.loadedSettings ? S.loadedSettings[f] : undefined;
     if (value !== (old === undefined ? null : old) && !(value === "" && (old === null || old === undefined))) body[f] = value;
   }
-  const r = await guarded(() => api("/api/project/settings", body));
-  if (!r) return;
+  const meta = {};                 // metadata: the fields whose text was edited since it was shown ("" or [] clears one)
+  const typed = metaValues();      // a field left as shown is never sent, whatever it holds (a keyword with a comma, \r\n)
+  for (const f of META_FIELDS) {
+    if ($("m-" + f).value !== S.shownMeta[f]) meta[f] = typed[f];
+  }
+  if (Object.keys(meta).length) body.metadata = meta;
+  let r;
+  try { r = await api("/api/project/settings", body); } catch (e) {
+    if (e.fields) {                // a metadata field failed its check: say so next to the field, nothing was saved
+      showMetaErrors(e.fields);
+      showMsg("Settings not saved: " + e.message);
+    } else showMsg(e.message);
+    return;
+  }
+  showMetaErrors({});
   showMsg("Settings saved. They apply to the next run.", true);
   await loadSettings();
   tick(true);
 }
+
+// ---- metadata group: values as typed, messages next to the fields, preview of the first scan
+function metaValues() {
+  const v = {};
+  for (const f of META_FIELDS) {
+    const t = $("m-" + f).value;
+    v[f] = f === "keywords" ? t.split(",").map((w) => w.trim()).filter(Boolean) : t.trim();
+  }
+  return v;
+}
+
+function showMetaErrors(fields) {
+  for (const f of META_FIELDS) {
+    $("e-" + f).textContent = fields[f] || "";
+    $("m-" + f).classList.toggle("bad", !!fields[f]);
+  }
+  const rest = Object.keys(fields).filter((k) => !META_FIELDS.includes(k)).map((k) => fields[k]);
+  $("m-all-err").textContent = rest.join(" ");
+}
+
+let metaTimer = null, metaSeq = 0;
+function refreshMetaPreview(now) {
+  clearTimeout(metaTimer);
+  metaTimer = setTimeout(async () => {
+    const seq = ++metaSeq;
+    let r;
+    try { r = await api("/api/project/metadata/preview", { metadata: metaValues() }); } catch (e) { return; }
+    if (seq !== metaSeq) return;          // a newer request is on its way
+    showMetaErrors(r.errors || {});
+    const box = $("m-preview");
+    box.textContent = "";
+    if (!r.scan) { box.textContent = "No scan in this project yet: the preview needs one."; return; }
+    const line = (label, text) => { const d = el("div"); d.append(el("b", null, label + " "), text); box.append(d); };
+    const any = r.title || r.description;
+    if (!any) { box.textContent = `Preview for ${r.scan}: no title or description set.`; return; }
+    box.append(el("div", "dim small", `Preview for ${r.scan}` + (r.format_known ? "" : " (not detected yet: {format} shows ?)")));
+    if (r.title) line("Title:", r.title);
+    if (r.description) line("Description:", r.description);
+  }, now ? 0 : 250);
+}
+for (const f of META_FIELDS) $("m-" + f).addEventListener("input", () => refreshMetaPreview(false));
 
 function toggleSettings(force) {
   const box = $("settings");
@@ -475,6 +551,7 @@ async function tick(now) {
       const data = await api("/api/project/scans");
       if (S.view !== "project") return;
       renderScans(data);
+      if (!$("settings").hidden) refreshMetaPreview(false);      // a run may have detected the first scan: {format} is known now
     }
     renderProgress(p);
     showMsg("");

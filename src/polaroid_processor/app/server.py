@@ -8,7 +8,10 @@ mapping come from the review server). Routes::
     POST /api/browse                            body {"initial": path}: native folder dialog, {"path": ...}
     GET  /api/ping                              who answers: another launch finds a running app with it
     GET  /api/project/settings                  the settings panel's fields of the open project
-    POST /api/project/settings                  body: fields to change (refused while a run goes)
+    POST /api/project/settings                  body: fields to change (refused while a run goes); a metadata
+                                                field that fails its check gives 400 with {"error", "fields": {name: msg}}
+    POST /api/project/metadata/preview          body {"metadata": {...as typed}}: the first scan's filled title and
+                                                description, and the field errors, without saving
     POST /api/project/add                       body {"input", "output"?}: onto the recent list, not opened
     POST /api/project/open                      body {"input", "output"?} new project, or {"output"} an existing one
     POST /api/project/close
@@ -42,6 +45,7 @@ from .. import __version__, api
 from ..review.server import Handler, LocalServer, NotFound
 from .fix import FixApp
 from .project import Project, load_manifest, input_folder_of, list_inputs, project_summary
+from .settings import FieldErrors
 from .store import Store, same_path
 
 log = logging.getLogger("polaroid_processor.app")
@@ -261,7 +265,12 @@ class AppHandler(Handler):
             if segs == ["api", "project", "add"]:
                 return self._json(st.add_project(body.get("input"), body.get("output")))
             if segs == ["api", "project", "settings"]:
-                return self._json(st.need_project().set_settings(body))
+                try:
+                    return self._json(st.need_project().set_settings(body))
+                except FieldErrors as e:      # the panel shows each message next to its field
+                    return self._json({"error": str(e), "fields": e.fields}, HTTPStatus.BAD_REQUEST)
+            if segs == ["api", "project", "metadata", "preview"]:
+                return self._json(st.need_project().metadata_preview(body.get("metadata")))
             if segs == ["api", "project", "forget"]:
                 return self._json(st.forget(str(body.get("output") or "")))
             if segs == ["api", "project", "close"]:

@@ -20,7 +20,7 @@ import cv2
 import numpy as np
 
 from . import __version__, api
-from .pipeline import collect_inputs
+from .pipeline import METADATA_SKIPPED, collect_inputs
 
 log = logging.getLogger("polaroid_processor.mcp")
 
@@ -56,7 +56,8 @@ TOOLS: List[Dict[str, Any]] = [
             "manifest polaroid-manifest.json). Resumable: unchanged scans are skipped. Returns a summary and "
             "per-scan results; status needs_review means check the scan with polaroid_inspect. The summary "
             "says cancelled (stopped early: run again), retagged (only resolution tags patched) and metadata_updated "
-            "(only the text headers rewritten, no pixel touched). Fails "
+            "(only the text headers rewritten, no pixel touched) and metadata_skipped (files that were in use: "
+            "their scans carry a metadata_not_updated warning; run again when the program lets go). Fails "
             "while another run works on the same output folder. With photo_crop on, the photo window is "
             "also cropped into <output>/photo/ (high/, web/, and with tiff a TIFF master); results then carry "
             "the scan's window. The metadata option puts title, author and so on into the headers of every export. "
@@ -271,8 +272,9 @@ def tool_process(args: dict, progress: Callable[[int, int, str], None]) -> dict:
     details = args.get("details", "flagged")
     if details == "all":
         listed = [_brief(r) for r in results]
-    elif details == "flagged":
-        listed = [_brief(r) if r.get("status") != "ok" else {"file": r["file"], "status": "ok"} for r in results]
+    elif details == "flagged":      # an ok scan whose headers could not be rewritten is flagged too (it needs a rerun)
+        listed = [_brief(r) if r.get("status") != "ok" or any(w.startswith(METADATA_SKIPPED) for w in r.get("warnings", []))
+                  else {"file": r["file"], "status": "ok"} for r in results]
     else:
         listed = []
     out = {"summary": summary, "results": listed}

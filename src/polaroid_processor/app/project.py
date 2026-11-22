@@ -23,11 +23,13 @@ from ..geometry import homography
 from ..imageio import load_rgb
 from ..lock import holder
 from ..manifest import MANIFEST_NAME, Manifest
-from ..pipeline import collect_inputs, manual_outline, reevaluate, resolve_scales, retag_ok, settings_from_dict
+from ..pipeline import (collect_inputs, file_meta, manual_outline, reevaluate, resolve_scales, retag_ok,
+                        settings_from_dict)
 from ..preview import LONG_EDGE, PREVIEW_DIR, preview_key, write_preview
 from ..scale import scale_from_size
 from ..scan_window import effective_window, fix_in_force, window_state
-from .settings import defaults_of, from_panel, to_panel
+from ..metadata import format_label as meta_label
+from .settings import check_metadata, defaults_of, from_panel, to_panel
 
 log = logging.getLogger("polaroid_processor.app")
 
@@ -67,9 +69,18 @@ def entry_status(e: Optional[dict]) -> str:
     return "detected" if e.get("detection") else "pending"
 
 
+def metadata_key_of(e: dict, key: str, settings) -> str:
+    """The metadata key a run would give the exports of scan ``key`` now (``""`` without any filled field): the same
+    ``file_meta(...).key()`` the pipeline compares with the entry's ``metadata_key`` (``pipeline.sync_metadata``)."""
+    quad = Manifest.effective_quad(e)
+    return file_meta(settings.metadata, key, e.get("input") or key, e.get("format"),
+                     None if quad is None else quad_size(quad)).key()
+
+
 def export_plan(m: Manifest, settings) -> Dict[str, tuple]:
-    """Per scan what a run would give its export now: ``(key, base, tags_ok)`` (see ``Settings.export_key``,
-    ``export_base``, ``retag_ok``), the same test the export pass uses to decide what to export again."""
+    """Per scan what a run would give its export now: ``(key, base, tags_ok, metadata_key)`` (see
+    ``Settings.export_key``, ``export_base``, ``retag_ok``, ``metadata_key_of``), the same test the export pass uses to
+    decide what to export again."""
     keys = [k for k, e in m.items() if Manifest.effective_quad(e) is not None]
     scales = resolve_scales(m, keys, settings)
     out = {}
@@ -78,14 +89,17 @@ def export_plan(m: Manifest, settings) -> Dict[str, tuple]:
         if k in scales and e.get("status") != "failed":
             quad, curves, manual = Project._quad_curves(e)
             win = effective_window(e, quad) if settings.photo_crop != "off" else None
+            # nothing set and nothing stored: skip the fill (the common case of a project without metadata)
+            mkey = metadata_key_of(e, k, settings) if settings.metadata or e.get("metadata_key") else ""
             out[k] = (settings.export_key(quad, scales[k], curves, manual, win),
                       settings.export_base(quad, scales[k], curves, manual, win),
-                      retag_ok(e, scales[k], settings, curves, manual))
+                      retag_ok(e, scales[k], settings, curves, manual), mkey)
     return out
 
 
 def export_state(m: Manifest, e: Optional[dict], plan: Optional[tuple], settings) -> Optional[str]:
-    """"done" (exported as a run would now), "tags" (only the scale differs: a run patches the resolution
+    """"done" (exported as a run would now), "headers" (exported as a run would now, but the text headers differ from
+    the project's metadata: a run rewrites them in place), "tags" (only the scale differs: a run patches the resolution
     tags, nothing is encoded again), "outdated" (exported, but outline, curves or settings changed since),
     "none" (nothing exported, or files missing), None (nothing to export)."""
     if not e or e.get("status") == "failed" or Manifest.effective_quad(e) is None:
@@ -95,9 +109,9 @@ def export_state(m: Manifest, e: Optional[dict], plan: Optional[tuple], settings
         return "none"
     if plan is None:
         return "outdated"
-    xkey, xbase, tags_ok = plan
+    xkey, xbase, tags_ok, mkey = plan
     if e.get("export_key") == xkey:
-        return "done"
+        return "done" if (e.get("metadata_key") or "") == mkey else "headers"
     if e.get("export_base") == xbase and tags_ok:
         return "tags"
     return "outdated"
@@ -107,12 +121,13 @@ def count_scans(m: Optional[Manifest], names: List[str], plans: Optional[Dict[st
                 settings=None) -> Dict[str, int]:
     """Scans per status over the manifest and the input folder, plus ``exported``, ``total`` and, when
     ``plans`` (see :func:`export_plan`) is given, ``to_export`` (detected scans without an up to date
-    export) and ``to_retag`` (exports that need only new resolution tags)."""
+    export), ``to_retag`` (exports that need only new resolution tags) and ``to_headers`` (exports whose text headers
+    differ from the project's metadata: a run rewrites them in place)."""
     keys = set(names)
     if m:
         keys |= set(m.scans)
     counts = {s: 0 for s in STATUSES}
-    exported = to_export = to_retag = 0
+    exported = to_export = to_retag = to_headers = 0
     for k in keys:
         e = m.get(k) if m else None
         counts[entry_status(e)] += 1
@@ -121,9 +136,10 @@ def count_scans(m: Optional[Manifest], names: List[str], plans: Optional[Dict[st
             state = export_state(m, e, plans.get(k), settings)
             to_export += state in ("none", "outdated")
             to_retag += state == "tags"
+            to_headers += state == "headers"
     out = {**counts, "exported": exported, "total": len(keys)}
     if plans is not None:
-        out["to_export"], out["to_retag"] = to_export, to_retag
+        out["to_export"], out["to_retag"], out["to_headers"] = to_export, to_retag, to_headers
     return out
 
 
@@ -169,6 +185,8 @@ class Run:
         self.error: Optional[str] = None
         self.current: Optional[str] = None
         self.phase: Optional[str] = None
+        self.metadata_updated = 0        # from the run's summary: exports whose text headers were rewritten in place
+        self.metadata_skipped = 0        # ... and those that could not be (a file in use): tried again next run
         self.cancel = threading.Event()
 
     def record(self) -> dict:
@@ -179,7 +197,8 @@ class Run:
             eta = elapsed / self.done * max(0, self.total - self.done)
         return {"mode": self.mode, "state": self.state, "total": self.total, "done": self.done, "errors": self.errors,
                 "elapsed": round(elapsed, 1), "eta": None if eta is None else round(eta, 1), "error": self.error,
-                "current": self.current, "phase": self.phase if self.state in ("running", "cancelling") else None}
+                "current": self.current, "phase": self.phase if self.state in ("running", "cancelling") else None,
+                "metadata_updated": self.metadata_updated, "metadata_skipped": self.metadata_skipped}
 
 
 class Project:
@@ -350,6 +369,26 @@ class Project:
             self._sig = None
         return self.get_settings()
 
+    def metadata_preview(self, given: dict) -> dict:
+        """The title and description of the project's first scan as ``given`` (the panel's metadata fields as typed,
+        saved or not) would be written, filled by the same code as an export, plus the messages of the fields that
+        fail the checks (``errors``, by field). ``scan`` is None when the project has no scans. A scan that is not
+        detected yet has no format: ``{format}`` then shows ``?`` (``format_known`` false)."""
+        errors = check_metadata(given)
+        scans = self.snapshot()["scans"]
+        out = {"scan": None, "title": "", "description": "", "format_known": True, "errors": errors}
+        if not scans or not isinstance(given, dict):
+            return out
+        key = scans[0]["key"]
+        m = load_manifest(self.output)
+        e = (m.get(key) if m else None) or {}
+        path = e.get("input") or str(Path(self.input or ".") / key)
+        quad = Manifest.effective_quad(e) if e else None
+        fm = file_meta(given, key, path, e.get("format"), None if quad is None else quad_size(quad), unknown_format="?")
+        known = bool(meta_label(e.get("format"), None if quad is None else quad_size(quad)))
+        out.update(scan=key, title=fm.title, description=fm.description, format_known=known)
+        return out
+
     # ---- runs -----------------------------------------------------------
     @property
     def running(self) -> bool:
@@ -421,6 +460,8 @@ class Project:
             settings.export, settings.previews = run.mode != "detect", run.mode != "export"
             summary = api.process(inputs, self.output, settings, progress=progress, cancel=run.cancel.is_set,
                                   on_jobs=on_jobs, on_phase=on_phase)
+            run.metadata_updated = summary.get("metadata_updated", 0)
+            run.metadata_skipped = summary.get("metadata_skipped", 0)
             if summary.get("cancelled") and run.done < (run.total or 0):
                 state = "cancelled"
         except Exception as e:  # noqa: BLE001  (shown in the page)

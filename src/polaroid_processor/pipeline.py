@@ -43,6 +43,7 @@ GB = 1024 ** 3
 PHOTO_CROP = ("off", "derivatives", "tiff")  # photo-area crop next to the full print: none, JPG derivatives, + TIFF master
 PHOTO_BLEED_MM = 0.3
 PHOTO_DIR = "photo"
+METADATA_SKIPPED = "metadata_not_updated"      # scan warning: a file's headers could not be rewritten (retried next run)
 SOFTWARE = f"polaroid-processor {__version__}"      # the Software tag of every export
 
 
@@ -328,20 +329,25 @@ def _export(rgb: np.ndarray, quad: np.ndarray, px_per_mm: float, icc: Optional[b
 
 
 def file_meta(project_meta: Optional[dict], key: str, input_path: str, fmt: Optional[dict],
-              size_px: Optional[Tuple[float, float]], make: str = "", model: str = "") -> FileMeta:
+              size_px: Optional[Tuple[float, float]], make: str = "", model: str = "",
+              unknown_format: str = "") -> FileMeta:
     """What an export of scan ``key`` carries: the project's metadata with the placeholders filled, the scanner's
-    Make and Model, and our Software string. ``fmt`` is the scan's format record (its shape decides when it has none)."""
+    Make and Model, and our Software string. ``fmt`` is the scan's format record (its shape decides when it has none).
+    ``unknown_format`` stands for ``{format}`` when neither is known (only the app's preview of a scan not yet
+    detected uses it; an export always knows)."""
     return meta_mod.fill(project_meta, stem=Path(key).stem, project=Path(input_path).resolve().parent.name,
-                         format_name=meta_mod.format_label(fmt, size_px), make=make, model=model, software=SOFTWARE)
+                         format_name=meta_mod.format_label(fmt, size_px) or unknown_format, make=make, model=model,
+                         software=SOFTWARE)
 
 
 def sync_metadata(manifest: Manifest, e: dict, key: str, settings: Settings,
-                  on_update: Optional[Callable[[], None]] = None) -> str:
+                  on_update: Optional[Callable[[], None]] = None, skip_reason: Optional[List[str]] = None) -> str:
     """Bring the headers of a scan's exported files in line with the project's metadata, in place (no pixel is
     touched). ``same``: nothing to do (also when no metadata is set and the export has no metadata key), ``updated``:
     rewritten, ``failed``: a file is not the structure the writers expect, so the scan has to be exported again,
     ``skipped``: a file could not be opened for writing (a viewer holds it); the old key stays and the next run
-    tries again (exporting again would fail on the same file). ``on_update`` is called before the first rewrite."""
+    tries again (exporting again would fail on the same file; the reason is appended to ``skip_reason``).
+    ``on_update`` is called before the first rewrite."""
     quad = Manifest.effective_quad(e)
     fm = file_meta(settings.metadata, key, e["input"], e.get("format"), None if quad is None else quad_size(quad))
     want, have = fm.key(), e.get("metadata_key") or ""
@@ -362,6 +368,9 @@ def sync_metadata(manifest: Manifest, e: dict, key: str, settings: Settings,
             set_metadata(str(manifest.abs(e["outputs"][n])), fm)
     except OSError as ex:
         log.warning("%s: headers could not be rewritten (%s), the next run tries again", key, ex)
+        if skip_reason is not None:
+            what = ex.strerror or str(ex)
+            skip_reason.append(f"{Path(str(ex.filename)).name}: {what}" if ex.filename else what)
         return "skipped"
     except Exception as ex:  # noqa: BLE001  (PatchError and anything unexpected)
         log.warning("%s: headers could not be rewritten (%s: %s), exporting again", key, type(ex).__name__, ex)
@@ -1048,7 +1057,13 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
                            else settings.photo_bleed_mm)
     try:      # fields the caller gave replace the project's, an empty one clears it, the others stay
         settings = replace(settings, metadata=meta_mod.merge(stored.get("metadata"), settings.metadata))
-    except ValueError:      # a given dict that fails the checks (not from make_settings): read as saved values are
+    except ValueError:
+        try:
+            meta_mod.normalize(settings.metadata, keep_empty=True)
+        except ValueError:      # a given dict that fails the checks (not from make_settings): read as saved values are
+            pass
+        else:      # what was given is fine; with the saved fields it is too much: refused before anything is written
+            raise
         merged = meta_mod.normalize_stored(stored.get("metadata"))
         merged.update(meta_mod.normalize_stored(settings.metadata))
         settings = replace(settings, metadata=merged)
@@ -1172,7 +1187,7 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
         reevaluate(manifest, fixed, settings)
     pass_b = []
     xargs: Dict[str, tuple] = {}      # quad, scale, curves, manual of each export job: for the key of the window it cut
-    retagged = metadata_updated = 0
+    retagged = metadata_updated = metadata_skipped = 0
     phased = []
 
     def phase_once() -> None:
@@ -1215,8 +1230,13 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
         elif not (settings.force or e.get("export_key") != xkey or missing):
             keep = True
         if keep:      # the pixels stay; the headers follow the project's metadata (not part of the export key)
-            state = sync_metadata(manifest, e, k, settings, phase_once)
+            why: List[str] = []
+            state = sync_metadata(manifest, e, k, settings, phase_once, why)
             metadata_updated += state == "updated" and not exported_now.get(k)      # a fresh export is no news
+            if state == "skipped":      # visible to the user; the old key stays, so the next run tries again
+                metadata_skipped += 1
+                note = f"{METADATA_SKIPPED}: {why[0] if why else 'a file could not be written'}"
+                e["warnings"] = [w for w in (e.get("warnings") or []) if not w.startswith(METADATA_SKIPPED)] + [note]
             if state != "failed":
                 continue
         xargs[k] = (quad, final, curves, manual)
@@ -1276,6 +1296,7 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
         "exported": sum(1 for k in keys if exported_now.get(k)),
         "retagged": retagged,
         "metadata_updated": metadata_updated,
+        "metadata_skipped": metadata_skipped,
         "needs_review": sorted(k for k in keys if manifest.entry(k).get("status") == "needs_review"),
         "failed": sorted(k for k in keys if manifest.entry(k).get("status") == "failed"),
         "manifest": str(manifest.path) if manifest.persist else None,
