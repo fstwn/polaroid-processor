@@ -7,12 +7,13 @@ The panel edits a flat set of fields; the project stores them as the manifest's 
 """
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, Optional
 
 from .. import api
 from .. import metadata as meta_mod
 from ..pipeline import DEFAULT_DERIVATIVES, PHOTO_CROP, Derivative, settings_from_dict, settings_to_dict
-from ..scale import explicit_scale
+from ..scale import explicit_scale, load_profiles, profiles_path
 
 HIGH_WEB = {d.name: d for d in DEFAULT_DERIVATIVES}
 CHOICES = {"flatten": ("auto", "off"), "shadows": ("auto", "off"), "tiff_compression": ("zlib", "none"),
@@ -48,6 +49,27 @@ def to_panel(d: Optional[dict]) -> Dict[str, Any]:
         out[f"{name}_quality"] = (x or default).quality
     stored = s.metadata or {}
     out["metadata"] = {f: stored.get(f, [] if f == "keywords" else "") for f in meta_mod.FIELDS}
+    return out
+
+
+def profile_options(profiles_file: Optional[str] = None) -> Dict[str, Any]:
+    """The scanner profiles the page offers in its dropdown: ``{"path", "items": [{"name", "ppi"}], "error"}``. ``path``
+    is the profiles file the project uses (``profiles_path``: the project's own, else ``POLAROID_PROFILES``, else
+    ``~/.config/polaroid-processor/profiles.yaml``); ``items`` are its profiles sorted by name (none when the file is
+    missing or empty; a profile whose ppi is not a number above 0 is left out); ``error`` says why a file could not
+    be read or which profiles were ignored, else None. The page never reads files."""
+    path = profiles_path(profiles_file)
+    out: Dict[str, Any] = {"path": str(path), "items": [], "error": None}
+    try:
+        profs = load_profiles(profiles_file)
+    except Exception as e:      # bad YAML, a value that is not a number, not a mapping: the panel says so
+        out["error"] = f"could not be read ({type(e).__name__}: {(str(e).strip().splitlines() or [''])[0]})"
+        return out
+    good = {n: v for n, v in profs.items() if math.isfinite(v) and v > 0}      # .inf / .nan are no resolution (and no JSON)
+    out["items"] = [{"name": n, "ppi": good[n]} for n in sorted(good, key=lambda n: (n.casefold(), n))]
+    bad = [n for n in profs if n not in good]
+    if bad:
+        out["error"] = f"ignored: {', '.join(sorted(bad))} (the ppi must be a number above 0)"
     return out
 
 
@@ -118,12 +140,16 @@ def from_panel(current: Optional[dict], update: Dict[str, Any]) -> dict:
     if "ppi" in update:
         v = update["ppi"]
         s.ppi = None if v in (None, "") else _number(v, "ppi", 10.0, 20000.0)
+    saved_profile = s.profile
     if "profile" in update:
         v = str(update["profile"] or "").strip()
         s.profile = v or None
     if s.ppi is not None and s.profile:
         raise api.UsageError("set either ppi or a scanner profile, not both")
-    if s.profile:       # an unknown profile would fail every run, also an agent's export after a fix
+    # A profile that is newly set or changed must be in the profiles file (an unknown one would fail every run, also an
+    # agent's export after a fix). A saved profile the file lacks (moved or edited file) is kept: other settings still save,
+    # and a run says what is missing until the profile is replaced or added.
+    if s.profile and s.profile != saved_profile:
         try:
             explicit_scale(None, s.profile, s.profiles_file)
         except (KeyError, OSError, ValueError) as e:

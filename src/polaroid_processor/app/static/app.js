@@ -360,6 +360,10 @@ function renderProgress(p) {
   if (p.previews_pending && !(run && (run.state === "running" || run.state === "cancelling"))) {
     text = (text ? text + " · " : "") + `making previews, ${p.previews_pending} left`;
   }
+  if (p.scale_error && !text.includes(p.scale_error) && !(run && (run.state === "running" || run.state === "cancelling"))) {      // export states are left out then
+    text = (text ? text + " · " : "") + `The scale cannot be worked out: ${p.scale_error}. Runs fail until that is fixed (Settings > Advanced).`;
+    cls = "locked";
+  }
   if (p.lock && !(run && (run.state === "running" || run.state === "cancelling"))) {
     text = `Another process is working on this output folder (pid ${p.lock.pid}, ${p.lock.who}); runs wait until it ends.`;
     cls = "locked";
@@ -420,6 +424,7 @@ async function loadSettings() {
   if (!r) return;
   const v = r.settings;
   S.loadedSettings = v;
+  fillProfiles(r.profiles, v.profile);      // before the field loop: it sets the select's value, which needs the options
   for (const f of SETTING_FIELDS) {
     const e = $("s-" + f);
     if (e.type === "checkbox") e.checked = !!v[f]; else e.value = v[f] === null || v[f] === undefined ? "" : v[f];
@@ -437,6 +442,27 @@ async function loadSettings() {
   $("s-note").textContent = r.running ? "A run is going: settings apply to the next one."
     : r.locked_by ? `Another process (${r.locked_by}) is working here.`
     : (v.other_derivatives ? `${v.other_derivatives} more derivative(s) from the command line are kept.` : "");
+}
+
+// The scanner profile dropdown: "none", then the profiles of the project's profiles file (the server lists them) as
+// "name (3200 ppi)"; a saved profile that is not in the file stays as an extra, selected option so a save does not drop it.
+function fillProfiles(p, current) {
+  p = p || { path: "", items: [], error: null };
+  const sel = $("s-profile"), hint = $("s-profile-hint");
+  sel.textContent = "";
+  const add = (value, text) => { const o = el("option", null, text); o.value = value; sel.append(o); return o; };
+  add("", "none");
+  for (const it of p.items) add(it.name, `${it.name} (${Number(it.ppi)} ppi)`);
+  const missing = !!current && !p.items.some((it) => it.name === current);
+  if (missing) add(current, `${current} (not in profiles file)`);
+  let text = "";
+  if (p.error) text = `Problem with the profiles file ${p.path}: ${p.error}. It should look like: profiles: {name: ppi}`;
+  else if (!p.items.length) text = `No scanner profiles yet. They live in ${p.path}, written as: profiles: {name: ppi}  (for example profiles: {epson-v850: 3200})`;
+  else text = `Profiles from ${p.path}`;
+  const warn = `The saved profile "${current}" is not in ${p.path}: runs fail until it is replaced or added to the file (other settings still save). To keep the same scale without exporting again, choose "none" and type the profile's ppi in the same save ("none" alone infers the scale, which may export again); or choose another profile, or add this one to the file.`;
+  if (missing) text = p.items.length && !p.error ? warn : warn + " " + text;      // the path is in the warning already
+  hint.textContent = text;
+  hint.classList.toggle("warn", missing || !!p.error);
 }
 
 async function saveSettings() {

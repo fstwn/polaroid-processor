@@ -26,10 +26,10 @@ from ..manifest import MANIFEST_NAME, Manifest
 from ..pipeline import (collect_inputs, file_meta, manual_outline, reevaluate, resolve_scales, retag_ok,
                         settings_from_dict)
 from ..preview import LONG_EDGE, PREVIEW_DIR, preview_key, write_preview
-from ..scale import scale_from_size
+from ..scale import explicit_scale, profiles_path, scale_from_size
 from ..scan_window import effective_window, fix_in_force, window_state
 from ..metadata import format_label as meta_label
-from .settings import check_metadata, defaults_of, from_panel, to_panel
+from .settings import check_metadata, defaults_of, from_panel, profile_options, to_panel
 
 log = logging.getLogger("polaroid_processor.app")
 
@@ -143,6 +143,23 @@ def count_scans(m: Optional[Manifest], names: List[str], plans: Optional[Dict[st
     return out
 
 
+def scale_problem(settings) -> Optional[str]:
+    """Why the explicit scale of ``settings`` (a ppi or a saved profile) cannot be worked out, else None: the profile is
+    not in the profiles file, or the file cannot be read (not YAML, not a mapping, a value that is no number). The message
+    is the one a run fails with for a missing profile; the cause of any other problem is logged."""
+    try:
+        explicit_scale(settings.ppi, settings.profile, settings.profiles_file)
+    except Exception as err:      # noqa: BLE001  (whatever the profiles file holds)
+        if isinstance(err, KeyError) and err.args:
+            log.info("scale: %s", err.args[0])
+            return str(err.args[0])
+        first = (str(err).strip().splitlines() or [""])[0]
+        msg = f"the profiles file {profiles_path(settings.profiles_file)} cannot be read ({type(err).__name__}: {first})"
+        log.warning("scanner profile %r: %s", settings.profile, msg)      # no traceback: this runs on every recompute
+        return msg
+    return None
+
+
 def _file_sig(path: Path) -> Optional[Tuple[int, int]]:
     try:
         st = path.stat()
@@ -246,7 +263,7 @@ class Project:
         return {"kind": w.get("kind"), "box": np.round(box, 4).tolist(), "source": w.get("source", "auto")}
 
     def _record(self, m: Optional[Manifest], key: str, e: Optional[dict], margin: float, flatten: str,
-                plans: Dict[str, tuple], settings) -> dict:
+                plans: Optional[Dict[str, tuple]], settings) -> dict:
         status = entry_status(e)
         quad = Manifest.effective_quad(e) if e else None
         rec = {"key": key, "status": status, "warnings": (e or {}).get("warnings", []),
@@ -254,7 +271,7 @@ class Project:
                "quad_source": "override" if e and e.get("override") else ("auto" if quad is not None else None),
                "format": ((e or {}).get("format") or {}).get("name"), "preview": None, "stale": False,
                "export": None, "rev": len((e or {}).get("history", []))}
-        if m and e and e.get("outputs"):
+        if m and e and e.get("outputs") and plans is not None:      # no plans: the scale could not be resolved
             rec["export"] = export_state(m, e, plans.get(key), settings)
         if quad is not None:
             w, h = quad_size(quad)
@@ -284,17 +301,29 @@ class Project:
 
     def snapshot(self) -> dict:
         """Scans (input folder and manifest merged), counts and stale-preview count; cached until the
-        manifest or the input folder changes."""
+        manifest, the input folder or the profiles file the project's scale comes from changes."""
         sig = (_file_sig(self.out_dir / MANIFEST_NAME), _file_sig(Path(self.input)) if self.input else None)
         with self._lock:
             if self._snap is not None and sig == self._sig:
-                return self._snap
+                pf = self._snap.get("_profiles")      # (path, stamp) of the profiles file a saved profile is looked up in
+                if not pf or _file_sig(pf[0]) == pf[1]:
+                    return self._snap
             m = load_manifest(self.output)
             names = list_inputs(self.input)
             margin, flatten = self._settings(m)
             plans: Dict[str, tuple] = {}
             settings = settings_from_dict(m.data.get("settings") or {}) if m else None
+            scale_error: Optional[str] = None
+            profiles = None
             if m:
+                # the scale lookup alone is guarded: a saved profile the profiles file lacks, or a file that cannot be read,
+                # leaves the grid without export states and counts (a run fails with the same message); a failure of
+                # anything below is a bug and is not hidden as a scale error
+                scale_error = scale_problem(settings)
+                if settings.profile:
+                    p = profiles_path(settings.profiles_file)
+                    profiles = (p, _file_sig(p))
+            if m and not scale_error:
                 # a scan fixed by hand (here, on the command line, by an agent) is judged again, in memory only
                 fixed = [k for k, e in m.items()
                          if (e.get("override") or e.get("window_fix")) and e.get("status") == "needs_review"]
@@ -302,16 +331,21 @@ class Project:
                     reevaluate(m, fixed, settings)
                 plans = export_plan(m, settings)
             keys = sorted(set(names) | set(m.scans if m else {}))
-            scans = [self._record(m, k, m.get(k) if m else None, margin, flatten, plans, settings) for k in keys]
+            scans = [self._record(m, k, m.get(k) if m else None, margin, flatten, None if scale_error else plans, settings)
+                     for k in keys]
+            counts = count_scans(m, names, plans if m and not scale_error else None, settings)
+            if scale_error:      # no export states without a scale: nothing to export, retag or rewrite (a run would fail)
+                counts.update(to_export=0, to_retag=0, to_headers=0)
             self._sig = sig
-            self._snap = {"rev": f"{sig[0][0] if sig[0] else 0}-{sig[1][0] if sig[1] else 0}", "scans": scans,
-                          "counts": count_scans(m, names, plans if m else None, settings),
+            pstamp = profiles[1][0] if profiles and profiles[1] else 0      # the cards change with the profiles file too
+            self._snap = {"rev": f"{sig[0][0] if sig[0] else 0}-{sig[1][0] if sig[1] else 0}-{pstamp}", "scans": scans,
+                          "counts": counts, "scale_error": scale_error, "_profiles": profiles,
                           "stale": sum(1 for r in scans if r["stale"] and "_want" in r and (r["key"], r["_want"]) not in self._bad)}
             return self._snap
 
     def scans(self) -> dict:
         snap = self.snapshot()
-        return {"rev": snap["rev"], "counts": snap["counts"],
+        return {"rev": snap["rev"], "counts": snap["counts"], "scale_error": snap["scale_error"],
                 "scans": [{k: v for k, v in r.items() if k != "_want"} for r in snap["scans"]]}
 
     def progress(self) -> dict:
@@ -323,7 +357,8 @@ class Project:
         other = holder(self.output)
         if other and other["pid"] == os.getpid() and run and run["state"] in ("running", "cancelling"):
             other = None     # our own run
-        return {"rev": snap["rev"], "counts": snap["counts"], "run": run, "previews_pending": snap["stale"],
+        return {"rev": snap["rev"], "counts": snap["counts"], "scale_error": snap["scale_error"], "run": run,
+                "previews_pending": snap["stale"],
                 "can_run": bool(self.input and Path(self.input).is_dir()), "lock": other}
 
     def record(self) -> dict:
@@ -344,8 +379,9 @@ class Project:
         return from_panel(None, {})
 
     def get_settings(self) -> dict:
-        return {"settings": to_panel(self.settings_dict()), "running": self.running,
-                "locked_by": (holder(self.output) or {}).get("who") if not self.running else None}
+        d = self.settings_dict()
+        return {"settings": to_panel(d), "profiles": profile_options(settings_from_dict(d).profiles_file),
+                "running": self.running, "locked_by": (holder(self.output) or {}).get("who") if not self.running else None}
 
     def set_settings(self, update: dict) -> dict:
         """Apply panel fields. Refused while a run goes (here or in another process): a run reads its settings

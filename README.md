@@ -64,7 +64,7 @@ A local app (stdlib server on `127.0.0.1`, plain JavaScript, no extra dependenci
 - **Detect.** Finds the print in every scan and stores the outlines in the manifest, without exporting. A bar shows done/total and time left; the grid fills as scans finish, each card with a small straightened preview of the crop (cached in `<out>/_previews/`), its status and warnings. Cancel stops the run at once; the scans in flight are redone by the next run. The grid filters by status.
 - **Fix.** A click on a card opens the 9-tile drag view (the same page the old `review` command served): drag a corner or an edge grip onto the print edge, then Confirm or Save correction. The card and its preview update. Fixes can be made at any time, also during a run.
 - **Export.** Writes the TIFF master and the JPG derivatives of every detected scan that has no up to date export; `Export (N)` says how many. It has the same progress and Cancel. `Detect + export` does both in one go, for batches you trust. A scale-only change shows as `Update tags (T)`: the resolution tags are patched, nothing is encoded. A change of the metadata counts in `Export (N)` too (the card says "metadata to update"); that run only rewrites the text headers of the finished files (the bar says "updating metadata") and encodes nothing.
-- **Settings.** Per project, kept in the manifest: crop margin, the photo area crop and its bleed, the JPG derivatives `high` and `web`, flatten and shadow correction, the Metadata group (see [Export metadata](#export-metadata)); under Advanced the scale (ppi or scanner profile), TIFF compression, interpolation and the overlay. Your last choices are the start for new projects (the scale is not carried over; of the metadata only author and copyright are, title, description, keywords and date taken belong to a project). Settings apply to the next run and cannot be changed while one goes; a change shows in the Export count.
+- **Settings.** Per project, kept in the manifest: crop margin, the photo area crop and its bleed, the JPG derivatives `high` and `web`, flatten and shadow correction, the Metadata group (see [Export metadata](#export-metadata)); under Advanced the scale (a ppi, or a scanner profile picked from a dropdown of the profiles file; see [Scanner profiles](#scanner-profiles)), TIFF compression, interpolation and the overlay. Your last choices are the start for new projects (the scale is not carried over; of the metadata only author and copyright are, title, description, keywords and date taken belong to a project). Settings apply to the next run and cannot be changed while one goes; a change shows in the Export count.
 - **With the command line and agents.** The app watches the manifest: a fix made by `polaroid fix`, an agent or another window shows up in the grid and in an open drag view without a reload. Only one run can work on an output folder at a time (see [Run lock](#run-lock-and-concurrent-writers)); the app shows when another process holds it.
 
 `polaroid review OUTPUT [--all] [--port N] [--no-browser]` opens the app on that project; the grid starts on "needs review" unless `--all` is given. `--author NAME` sets the author recorded with fixes made in the app (only when this command starts the app; a running app keeps its own); `--export` is ignored (use the Export button). `polaroid app` and `polaroid review` reuse an app that already runs on the port (default 8780, or a free one when that is busy and no `--port` is given): the browser opens on it and on the project, and no second server starts. A run in the running app is never stopped for that; the app stays on its project.
@@ -105,6 +105,8 @@ polaroid process INPUT... -o OUTPUT [options]
 | `-j N` | Worker processes (default: from free RAM, about 1.5 GB per worker) |
 | `--json` | Machine-readable output (see below) |
 
+<a id="scanner-profiles"></a>
+
 Scanner profiles live in `~/.config/polaroid-processor/profiles.yaml` (or `--profiles`, or `$POLAROID_PROFILES`):
 
 ```yaml
@@ -112,6 +114,7 @@ profiles:
   epson-v850-3200: 3200
 ```
 
+In the app, Settings > Advanced has a dropdown with "none" and every profile of the file the project uses, shown as `name (3200 ppi)` and sorted by name; the page does not read the file, the app does. Pick one instead of typing a ppi (a project takes either, not both). A project whose saved profile is not in the file keeps it as an extra option, `name (not in profiles file)`; other settings still save, but a run fails with a clear message until you add it to the file, choose another profile, or choose "none" and type the profile's ppi in the same save (that keeps the scale and exports nothing again; "none" alone infers the scale and may export again). Without a profiles file the dropdown has only "none" and a hint with the file's path. Profiles are edited in the file; the app does not write it. A changed scale or profile exports an exported project again.
 Scan file names must be unique within one output folder, and so must their stems: `a.tif` next to `a.tiff` is refused because both would write `a.tif`, `a.jpg`... Use one output folder per input folder.
 
 ### `detect`

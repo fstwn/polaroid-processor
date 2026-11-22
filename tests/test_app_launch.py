@@ -394,3 +394,225 @@ def test_a_drive_root_is_not_a_project(tmp_path):
     from polaroid_processor.app.server import default_output
     with pytest.raises(api.UsageError, match="drive root"):
         default_output(tmp_path.anchor)
+
+
+# --------------------------------------------------------------------------- the scanner profile dropdown (server side)
+@pytest.fixture
+def profiles_file(tmp_path, monkeypatch):
+    """A temp profiles file named by POLAROID_PROFILES (the user's real file is never read or written by these tests)."""
+    p = tmp_path / "profiles.yaml"
+    p.write_text("profiles:\n  plustek: 3600\n  Epson-test: 3200\n  alpha: {ppi: 2400.5}\n", encoding="utf-8")
+    monkeypatch.setenv("POLAROID_PROFILES", str(p))
+    return p
+
+
+def test_the_settings_payload_lists_the_profiles_sorted_by_name(app, src, profiles_file):
+    app.json("/api/project/open", {"input": str(src)})
+    status, data = app.json("/api/project/settings")
+    assert status == 200 and data["profiles"]["error"] is None and data["profiles"]["path"] == str(profiles_file)
+    assert data["profiles"]["items"] == [{"name": "alpha", "ppi": 2400.5}, {"name": "Epson-test", "ppi": 3200.0},
+                                         {"name": "plustek", "ppi": 3600.0}]      # by name, ignoring case
+    assert data["settings"]["profile"] is None
+    # choosing one saves it, and the list stays; the payload of the save carries it too
+    status, data = app.json("/api/project/settings", {"profile": "plustek"})
+    assert status == 200 and data["settings"]["profile"] == "plustek" and len(data["profiles"]["items"]) == 3
+
+
+def test_the_projects_own_profiles_file_wins_over_the_environment(app, src, profiles_file, tmp_path):
+    from polaroid_processor.app.settings import profile_options
+    own = tmp_path / "own.yaml"
+    own.write_text("profiles:\n  mine: 1200\n", encoding="utf-8")
+    assert [i["name"] for i in profile_options(str(own))["items"]] == ["mine"]
+    assert profile_options(str(own))["path"] == str(own)
+    assert profile_options()["path"] == str(profiles_file)
+
+
+def test_no_empty_or_unreadable_profiles_file_gives_an_empty_list_and_the_path(app, src, tmp_path, monkeypatch):
+    from polaroid_processor.app.settings import profile_options
+    missing = tmp_path / "nowhere" / "profiles.yaml"
+    monkeypatch.setenv("POLAROID_PROFILES", str(missing))
+    assert profile_options() == {"path": str(missing), "items": [], "error": None}
+    missing.parent.mkdir()
+    missing.write_text("", encoding="utf-8")
+    assert profile_options() == {"path": str(missing), "items": [], "error": None}
+    missing.write_text("profiles: {a: [1, 2]}\n", encoding="utf-8")                 # a value that is no number
+    bad = profile_options()
+    assert bad["items"] == [] and bad["error"] and bad["path"] == str(missing)
+    missing.write_text("profiles: [unclosed\n", encoding="utf-8")                  # not YAML
+    assert profile_options()["error"] and profile_options()["items"] == []
+    app.json("/api/project/open", {"input": str(src)})                             # the panel still loads
+    status, data = app.json("/api/project/settings")
+    assert status == 200 and data["profiles"]["error"] and data["settings"]["margin_mm"] == 0.1
+
+
+def test_the_dropdown_rule_either_ppi_or_a_profile_and_unknown_profiles(app, src, profiles_file):
+    app.json("/api/project/open", {"input": str(src)})
+    status, data = app.json("/api/project/settings", {"ppi": 1200, "profile": "plustek"})
+    assert status == 400 and data["error"] == "set either ppi or a scanner profile, not both"
+    assert app.json("/api/project/settings", {"ppi": 1200})[0] == 200
+    status, data = app.json("/api/project/settings", {"profile": "plustek"})        # ppi is still set
+    assert status == 400 and data["error"] == "set either ppi or a scanner profile, not both"
+    assert app.json("/api/project/settings", {"ppi": None, "profile": "plustek"})[0] == 200
+    status, data = app.json("/api/project/settings", {"profile": "nope"})
+    assert status == 400 and "nope" in data["error"] and str(profiles_file) in data["error"]
+    assert app.json("/api/project/settings")[1]["settings"]["profile"] == "plustek"
+
+
+@pytest.fixture
+def missing_profile(app, src, profiles_file):
+    """A project that saved the profile ``plustek``, which the profiles file has lost since."""
+    app.json("/api/project/open", {"input": str(src)})
+    assert app.json("/api/project/settings", {"profile": "plustek"})[0] == 200
+    profiles_file.write_text("profiles:\n  other: 1000\n", encoding="utf-8")        # plustek is gone from the file
+    return app
+
+
+def test_a_saved_profile_missing_from_the_file_is_kept_and_shown(missing_profile):
+    status, data = missing_profile.json("/api/project/settings")
+    assert status == 200 and data["settings"]["profile"] == "plustek"             # still there (the page keeps it selected)
+    assert [i["name"] for i in data["profiles"]["items"]] == ["other"]
+
+
+def test_an_unrelated_save_passes_with_a_saved_profile_missing_from_the_file(missing_profile):
+    """Only a newly set or changed profile is checked against the file; other settings save, and the profile stays."""
+    app = missing_profile
+    status, data = app.json("/api/project/settings", {"margin_mm": 0.3, "metadata": {"title": "T {stem}"}})
+    assert status == 200 and data["settings"]["margin_mm"] == 0.3 and data["settings"]["metadata"]["title"] == "T {stem}"
+    assert data["settings"]["profile"] == "plustek"
+    # naming the saved profile again is no change either
+    assert app.json("/api/project/settings", {"profile": "plustek", "flatten": "off"})[0] == 200
+    assert app.json("/api/project/settings")[1]["settings"]["profile"] == "plustek"
+
+
+def test_a_run_with_a_saved_profile_missing_from_the_file_still_fails_with_its_message(missing_profile):
+    app = missing_profile
+    assert app.json("/api/project/settings", {"margin_mm": 0.3})[0] == 200
+    app.json("/api/project/detect", {})
+    prog = app.wait(lambda p: p["run"] and p["run"]["state"] in ("error", "finished"))
+    assert prog["run"]["state"] == "error"
+    assert "scanner profile 'plustek' not found in" in prog["run"]["error"]
+
+
+def test_choosing_another_unknown_profile_is_refused_a_known_one_accepted(missing_profile):
+    app = missing_profile
+    status, data = app.json("/api/project/settings", {"profile": "nope", "margin_mm": 0.3})
+    assert status == 400 and "nope" in data["error"] and "not found" in data["error"]
+    got = app.json("/api/project/settings")[1]["settings"]
+    assert got["profile"] == "plustek" and got["margin_mm"] == 0.1                  # nothing of that save
+    status, data = app.json("/api/project/settings", {"profile": "other"})
+    assert status == 200 and data["settings"]["profile"] == "other"
+
+
+def test_none_with_the_ppi_in_one_save_replaces_a_missing_profile(missing_profile):
+    """What the page's hint offers: choose "none" and type the ppi in the same save; the scale stays."""
+    app = missing_profile
+    status, data = app.json("/api/project/settings", {"profile": "", "ppi": 3600})
+    assert status == 200 and data["settings"]["profile"] is None and data["settings"]["ppi"] == 3600
+    assert app.json("/api/project/settings", {"margin_mm": 0.3})[0] == 200          # and later saves are plain
+
+
+def test_a_ppi_without_clearing_a_missing_profile_is_refused_as_both(missing_profile):
+    status, data = missing_profile.json("/api/project/settings", {"ppi": 3600})
+    assert status == 400 and data["error"] == "set either ppi or a scanner profile, not both"
+
+
+def test_profiles_that_are_not_a_positive_finite_number_are_left_out_and_reported(tmp_path, monkeypatch):
+    """``.inf`` / ``.nan`` would put Infinity / NaN into the settings JSON, which the page cannot parse."""
+    from polaroid_processor.app.settings import profile_options
+    p = tmp_path / "profiles.yaml"
+    p.write_text("profiles:\n  good: 3200\n  inf: .inf\n  nan: .nan\n  zero: 0\n  neg: -600\n", encoding="utf-8")
+    monkeypatch.setenv("POLAROID_PROFILES", str(p))
+    got = profile_options()
+    assert got["items"] == [{"name": "good", "ppi": 3200.0}]
+    assert got["error"] == "ignored: inf, nan, neg, zero (the ppi must be a number above 0)"
+    json.dumps(got, allow_nan=False)                                         # what the page gets is plain JSON
+    p.write_text("profiles:\n  good: 3200\n", encoding="utf-8")
+    assert profile_options()["error"] is None
+
+
+def test_the_settings_payload_with_a_bad_ppi_in_the_profiles_file_is_plain_json(app, src, tmp_path, monkeypatch):
+    p = tmp_path / "profiles.yaml"
+    p.write_text("profiles:\n  good: 3200\n  inf: .inf\n", encoding="utf-8")
+    monkeypatch.setenv("POLAROID_PROFILES", str(p))
+    app.json("/api/project/open", {"input": str(src)})
+    status, _, raw = app.request("/api/project/settings")
+    data = json.loads(raw, parse_constant=lambda c: pytest.fail(f"{c} in the settings payload"))
+    assert status == 200 and [i["name"] for i in data["profiles"]["items"]] == ["good"] and "inf" in data["profiles"]["error"]
+
+
+def test_the_grid_and_progress_still_answer_when_the_saved_profile_is_gone_from_the_file(app, src, profiles_file):
+    """A project that has a manifest (a run took the profile) and then loses the profile from the file: the scale cannot
+    be worked out, so scans and progress answer 200 with the scans, no export states and the message as ``scale_error``,
+    instead of a 500 that leaves the page without a grid."""
+    profiles_file.write_text(f"profiles:\n  plustek: {PPI}\n", encoding="utf-8")
+    app.json("/api/project/open", {"input": str(src)})
+    assert app.json("/api/project/settings", {"profile": "plustek"})[0] == 200
+    app.json("/api/project/all", {})
+    app.wait(finished)
+    out = app.state.project.output
+    assert Manifest(out).data["settings"]["profile"] == "plustek"
+    status, data = app.json("/api/project/scans")
+    assert status == 200 and data["scale_error"] is None and data["counts"]["to_export"] == 0
+    assert {s["export"] for s in data["scans"] if s["exported"]} == {"done"}
+    revs = [data["rev"]]
+    # the profile leaves the file
+    profiles_file.write_text("profiles:\n  other: 1000\n", encoding="utf-8")        # (the cached snapshot notices the file)
+    status, data = app.json("/api/project/scans")
+    assert status == 200 and len(data["scans"]) == 3 and "plustek" in data["scale_error"] and "not found" in data["scale_error"]
+    revs.append(data["rev"])
+    assert all(s["export"] is None for s in data["scans"]) and all(s["status"] for s in data["scans"])
+    assert data["counts"]["to_export"] == data["counts"]["to_retag"] == data["counts"]["to_headers"] == 0
+    assert data["counts"]["exported"] == 2 and data["counts"]["total"] == 3
+    status, prog = app.json("/api/project/progress")
+    assert status == 200 and prog["scale_error"] == data["scale_error"] and prog["counts"]["to_export"] == 0
+    assert app.json("/api/project/settings")[0] == 200                              # the panel works as well
+    # the profile is added back: everything is as before
+    profiles_file.write_text(f"profiles:\n  plustek: {PPI}\n", encoding="utf-8")
+    status, data = app.json("/api/project/scans")
+    assert status == 200 and data["scale_error"] is None
+    assert {s["export"] for s in data["scans"] if s["exported"]} == {"done"}
+    revs.append(data["rev"])
+    # the page re-reads the scans only when ``rev`` changes: it must change with the profiles file (cards show export states)
+    assert len(set(revs)) == 3 and app.json("/api/project/progress")[1]["rev"] == revs[-1]
+    # a file that cannot be read gives the same answer, with the reason (not a 500 from the YAML parser)
+    for text in ("profiles: [epson: 3200\n", "- epson\n- plustek\n", "profiles: {plustek: [1, 2]}\n"):
+        profiles_file.write_text(text, encoding="utf-8")
+        for path in ("/api/project/scans", "/api/project/progress"):
+            status, data = app.json(path)
+            assert status == 200 and data["scale_error"], (text, path)
+            assert str(profiles_file) in data["scale_error"] and "cannot be read" in data["scale_error"]
+            assert data["counts"]["to_export"] == 0
+    # and the profile file is read again when it changes back
+    profiles_file.write_text(f"profiles:\n  plustek: {PPI}\n", encoding="utf-8")
+    assert app.json("/api/project/progress")[1]["scale_error"] is None
+
+
+def test_a_failure_in_the_export_plan_is_not_shown_as_a_scale_error(app, src, profiles_file, monkeypatch):
+    """Only the scale lookup is guarded: a bug further down must stay a loud error, not a quiet 'scale cannot be worked out'."""
+    from polaroid_processor.app import project as project_mod
+    profiles_file.write_text(f"profiles:\n  plustek: {PPI}\n", encoding="utf-8")
+    app.json("/api/project/open", {"input": str(src)})
+    app.json("/api/project/settings", {"profile": "plustek"})
+    app.json("/api/project/detect", {})
+    app.wait(finished)
+    def boom(m, settings):
+        raise RuntimeError("a bug in the plan")
+    monkeypatch.setattr(project_mod, "export_plan", boom)
+    app.state.project._sig = None
+    assert app.json("/api/project/scans")[0] == 500
+
+
+def test_the_fix_page_confirm_works_while_the_scale_cannot_be_worked_out(app, src, profiles_file):
+    profiles_file.write_text(f"profiles:\n  plustek: {PPI}\n", encoding="utf-8")
+    app.json("/api/project/open", {"input": str(src)})
+    app.json("/api/project/settings", {"profile": "plustek"})
+    app.json("/api/project/detect", {})
+    app.wait(finished)
+    profiles_file.write_text("profiles:\n  other: 1000\n", encoding="utf-8")        # plustek is gone
+    status, data = app.json("/api/project/scans")
+    assert status == 200 and "plustek" in data["scale_error"]
+    key = next(s["key"] for s in data["scans"] if s["status"] in ("ok", "needs_review"))
+    status, body = app.json(f"/api/fix/scans/{key}/confirm", {})
+    assert status == 200 and body["quad_source"] == "override"
+    status, data = app.json("/api/project/scans")                                    # the grid still answers after the fix
+    assert status == 200 and "plustek" in data["scale_error"]

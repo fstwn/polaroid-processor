@@ -223,11 +223,18 @@ def merge(stored: Optional[Mapping[str, Any]], given: Optional[Mapping[str, Any]
     out = normalize_stored(stored)
     if given is None:
         return out
-    for f, v in normalize(given, keep_empty=True).items():
+    checked = normalize(given, keep_empty=True)
+    kept = set(out)      # the saved fields; a field the call gives is not "saved" any more
+    sets = False
+    for f, v in checked.items():
+        kept.discard(f)
         if v in ("", []):
             out.pop(f, None)
         else:
             out[f] = v
+            sets = True
+    if not sets:      # nothing set (``{}``, only None or clearing): the result cannot be longer than the saved one
+        return out
     # the limits hold for the merged result, not only for what this call gave: saves of single fields add up. A saved
     # value that would fail the checks on its own (a hand-edited literal) is left out of the count.
     checkable: Dict[str, Any] = {}
@@ -237,7 +244,13 @@ def merge(stored: Optional[Mapping[str, Any]], given: Optional[Mapping[str, Any]
         except ValueError:
             continue
         checkable[f] = v
-    _check(checkable)
+    try:
+        _check(checkable)
+    except ValueError as e:
+        saved = [f for f in TEXT_FIELDS + ("keywords",) if f in checkable and f in kept]      # normalize_stored leaves empty ones out
+        if saved and str(e).startswith("metadata texts add up"):
+            raise ValueError(f"{e}, with the output folder's {', '.join(saved)}: shorten or clear one") from None
+        raise
     return out
 
 

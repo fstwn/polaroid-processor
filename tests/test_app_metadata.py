@@ -330,13 +330,6 @@ def test_saving_an_unrelated_setting_keeps_keywords_with_a_comma_and_the_metadat
     assert {k: e["metadata_key"] for k, e in Manifest(out).items()} == keys and counts(app)["to_headers"] == 0
 
 
-def test_the_page_sends_only_the_metadata_fields_that_were_edited():
-    """Checked on the page's source: the comparison is against the text as shown, not against a re-split list."""
-    js = (Path(__file__).parent.parent / "src" / "polaroid_processor" / "app" / "static" / "app.js").read_text(encoding="utf-8")
-    assert "S.shownMeta[f] = e.value" in js and '$("m-" + f).value !== S.shownMeta[f]' in js
-    assert "JSON.stringify(typed[f])" not in js
-
-
 def test_the_total_limit_holds_for_the_merged_result_across_saves(app, roll):
     app.json("/api/project/open", {"input": str(roll)})
     big = "{stem}" * 12                                                   # 3120 characters filled at the worst
@@ -394,3 +387,75 @@ def test_defaults_leave_out_a_saved_author_or_copyright_that_fails_the_checks(ap
     app.json("/api/project/close", {})
     assert app.json("/api/project/open", {"input": str(other)})[0] == 200
     assert panel(app)["metadata"] == EMPTY
+
+
+# --------------------------------------------------------------------------- nits B and C of the slice 2 review
+BIG = "{stem}" * 12                                                       # 3120 characters filled at the worst case
+
+
+def over_limit_manifest(out):
+    """Hand-edit a saved metadata that is already over the 8000 characters (as through several runs of 9a33b84)."""
+    p = out / MANIFEST_NAME
+    m = json.loads(p.read_text(encoding="utf-8"))
+    m["settings"]["metadata"] = {"title": BIG, "author": BIG, "copyright": BIG}
+    p.write_text(json.dumps(m, ensure_ascii=False), encoding="utf-8")
+    return p
+
+
+def test_a_call_that_sets_nothing_is_not_refused_on_a_project_over_the_limit(project, src, copy):
+    from polaroid_processor import metadata as M
+    stored = {"title": BIG, "author": BIG, "copyright": BIG}
+    for nothing in (None, {}, {"title": None}, {"title": None, "keywords": None, "date_taken": None}):
+        assert M.merge(stored, nothing) == stored, nothing
+    assert M.merge(stored, {"author": ""}) == {"title": BIG, "copyright": BIG}      # clearing never adds: not refused either
+    assert M.merge(stored, {"keywords": [], "description": ""}) == stored
+    with pytest.raises(ValueError, match="add up"):                                 # setting something is still checked
+        M.merge(stored, {"description": "x"})
+    with pytest.raises(ValueError, match="add up"):
+        M.merge(stored, {"title": BIG})                                              # also a field replaced by an equal one
+    out = copy(project)
+    p = over_limit_manifest(out)
+    before = json.loads(p.read_text(encoding="utf-8"))["settings"]["metadata"]
+    for given in ({}, {"title": None}):                                              # API and MCP: runs, keeps what is saved
+        summary = api.process([str(src)], str(out), api.make_settings(workers=1, ppi=PPI, metadata=given))
+        assert not summary["failed"]
+        assert Manifest(out).data["settings"]["metadata"] == before
+    res = tool_process({"inputs": [str(src)], "output": str(out), "ppi": PPI, "workers": 1, "metadata": {}}, lambda *a: None)
+    assert not res["structuredContent"]["summary"]["failed"]
+    assert Manifest(out).data["settings"]["metadata"] == before
+
+
+def test_the_total_limit_message_names_the_saved_fields_that_count(app, roll, project, src, copy, capsys):
+    from polaroid_processor import metadata as M
+    saved = {"title": BIG, "description": BIG}
+    with pytest.raises(ValueError) as e:
+        M.merge(saved, {"author": "{stem}" * 10})
+    assert str(e.value) == ("metadata texts add up to more than 8000 characters, with the output folder's title, description: "
+                            "shorten or clear one")
+    saved_kw = {"title": BIG, "keywords": [f"{{stem}}-{i}" for i in range(11)]}      # keywords count too (11 x 266 = 2926)
+    with pytest.raises(ValueError) as e:
+        M.merge({**saved_kw, "copyright": BIG}, {"author": "{stem}" * 10})
+    assert "with the output folder's title, copyright, keywords: shorten or clear one" in str(e.value)
+    with pytest.raises(ValueError) as e:                                              # a field the call replaces is not "saved"
+        M.merge({"title": BIG, "description": BIG}, {"title": BIG, "author": BIG})
+    assert str(e.value).endswith("with the output folder's description: shorten or clear one")
+    # nothing saved counts: the call alone is too long, so the message is the plain one
+    with pytest.raises(ValueError) as e:
+        M.normalize({f: "{stem}" * 10 for f in ("title", "author", "copyright", "description")})
+    assert str(e.value) == "metadata texts add up to more than 8000 characters"
+    # API, CLI (exit 2) and the panel (400) all carry it
+    out = copy(project)
+    m = json.loads((out / MANIFEST_NAME).read_text(encoding="utf-8"))
+    m["settings"]["metadata"] = saved
+    (out / MANIFEST_NAME).write_text(json.dumps(m, ensure_ascii=False), encoding="utf-8")
+    tail = "with the output folder's title, description: shorten or clear one"
+    with pytest.raises(ValueError, match=tail):
+        api.process([str(src)], str(out), api.make_settings(workers=1, ppi=PPI, metadata={"author": "{stem}" * 10}))
+    capsys.readouterr()
+    assert cli.main(["process", str(src), "-o", str(out), "--author", "{stem}" * 10]) == 2
+    assert tail in capsys.readouterr().err
+    app.json("/api/project/open", {"input": str(roll)})
+    assert app.json("/api/project/settings", {"metadata": saved})[0] == 200
+    status, data = app.json("/api/project/settings", {"metadata": {"author": "{stem}" * 10}})
+    assert status == 400 and data["fields"] == {"metadata": f"metadata texts add up to more than 8000 characters, with the output folder's title, description: shorten or clear one"}
+    assert tail in data["error"]

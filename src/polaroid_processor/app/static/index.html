@@ -85,11 +85,13 @@
     <details><summary>Advanced</summary>
       <div class="grid2">
         <label>Scale: scanner resolution (ppi, empty = inferred) <input id="s-ppi" type="number" step="1" min="10" max="20000"></label>
-        <label>or scanner profile <input id="s-profile" type="text" spellcheck="false"></label>
+        <label>or scanner profile <select id="s-profile"><option value="">none</option></select></label>
         <label>TIFF compression <select id="s-tiff_compression"><option value="zlib">zlib</option><option value="none">none</option></select></label>
         <label>Interpolation <select id="s-interpolation"><option value="linear">linear</option><option value="cubic">cubic</option><option value="lanczos">lanczos</option></select></label>
         <label><input id="s-overlay" type="checkbox"> also write a detection overlay JPG per scan</label>
       </div>
+      <p id="s-profile-hint" class="dim small"></p>
+      <p class="dim small">Either a resolution or a profile, not both. With neither, the scale comes from the scan (its resolution tag, else the print size). Changing the scale of an exported project exports it again.</p>
     </details>
     <div class="row end">
       <span id="s-note" class="dim"></span>
