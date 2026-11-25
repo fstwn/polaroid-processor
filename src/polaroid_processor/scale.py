@@ -34,8 +34,19 @@ class Scale:
     def ppi(self) -> float:
         return self.px_per_mm * MM_PER_INCH
 
+    @property
+    def known(self) -> bool:
+        """False for :data:`NO_SCALE` (an item of kind Other without any usable resolution)."""
+        return self.px_per_mm > 0
+
     def to_dict(self) -> dict:
         return {"px_per_mm": round(self.px_per_mm, 3), "ppi": round(self.ppi, 1), "source": self.source}
+
+
+# Item kind Other (see item.py): the scale only sets the resolution tag, so there may be none.
+NO_SCALE = Scale(0.0, "none")
+TAG_UNVERIFIED = "tiff-tag-unverified"      # the TIFF tag as it is, nothing to check it against
+SCAN_PPI = "scan-ppi"                       # the scan's own resolution, given by the user
 
 
 def profiles_path(explicit: Optional[str] = None) -> Path:
@@ -84,6 +95,13 @@ def scale_from_tag(dpi_tag: Optional[Tuple[float, float]], size_px: Tuple[float,
     return None
 
 
+def scale_from_tag_as_is(dpi_tag: Optional[Tuple[float, float]]) -> Scale:
+    """The TIFF tag taken as it is (no print size to check it against), or :data:`NO_SCALE` without a usable tag."""
+    if not dpi_tag or not dpi_tag[0] or dpi_tag[0] <= 1:
+        return NO_SCALE
+    return Scale(float(dpi_tag[0]) / MM_PER_INCH, TAG_UNVERIFIED)
+
+
 def scale_from_size(size_px: Tuple[float, float], fmt: Optional[PrintFormat] = None,
                     source: str = "single-scan") -> Scale:
     """Scale that makes the outline its format's size; the format is classified by shape
@@ -94,10 +112,14 @@ def scale_from_size(size_px: Tuple[float, float], fmt: Optional[PrintFormat] = N
     return Scale(px_per_mm, source)
 
 
-def batch_median_scale(sizes_px: Iterable[Tuple[float, float]], fmt: Optional[PrintFormat] = None) -> Optional[Scale]:
+def batch_median_scale(sizes_px: Iterable[Tuple[float, float]], fmt: Optional[PrintFormat] = None,
+                       fmts: Optional[Iterable[Optional[PrintFormat]]] = None) -> Optional[Scale]:
     """Median of the per-scan scales; mixed batches (600 and Go) work, each outline is
-    classified by shape."""
-    vals = [scale_from_size(s, fmt).px_per_mm for s in sizes_px]
+    classified by shape. ``fmts``: one format per size, ``None`` where the shape decides (a print the user
+    told the format of)."""
+    sizes = list(sizes_px)
+    each = list(fmts) if fmts is not None else [fmt] * len(sizes)
+    vals = [scale_from_size(s, f).px_per_mm for s, f in zip(sizes, each)]
     if not vals:
         return None
     return Scale(median(vals), "batch-median")

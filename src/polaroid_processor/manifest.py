@@ -264,5 +264,30 @@ class Manifest:
         fix["accepted"] = None if outline is None else {"outline": outline, "author": author, "at": now(), "note": note}
         e["window_fix"] = fix if fix.get("window") or fix.get("accepted") else None
 
+    def set_item_fix(self, key: str, item: Optional[Dict[str, Any]], author: str, note: str = "",
+                     action: str = "item") -> None:
+        """Store the user's item choice (``item_fix``, see ``item.py``; ``None`` takes it away) and log it like an
+        outline fix: author, time, note and the previous choice. Only fixes write ``item_fix`` (the batch drops it only
+        when the scan's content changed)."""
+        e = self.entry(key)
+        e.setdefault("history", []).append({
+            "action": action, "author": author, "at": now(), "note": note,
+            "item_before": e.get("item_fix"), "item_after": item,
+        })
+        e["item_fix"] = item
+
+    def set_agent_crop(self, key: str, mark: Optional[Dict[str, Any]], author: str, note: str = "",
+                       action: str = "agent-crop") -> None:
+        """Set (or, with ``None``, clear) the mark of a crop an agent placed on a scan without a detected outline
+        (``entry["agent_crop"]``, a field of its own) and log it: every change of the mark is a history entry, so that
+        another writer's merge sees it (``_merge_disk`` judges the scans whose history changed). Only fixes write it
+        (the batch drops it with the crop when the scan file's content changed)."""
+        e = self.entry(key)
+        e.setdefault("history", []).append({
+            "action": action, "author": author, "at": now(), "note": note,
+            "agent_crop_before": e.get("agent_crop"), "agent_crop_after": mark,
+        })
+        e["agent_crop"] = mark
+
     def history(self, key: str) -> List[Dict[str, Any]]:
         return list(self.entry(key).get("history", []))

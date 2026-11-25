@@ -30,6 +30,8 @@ TAG_DESCRIPTION, TAG_MAKE, TAG_MODEL, TAG_SOFTWARE, TAG_ARTIST = 270, 271, 272, 
 TAG_COPYRIGHT, TAG_XMP, TAG_EXIF_IFD = 33432, 700, 34665
 TAG_XP_TITLE, TAG_XP_COMMENT, TAG_XP_AUTHOR, TAG_XP_KEYWORDS, TAG_XP_SUBJECT = 40091, 40092, 40093, 40094, 40095
 TAG_EXIF_VERSION, TAG_DATE_ORIGINAL = 36864, 36867
+TAG_RESOLUTION_UNIT = 296
+RESOLUTION_TAGS = {282, 283, 296}      # XResolution, YResolution, ResolutionUnit
 # every tag the tool sets: removed from a file's directory before the new ones are added
 MANAGED = {TAG_DESCRIPTION, TAG_MAKE, TAG_MODEL, TAG_SOFTWARE, TAG_ARTIST, TAG_COPYRIGHT, TAG_XMP, TAG_EXIF_IFD,
            TAG_XP_TITLE, TAG_XP_COMMENT, TAG_XP_AUTHOR, TAG_XP_KEYWORDS, TAG_XP_SUBJECT}
@@ -171,14 +173,19 @@ def set_tiff(path: str, fm: FileMeta) -> None:
         if struct.unpack(bo + ("Q" if big else "I"), body[n * ew:])[0] != 0:
             raise PatchError("more than one image in the file")
         kept: List[Entry] = []
+        no_unit = False      # ResolutionUnit "none": the writer (tifffile) puts 1/1 there when it was given no resolution
         for i in range(n):
             b = body[i * ew:(i + 1) * ew]
             tag, typ = struct.unpack(bo + "HH", b[:4])
             count = struct.unpack(bo + ("Q" if big else "I"), b[4:4 + nw])[0]
             if typ not in _SIZE:
                 raise PatchError(f"unknown field type {typ} in tag {tag}")
+            if tag == TAG_RESOLUTION_UNIT and typ == SHORT and count == 1:
+                no_unit = struct.unpack(bo + "H", b[4 + nw:4 + nw + 2])[0] == 1
             if tag not in MANAGED:
                 kept.append(Entry(tag, typ, count, raw=b[4 + nw:]))
+        if no_unit:      # an export made without a usable resolution carries no resolution tags at all
+            kept = [k for k in kept if k.tag not in RESOLUTION_TAGS]
         main, exif = legacy_entries(fm)
         new = list(main.values())
         if xmp:

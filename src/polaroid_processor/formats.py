@@ -28,6 +28,7 @@ POLAROID_GO = PrintFormat("polaroid-go", 53.5, 65.8)
 
 FORMATS: Tuple[PrintFormat, ...] = (POLAROID_600, POLAROID_GO)
 DEFAULT_FORMAT = POLAROID_600
+FORMAT_OF_ITEM = {"600": POLAROID_600, "go": POLAROID_GO}      # the item kinds that name a format (see item.py)
 
 
 @dataclass(frozen=True)

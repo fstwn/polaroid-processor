@@ -41,9 +41,12 @@ import numpy as np
 
 from .. import api
 from ..imageio import load_rgb, read_meta, to_uint8
+from ..item import agent_crop, is_other, item_of
+from ..pipeline import item_record
 from ..manifest import MANIFEST_NAME, Manifest
 from ..render import CORNERS, _stretch, inspect_points, is_dark, quad_summary, raw_tile
-from ..scan_window import accept_valid, effective_window, fix_outside, fix_window, nominal_window, window_state
+from ..scan_window import (accept_valid, effective_window, fix_outside, fix_window, nominal_window, window_format,
+                           window_state)
 
 log = logging.getLogger("polaroid_processor.review")
 
@@ -81,7 +84,7 @@ class ReviewApp:
         none = no photo crop by choice, missing, unknown = not looked for yet), kind, quad, who set it, whether a
         hand-set window lies outside the outline, and the nominal windows a missing one can be placed from.
         ``suggest``: the kind a new window starts as (the batch's majority when None)."""
-        if (m.data.get("settings") or {}).get("photo_crop", "off") == "off":
+        if (m.data.get("settings") or {}).get("photo_crop", "off") == "off" or is_other(e):      # Other: no photo crop
             return None
         suggest = suggest or api.batch_window_kind(m)
         outside = fix_outside(e, quad)
@@ -98,7 +101,7 @@ class ReviewApp:
             info["nominal"] = {}
             for kind in api.KINDS:
                 try:
-                    info["nominal"][kind] = nominal_window(quad, kind, (e.get("window") or {}).get("format"))["quad"]
+                    info["nominal"][kind] = nominal_window(quad, kind, window_format(e))["quad"]
                 except ValueError:
                     pass
         return info
@@ -107,13 +110,15 @@ class ReviewApp:
         """Where the window tiles sit: the stored window, else the nominal window of ``kind``."""
         if (m.data.get("settings") or {}).get("photo_crop", "off") == "off":
             raise api.UsageError("this project has no photo crop")
+        if is_other(e):
+            raise api.UsageError("an item of kind other has no photo window")
         quad = Manifest.effective_quad(e)
         w = fix_window(e) if fix_outside(e, quad) else effective_window(e, quad)
         if window_state(w) == "found":
             return np.array(w["quad"], float)
         kind = kind or api.batch_window_kind(m)
         try:
-            return np.array(nominal_window(quad, kind, (e.get("window") or {}).get("format"))["quad"], float)
+            return np.array(nominal_window(quad, kind, window_format(e))["quad"], float)
         except ValueError as ex:
             raise api.UsageError(str(ex)) from None
 
@@ -139,6 +144,10 @@ class ReviewApp:
         win = self._window_info(m, e, quad, suggest)
         if win is not None:
             rec["window"] = win
+        if item_of(e):      # the item choice, only when there is one: records of scans "as detected" stay as they were
+            rec["item"] = item_record(e)
+        if agent_crop(e):
+            rec["agent_crop"] = True
         return rec
 
     def stamp(self) -> str:

@@ -37,6 +37,11 @@ window not found" is resolved in one of three ways: polaroid_inspect it with of=
 nominal window and the print), then polaroid_fix window_set / window_nudge to place a window; or
 no_photo_crop to export it without a crop by choice; or accept to export the full print without the crop.
 Check a window that was found with of=window too: the cyan border should lie on the picture's edge.
+A scan with status failed (no outline: detection failed) can be cropped by hand: polaroid_inspect it (it shows
+the whole scan with a pixel grid and a start rectangle), then polaroid_fix with set = all four corners and item
+(600, go or other: any flat item such as a ticket or a paper sheet, exported exactly as drawn); check the crop
+with polaroid_inspect again. The scan turns ok but stays needs_review ("cropped by agent") until a human
+confirms it in the app; do not try to clear that yourself.
 Escalate to a human when the edge is not visible even in stretched tiles or is physically curved (they
 open `polaroid review <output>`, the local web app). Never write into input folders. One run works on an output folder at a time:
 when polaroid_process says another run is working there, wait and try again; polaroid_fix still
@@ -142,7 +147,9 @@ TOOLS: List[Dict[str, Any]] = [
             "for polaroid_fix. With of=window (output given, photo_crop on) the tiles sit on the corners of "
             "the photo window instead, its border in cyan (a round window: bounding square and circle) and "
             "the print outline in green; a scan without a window shows the nominal window for its format, "
-            "which window_set / window_nudge of polaroid_fix start from."),
+            "which window_set / window_nudge of polaroid_fix start from. A scan that has no outline (status failed, "
+            "detection failed) shows its whole scan with a pixel grid and a start rectangle (cyan; its corners are "
+            "in the record) to place a crop from with polaroid_fix."),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -150,10 +157,15 @@ TOOLS: List[Dict[str, Any]] = [
                 "output": {"type": "string", "description": "output folder whose manifest holds the scan"},
                 "window": {"type": "integer", "default": 360, "description": "tile size in scan pixels"},
                 "zoom": {"type": "integer", "default": 1, "minimum": 1, "maximum": 4},
-                "grid": {"type": "integer", "default": 50},
+                "grid": {"type": "integer",
+                         "description": "grid spacing in scan pixels (default 50; for a scan without an outline about "
+                                        "20 lines along the long edge)"},
                 "stretch": {"type": "string", "enum": ["auto", "on", "off"], "default": "auto"},
                 "of": {"type": "string", "enum": ["print", "window"], "default": "print",
                        "description": "print: tiles on the print outline's corners; window: on the photo window's"},
+                "item": {"type": "string", "enum": ["600", "go", "other"],
+                         "description": "only for a scan without an outline: the item kind its start rectangle is "
+                                        "drawn for (default other)"},
                 "save": {"type": "boolean", "default": True,
                          "description": "also save the PNG to <output>/_inspect/ (only with output)"},
             },
@@ -178,7 +190,14 @@ TOOLS: List[Dict[str, Any]] = [
             "border misses the picture's edge. A hand-set window stays through later outline fixes while it lies "
             "inside the outline; otherwise the scan needs review again until you move it inside or take it away "
             "(reset_window). A fix of the outline alone "
-            "does not clear \"photo window not found\". Every change is logged with author, time, note and previous value. "
+            "does not clear \"photo window not found\". A scan whose detection failed (status failed) is cropped by "
+            "setting all four corners with set: it turns ok at once, with item 600 / go (a print of that format) or "
+            "other (any flat item, exported exactly as drawn; the default there); the corners must lie inside the "
+            "scan, run clockwise tl, tr, br, bl, not cross, be convex, have sides of at least 50 px with every corner at least 50 px from the lines of the other two sides, and be rotated by at most 45 deg. "
+            "item sets what the scan shows for any scan (auto: as detected); scan_ppi is the scan's own resolution (item "
+            "other only; 0 takes it away). A crop you place on a scan without a detected outline stays needs_review "
+            "with the warning \"cropped by agent\" until a human confirms it; your own accept or new save does not "
+            "clear it. reset takes crop, item and scan_ppi away. A crop or item is refused when the scan file is missing or changed since the last polaroid_process (run it first). Every change is logged with author, time, note and previous value. "
             "While another run works on the output folder the fix is saved and the export is skipped "
             "(the result has a note)."),
         "inputSchema": {
@@ -193,6 +212,11 @@ TOOLS: List[Dict[str, Any]] = [
                           "additionalProperties": False, "description": "e.g. {\"bottom\": -59}"},
                 "accept": {"type": "boolean", "default": False},
                 "reset": {"type": "boolean", "default": False},
+                "item": {"type": "string", "enum": ["600", "go", "other", "auto"],
+                         "description": "what the scan shows: 600 or go (a print of that format), other (any flat "
+                                        "item, exported exactly as drawn, no photo crop), auto (as detected)"},
+                "scan_ppi": {"type": "number", "minimum": 0,
+                             "description": "the scan's own resolution (ppi), item other only; 0 takes it away"},
                 "window_set": {**_CORNER_MAP, "description": "photo window corners, e.g. {\"tl\": [610, 905]}"},
                 "window_nudge": {**_CORNER_MAP, "description": "photo window corner offsets, e.g. {\"br\": [-3, 2]}"},
                 "window_kind": {"type": "string", "enum": ["square", "round"],
@@ -229,7 +253,7 @@ TOOLS: List[Dict[str, Any]] = [
 
 _BRIEF = ("file", "status", "warnings", "error", "quad", "quad_source", "size_px", "scale", "format", "flatten",
           "shadows", "outputs",
-          "exported", "window")
+          "exported", "window", "item", "agent_crop", "detection_error")
 
 
 def _brief(rec: dict) -> dict:
@@ -292,8 +316,9 @@ def tool_inspect(args: dict, progress) -> dict:
     output = args.get("output")
     rec, sheet = api.inspect_scan(args["scan"], output, write=bool(output) and args.get("save", True),
                                   window=int(args.get("window", 360)), zoom=int(args.get("zoom", 1)),
-                                  grid=int(args.get("grid", 50)), stretch=args.get("stretch", "auto"),
-                                  of=args.get("of", "print"))
+                                  grid=int(args["grid"]) if args.get("grid") else None,
+                                  stretch=args.get("stretch", "auto"), of=args.get("of", "print"),
+                                  item=args.get("item"))
     return {"content": [_text(rec), _jpeg(sheet)], "structuredContent": rec, "isError": False}
 
 
@@ -302,7 +327,9 @@ def tool_fix(args: dict, progress) -> dict:
                        shifts=args.get("shift"), accept=args.get("accept", False), reset=args.get("reset", False),
                        window_sets=args.get("window_set"), window_nudges=args.get("window_nudge"),
                        window_kind=args.get("window_kind"), no_photo_crop=args.get("no_photo_crop", False),
-                       reset_window=args.get("reset_window", False), author=args.get("author", "agent"), note=args.get("note", ""),
+                       reset_window=args.get("reset_window", False), item=args.get("item"),
+                       scan_ppi=args.get("scan_ppi"), agent=True,      # every MCP fix is an agent's, whatever author it gives
+                       author=args.get("author", "agent"), note=args.get("note", ""),
                        export=args.get("export", True))
     failed = bool((rec.get("summary") or {}).get("failed"))
     return {"content": [_text(rec)], "structuredContent": rec, "isError": failed}

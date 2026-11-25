@@ -15,8 +15,9 @@ import cv2
 import numpy as np
 
 from .detection import quad_size
-from .formats import classify, get_format
+from .formats import FORMATS, PrintFormat, classify, get_format
 from .geometry import homography, rectify
+from .item import forced_format, is_other
 from .manifest import Manifest
 from .window import NOMINAL, WindowParams, find_window_for_formats
 
@@ -43,9 +44,15 @@ def inside_outline(points: np.ndarray, quad: np.ndarray) -> bool:
     return all(cv2.pointPolygonTest(q, (float(x), float(y)), False) >= 0 for x, y in np.asarray(points, float))
 
 
-def auto_valid(w: Optional[dict], quad: Optional[np.ndarray]) -> bool:
-    """True when the automatic window ``w`` was found for the print outline ``quad`` (its ``outline``)."""
-    return bool(w) and quad is not None and w.get("outline") == outline_id(quad)
+def auto_valid(w: Optional[dict], quad: Optional[np.ndarray], fmt: Optional[PrintFormat] = None) -> bool:
+    """True when the automatic window ``w`` was found for the print outline ``quad`` (its ``outline``) in the way the
+    print's format is known now: measured with the format the user named (``fmt``, item kind 600 or Go: the window then
+    carries ``named``), or, without such a format, with the format the shape gave."""
+    if not w or quad is None or w.get("outline") != outline_id(quad):
+        return False
+    if fmt is None:
+        return not w.get("named")
+    return bool(w.get("named")) and w.get("format") == fmt.name
 
 
 # The user's window choices live in ``entry["window_fix"]``, which only ``fix`` writes (like ``override``):
@@ -60,7 +67,7 @@ def fix_in_force(entry: dict, quad: Optional[np.ndarray] = None) -> Optional[dic
     """The user's window choice when it holds for the outline: a hand-set window lying inside the outline, or the
     no-photo-crop choice (which holds for any outline). A hand-set window outside the outline is not in force."""
     w = fix_window(entry)
-    if not w:
+    if not w or is_other(entry):      # an item of kind Other has no photo window at all
         return None
     if window_state(w) == "none":
         return w
@@ -72,20 +79,29 @@ def fix_outside(entry: dict, quad: Optional[np.ndarray] = None) -> bool:
     """True when the entry has a hand-set window that does not lie inside its outline (a fix of the outline,
     a refit or a new detection moved the outline away from it)."""
     w = fix_window(entry)
-    return bool(w) and window_state(w) == "found" and fix_in_force(entry, quad) is None
+    return bool(w) and not is_other(entry) and window_state(w) == "found" and fix_in_force(entry, quad) is None
 
 
 def effective_window(entry: dict, quad: Optional[np.ndarray] = None) -> Optional[dict]:
     """The window the export and the status use: the user's choice when it holds for the outline, else the
     automatic window (None when there is none yet; it can also be one found for an earlier outline)."""
+    if is_other(entry):
+        return None
     return fix_in_force(entry, quad) or entry.get("window")
+
+
+def window_format(entry: dict) -> Optional[str]:
+    """The format name a nominal window is placed for: the one the user named (item kind 600 or Go), else the one the
+    automatic window was measured with (the shape decides when there is none)."""
+    named = forced_format(entry)
+    return named.name if named else (entry.get("window") or {}).get("format")
 
 
 def window_current(entry: dict) -> bool:
     """True when the window in force holds for the entry's present outline: a hand-set window or the
     no-photo-crop choice, else an automatic window found for this outline."""
     quad = Manifest.effective_quad(entry)
-    return fix_in_force(entry, quad) is not None or auto_valid(entry.get("window"), quad)
+    return fix_in_force(entry, quad) is not None or auto_valid(entry.get("window"), quad, forced_format(entry))
 
 
 def window_shape(w: Optional[dict]) -> Optional[list]:
@@ -146,7 +162,7 @@ def window_size_mm(window_quad: np.ndarray, quad: np.ndarray, format_name: Optio
 
 
 def window_for_scan(rgb: np.ndarray, quad: np.ndarray, scale: float = 0.25,
-                    params: WindowParams = WindowParams()) -> Tuple[dict, float]:
+                    params: WindowParams = WindowParams(), fmt: Optional[PrintFormat] = None) -> Tuple[dict, float]:
     """The photo window of a scan, in scan coordinates, for the manifest.
 
     The print is cut out of the scan and shrunk by ``scale``, straightened by the plain homography of
@@ -156,17 +172,21 @@ def window_for_scan(rgb: np.ndarray, quad: np.ndarray, scale: float = 0.25,
     Returns ``(window dict, seconds)``. Keys: ``found``, ``reason``, ``kind``, ``quad`` (tl, tr, br, bl, scan
     px), ``size_mm``, ``format``, ``notes``, ``outline``, ``source`` ("auto"), ``accept_needed`` (True: a window
     not found stays a review item until the scan is accepted; windows made before this key existed were
-    accepted by any fix of the outline).
+    accepted by any fix of the outline). ``fmt``: the format the user named for the print (item kind 600 or Go);
+    only that format is tried, whatever the print's shape says.
     """
     t0 = time.perf_counter()
     quad = np.asarray(quad, np.float64)
     w, h = quad_size(quad)
     out = {"found": False, "reason": "", "kind": None, "format": None, "notes": [], "outline": outline_id(quad),
            "source": "auto", "accept_needed": True}
+    if fmt is not None:      # only that format was tried; the window is not current any more when the choice is taken away
+        out["named"] = True
     if w > h:
         out["reason"] = "print outline is landscape"
         return out, time.perf_counter() - t0
-    fmt = classify((w, h))
+    named = fmt is not None
+    fmt = fmt or classify((w, h))
     H, W = rgb.shape[:2]
     pad = 8
     x0, y0 = max(0, int(quad[:, 0].min()) - pad), max(0, int(quad[:, 1].min()) - pad)
@@ -177,7 +197,7 @@ def window_for_scan(rgb: np.ndarray, quad: np.ndarray, scale: float = 0.25,
     fx, fy = size[0] / cut.shape[1], size[1] / cut.shape[0]
     q_small = (quad - [x0, y0]) * [fx, fy]
     img = rectify(small, q_small, 0.0, "cubic")
-    res, won = find_window_for_formats(img, fmt, params=params)
+    res, won = find_window_for_formats(img, fmt, formats=(fmt,) if named else FORMATS, params=params)
     out.update(found=res.found, reason=res.reason, kind=res.kind, format=won.name, notes=list(res.notes))
     if res.size_mm is not None:
         out["size_mm"] = [round(float(v), 3) for v in res.size_mm]

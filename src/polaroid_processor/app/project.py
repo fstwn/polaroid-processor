@@ -21,6 +21,7 @@ from .. import api
 from ..detection import quad_size
 from ..geometry import homography
 from ..imageio import load_rgb
+from ..item import agent_crop, is_other, kind_of
 from ..lock import holder
 from ..manifest import MANIFEST_NAME, Manifest
 from ..pipeline import (collect_inputs, file_meta, manual_outline, reevaluate, resolve_scales, retag_ok,
@@ -74,7 +75,7 @@ def metadata_key_of(e: dict, key: str, settings) -> str:
     ``file_meta(...).key()`` the pipeline compares with the entry's ``metadata_key`` (``pipeline.sync_metadata``)."""
     quad = Manifest.effective_quad(e)
     return file_meta(settings.metadata, key, e.get("input") or key, e.get("format"),
-                     None if quad is None else quad_size(quad)).key()
+                     None if quad is None else quad_size(quad), item=e.get("item_fix")).key()
 
 
 def export_plan(m: Manifest, settings) -> Dict[str, tuple]:
@@ -91,8 +92,8 @@ def export_plan(m: Manifest, settings) -> Dict[str, tuple]:
             win = effective_window(e, quad) if settings.photo_crop != "off" else None
             # nothing set and nothing stored: skip the fill (the common case of a project without metadata)
             mkey = metadata_key_of(e, k, settings) if settings.metadata or e.get("metadata_key") else ""
-            out[k] = (settings.export_key(quad, scales[k], curves, manual, win),
-                      settings.export_base(quad, scales[k], curves, manual, win),
+            out[k] = (settings.export_key(quad, scales[k], curves, manual, win, e.get("item_fix")),
+                      settings.export_base(quad, scales[k], curves, manual, win, e.get("item_fix")),
                       retag_ok(e, scales[k], settings, curves, manual), mkey)
     return out
 
@@ -271,13 +272,20 @@ class Project:
                "quad_source": "override" if e and e.get("override") else ("auto" if quad is not None else None),
                "format": ((e or {}).get("format") or {}).get("name"), "preview": None, "stale": False,
                "export": None, "rev": len((e or {}).get("history", []))}
+        if kind_of(e):      # only with a choice: the card of a scan "as detected" stays as it was
+            rec["item"] = kind_of(e)
+        if agent_crop(e):
+            rec["agent_crop"] = True
         if m and e and e.get("outputs") and plans is not None:      # no plans: the scale could not be resolved
             rec["export"] = export_state(m, e, plans.get(key), settings)
         if quad is not None:
             w, h = quad_size(quad)
             rec["size_px"] = [round(w), round(h)]
             q, curves, manual = self._quad_curves(e)
-            want = preview_key(q, curves, manual, margin, flatten)
+            if is_other(e):      # exported exactly as drawn: no margin, no unwarp
+                want = preview_key(q, None, False, 0.0, "off")
+            else:
+                want = preview_key(q, curves, manual, margin, flatten)
             pv = e.get("preview")
             if pv and (self.out_dir / pv["file"]).exists():
                 rec["preview"] = {"url": f"/api/project/preview/{quote(key)}.jpg?rev={pv['key']}",
@@ -326,7 +334,8 @@ class Project:
             if m and not scale_error:
                 # a scan fixed by hand (here, on the command line, by an agent) is judged again, in memory only
                 fixed = [k for k, e in m.items()
-                         if (e.get("override") or e.get("window_fix")) and e.get("status") == "needs_review"]
+                         if (e.get("override") or e.get("window_fix") or e.get("item_fix") or e.get("agent_crop"))
+                         and e.get("status") == "needs_review"]
                 if fixed:
                     reevaluate(m, fixed, settings)
                 plans = export_plan(m, settings)
@@ -420,8 +429,9 @@ class Project:
         e = (m.get(key) if m else None) or {}
         path = e.get("input") or str(Path(self.input or ".") / key)
         quad = Manifest.effective_quad(e) if e else None
-        fm = file_meta(given, key, path, e.get("format"), None if quad is None else quad_size(quad), unknown_format="?")
-        known = bool(meta_label(e.get("format"), None if quad is None else quad_size(quad)))
+        fm = file_meta(given, key, path, e.get("format"), None if quad is None else quad_size(quad), unknown_format="?",
+                       item=e.get("item_fix"))
+        known = bool(kind_of(e)) or bool(meta_label(e.get("format"), None if quad is None else quad_size(quad)))
         out.update(scan=key, title=fm.title, description=fm.description, format_known=known)
         return out
 
@@ -432,8 +442,8 @@ class Project:
 
     def _export_inputs(self) -> List[str]:
         m = load_manifest(self.output)
-        paths = [e["input"] for _, e in sorted(m.items()) if m and e.get("detection") and e.get("status") != "failed"
-                 and e.get("input") and Path(e["input"]).is_file()] if m else []
+        paths = [e["input"] for _, e in sorted(m.items()) if m and (e.get("detection") or e.get("override"))
+                 and e.get("status") != "failed" and e.get("input") and Path(e["input"]).is_file()] if m else []
         if not paths:
             raise api.UsageError("no detected scans to export; detect first")
         return paths
@@ -561,6 +571,8 @@ class Project:
             raise api.UsageError(f"{key} has no outline yet")
         margin, flatten = self._settings(m)
         px = (e.get("scale") or {}).get("px_per_mm") or scale_from_size(quad_size(quad)).px_per_mm
+        if is_other(e):      # exported exactly as drawn: no margin, no unwarp
+            margin, flatten, curves, manual = 0.0, "off", None, False
         path = self.out_dir / PREVIEW_DIR / f"{Path(key).stem}.jpg"
         info = write_preview(rgb if rgb is not None else load_rgb(e["input"]), quad, px, curves, manual,
                              {"margin_mm": margin, "flatten": flatten, "long_edge": LONG_EDGE}, path)

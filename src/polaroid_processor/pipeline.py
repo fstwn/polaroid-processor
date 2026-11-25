@@ -20,9 +20,11 @@ from . import flatten as flat
 from . import refit
 from . import shading
 from .detection import DetectionError, DetectParams, band_shift, detect, quad_size
-from .formats import classify, match_format
+from .formats import FORMATS, FORMAT_OF_ITEM, classify, match_format
 from .geometry import rectify, shift_side
 from . import metadata as meta_mod
+from .item import (AGENT_WARNING, SCALE_UNVERIFIED, agent_crop, forced_format, held_by_hand, is_other, item_of,
+                   kind_of, scan_ppi_of, valid_item)
 from .imageio import (SCAN_SUFFIXES, file_fingerprint, load_rgb, read_meta, resize_long_edge, set_resolution,
                       write_derivative, write_tiff)
 from .meta_patch import PatchError, set_metadata
@@ -31,7 +33,8 @@ from .lock import RunLock
 from .manifest import MANIFEST_NAME, Manifest, now, scan_key
 from .preview import LONG_EDGE, PREVIEW_DIR, write_preview
 from .render import overlay
-from .scale import Scale, batch_median_scale, explicit_scale, scale_from_size, scale_from_tag
+from .scale import (MM_PER_INCH, NO_SCALE, SCAN_PPI, TAG_UNVERIFIED, Scale, batch_median_scale, explicit_scale,
+                    scale_from_size, scale_from_tag, scale_from_tag_as_is)
 from .scan_window import (accept_valid, auto_valid, effective_window, fix_outside, fix_window, outline_id,
                           window_current, window_for_scan, window_shape, window_state)
 from .window import inset_quad
@@ -122,22 +125,36 @@ class Settings:
     metadata: Optional[dict] = None
 
     def export_key(self, quad: np.ndarray, scale: Scale, curves: Optional[dict] = None,
-                   override: bool = False, window: Optional[dict] = None) -> str:
-        """Identity of an export: outline, curves, settings, scale and (with a photo crop) the window."""
-        return self._key(quad, curves, override, round(scale.px_per_mm, 4), window=window)
+                   override: bool = False, window: Optional[dict] = None, item: Optional[dict] = None) -> str:
+        """Identity of an export: outline, curves, settings, scale and (with a photo crop) the window. ``item``: the
+        scan's item choice (``item_fix``); part of the key only when there is one."""
+        return self._key(quad, curves, override, round(scale.px_per_mm, 4), window=window, item=item)
 
     def export_base(self, quad: np.ndarray, scale: Scale, curves: Optional[dict] = None, override: bool = False,
-                    window: Optional[dict] = None) -> str:
+                    window: Optional[dict] = None, item: Optional[dict] = None) -> str:
         """The export key without the scale value: two exports with the same base differ only by the scale
         a batch inferred (its median moved). An explicit scale (``ppi``, a profile, a TIFF tag) is part of it,
-        so a deliberate change of scale is always a new export."""
+        so a deliberate change of scale is always a new export. An item of kind Other has no scale in its base at
+        all (the scale only sets its resolution tag)."""
         inferred = scale.source in ("batch-median", "single-scan")
+        if valid_item(item) and item.get("kind") == "other":
+            return self._key(quad, curves, override, None, None, window, item, base=True)
         return self._key(quad, curves, override, None,
                          ["inferred" if inferred else scale.source, None if inferred else self.ppi,
-                          None if inferred else self.profile], window)
+                          None if inferred else self.profile], window, item)
 
     def _key(self, quad: np.ndarray, curves: Optional[dict], override: bool, px_per_mm: Optional[float],
-             scale_kind: Optional[list] = None, window: Optional[dict] = None) -> str:
+             scale_kind: Optional[list] = None, window: Optional[dict] = None, item: Optional[dict] = None,
+             base: bool = False) -> str:
+        if valid_item(item) and item.get("kind") == "other":
+            # exported exactly as drawn: margin, flatten, shadows, curves and the photo crop do not enter it
+            payload = {"v": __version__, "derivatives": [asdict(d) for d in self.derivatives],
+                       "interpolation": self.interpolation, "tiff_compression": self.tiff_compression,
+                       "overlay": self.overlay, "quad": np.round(quad, 2).tolist(),
+                       "item": [item["kind"], None if base else item.get("scan_ppi")]}      # the base: the ppi only retags
+            if px_per_mm is not None:
+                payload["px_per_mm"] = px_per_mm
+            return hashlib.sha1(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
         payload = {
             "v": __version__,
             "margin_mm": self.margin_mm,
@@ -151,6 +168,8 @@ class Settings:
         }
         if self.photo_crop != "off":      # absent when off: the keys of exports made before stay valid
             payload["photo"] = [self.photo_crop, self.photo_bleed_mm, window_shape(window)]
+        if valid_item(item):      # absent without a choice: the keys of exports made before stay valid
+            payload["item"] = [item["kind"], None]
         if px_per_mm is not None:
             payload["px_per_mm"] = px_per_mm
         if scale_kind is not None:
@@ -238,22 +257,27 @@ def flatten_plan(curves: Optional[dict], px_per_mm: float, mode: str, override: 
     return flat.plan(flat.curves_from_dict(curves), px_per_mm, params)
 
 
-def _write_images(img: np.ndarray, out_dir: Path, stem: str, px_per_mm: float, icc: Optional[bytes], ex: dict,
+def _write_images(img: np.ndarray, out_dir: Path, stem: str, px_per_mm: Optional[float], icc: Optional[bytes], ex: dict,
                   prefix: str = "", alpha: Optional[np.ndarray] = None, tiff: bool = True,
                   fm: Optional[FileMeta] = None) -> Tuple[dict, dict]:
     """TIFF master (``out_dir/STEM.tif``) and the derivatives (``out_dir/NAME/STEM.EXT``) of ``img``.
-    Returns outputs and their px/mm, named ``prefix`` + ``tiff`` / the derivative's name."""
+    Returns outputs and their px/mm, named ``prefix`` + ``tiff`` / the derivative's name. ``px_per_mm`` None (an item
+    of kind Other without a usable resolution): no resolution tag, and no px/mm in the second result."""
     outputs, ppm = {}, {}
     if tiff:
         tiff_path = out_dir / f"{stem}.tif"
         write_tiff(str(tiff_path), img, px_per_mm, icc, ex["tiff_compression"], alpha=alpha, meta=fm)
-        outputs[prefix + "tiff"], ppm[prefix + "tiff"] = str(tiff_path), px_per_mm
+        outputs[prefix + "tiff"] = str(tiff_path)
+        if px_per_mm:
+            ppm[prefix + "tiff"] = px_per_mm
     for d in ex["derivatives"]:
         small = resize_long_edge(img, d["long_edge"], d["scale"])
         f = small.shape[1] / img.shape[1]
         p = out_dir / d["name"] / f"{stem}.{d['fmt']}"
-        write_derivative(str(p), small, d["fmt"], d["quality"], px_per_mm * f * 25.4, icc, meta=fm)
-        outputs[prefix + d["name"]], ppm[prefix + d["name"]] = str(p), px_per_mm * f
+        write_derivative(str(p), small, d["fmt"], d["quality"], px_per_mm * f * 25.4 if px_per_mm else None, icc, meta=fm)
+        outputs[prefix + d["name"]] = str(p)
+        if px_per_mm:
+            ppm[prefix + d["name"]] = px_per_mm * f
     return outputs, ppm
 
 
@@ -287,28 +311,36 @@ def remove_photo_files(out_dir: Path, stem: str) -> None:
             pass
 
 
-def _export(rgb: np.ndarray, quad: np.ndarray, px_per_mm: float, icc: Optional[bytes], key: str, ex: dict,
+def _export(rgb: np.ndarray, quad: np.ndarray, px_per_mm: Optional[float], icc: Optional[bytes], key: str, ex: dict,
             curves: Optional[dict] = None, override: bool = False, window: Optional[dict] = None,
-            fm: Optional[FileMeta] = None) -> dict:
+            fm: Optional[FileMeta] = None, other: bool = False) -> dict:
     """Rectify (or unwarp), remove edge shadows, write master + derivatives (+ overlay), and with a photo
     window and ``photo_crop`` on the photo crop (``photo/``) from the same scan.
 
+    ``other`` (an item of kind Other): exactly as drawn, no margin, no unwarp, no shadow removal, no photo crop; the
+    scale only sets the resolution tag and is None when there is no usable one (then the files get no tag).
+
     Returns outputs, their px/mm and what was applied.
     """
-    margin = ex["margin_mm"] * px_per_mm
-    fplan = flatten_plan(curves, px_per_mm, ex["flatten"], override, ex["flatten_params"])
+    if other:
+        margin, fplan = 0.0, flat.FlattenPlan(False, [], {}, {})
+        window = None
+    else:
+        margin = ex["margin_mm"] * px_per_mm
+        fplan = flatten_plan(curves, px_per_mm, ex["flatten"], override, ex["flatten_params"])
     sides = flat.curves_from_dict(curves) if fplan.apply else None
     if sides:
         img = flat.unwarp(rgb, sides, quad, margin, ex["interpolation"], **ex["flatten_params"].warp_px(px_per_mm))
     else:
         img = rectify(rgb, quad, margin, ex["interpolation"])
     shade = {"sides": []}
-    if ex["shadows"] != "off":
+    if ex["shadows"] != "off" and not other:
         img, shade = shading.correct(img, px_per_mm, ex["shading_params"])
     stem = Path(key).stem
     out_dir = Path(ex["out_dir"])
     outputs, ppm = _write_images(img, out_dir, stem, px_per_mm, icc, ex, fm=fm)
-    photo = ex.get("photo_crop", "off") != "off" and window and window.get("found") and window.get("quad")
+    photo = (ex.get("photo_crop", "off") != "off" and window and window.get("found") and window.get("quad")
+             and not other)
     if photo:     # no shadow correction here: it only touches the frame
         crop, alpha = photo_image(rgb, window, px_per_mm, ex["photo_bleed_mm"], ex["interpolation"])
         o, r = _write_images(crop, out_dir / PHOTO_DIR, stem, px_per_mm, icc, ex, "photo_", alpha,
@@ -330,14 +362,21 @@ def _export(rgb: np.ndarray, quad: np.ndarray, px_per_mm: float, icc: Optional[b
 
 def file_meta(project_meta: Optional[dict], key: str, input_path: str, fmt: Optional[dict],
               size_px: Optional[Tuple[float, float]], make: str = "", model: str = "",
-              unknown_format: str = "") -> FileMeta:
+              unknown_format: str = "", item: Optional[dict] = None) -> FileMeta:
     """What an export of scan ``key`` carries: the project's metadata with the placeholders filled, the scanner's
     Make and Model, and our Software string. ``fmt`` is the scan's format record (its shape decides when it has none).
     ``unknown_format`` stands for ``{format}`` when neither is known (only the app's preview of a scan not yet
-    detected uses it; an export always knows)."""
+    detected uses it; an export always knows). ``item``: the scan's item choice; its kind decides ``{format}``
+    (``600`` / ``Go``, empty for Other) and the shape is not asked."""
+    kind = (valid_item(item) or {}).get("kind")
+    if kind == "other":
+        label = ""
+    elif kind:
+        label = meta_mod.FORMAT_LABELS[FORMAT_OF_ITEM[kind].name]
+    else:
+        label = meta_mod.format_label(fmt, size_px) or unknown_format
     return meta_mod.fill(project_meta, stem=Path(key).stem, project=Path(input_path).resolve().parent.name,
-                         format_name=meta_mod.format_label(fmt, size_px) or unknown_format, make=make, model=model,
-                         software=SOFTWARE)
+                         format_name=label, make=make, model=model, software=SOFTWARE)
 
 
 def sync_metadata(manifest: Manifest, e: dict, key: str, settings: Settings,
@@ -349,7 +388,8 @@ def sync_metadata(manifest: Manifest, e: dict, key: str, settings: Settings,
     tries again (exporting again would fail on the same file; the reason is appended to ``skip_reason``).
     ``on_update`` is called before the first rewrite."""
     quad = Manifest.effective_quad(e)
-    fm = file_meta(settings.metadata, key, e["input"], e.get("format"), None if quad is None else quad_size(quad))
+    fm = file_meta(settings.metadata, key, e["input"], e.get("format"), None if quad is None else quad_size(quad),
+                   item=e.get("item_fix"))
     want, have = fm.key(), e.get("metadata_key") or ""
     if want == have:
         return "same"
@@ -409,44 +449,68 @@ def _job(job: dict) -> dict:
                 res["error"] = f"detection failed: {e}"
                 return res
             res["detection"] = det
+        if job["detect"] and job.get("fingerprint") and job["fingerprint"] != res.get("fingerprint"):
+            # the file is not the one the crop and the choices were made on (the batch drops them when it stores this
+            # result): cut what the file holds now, with the detected outline, as a print
+            own_ppi = (valid_item(job.get("item")) or {}).get("scan_ppi")
+            job = {**job, "override": None, "item": None, "window_fix": None}
+            if own_ppi:      # the scan's own ppi went with its item: the scale a print has stands (explicit, else guessed)
+                job["scale"] = job.get("scale_base")
         quad = np.array(job["override"] if job.get("override") else det["quad"], dtype=np.float64)
         ex = job["export_settings"]
-        if job.get("scale"):
+        item = valid_item(job.get("item"))
+        other = bool(item) and item["kind"] == "other"
+        fmt = FORMAT_OF_ITEM.get(item["kind"]) if item else None      # the format the user named, else the shape decides
+        if other:      # the scale only sets the resolution tag: provisional, else the TIFF tag as it is, else none
+            px = job.get("scale") or None
+            if px is None:
+                px = scale_from_tag_as_is(meta.dpi_tag).px_per_mm or None
+        elif job.get("scale"):
             px = job["scale"]
         else:
-            s = scale_from_tag(meta.dpi_tag, quad_size(quad)) or scale_from_size(quad_size(quad))
+            s = (scale_from_tag(meta.dpi_tag, quad_size(quad), (fmt,) if fmt else FORMATS)
+                 or scale_from_size(quad_size(quad), fmt))
             px = s.px_per_mm
         if job["detect"] and ex["flatten"] != "off" and det.get("background", "dark") == "dark":
-            curves = flat.trace(rgb, np.array(det["quad"], dtype=np.float64), px, det.get("speck_threshold") or 30,
+            # a detection must not depend on an item Other (it is traced too, and "auto" means as detected): Other is traced at
+            # the scale the scan would have without it (explicit, else the tag or the shape's guess), never at its own ppi or
+            # tag as it is; a forced 600 / Go keeps the scale of its format (``px``), as the cut and the window use it
+            if item and item["kind"] == "other":
+                base = job.get("scale_base", job.get("scale"))
+                trace_px = base or (scale_from_tag(meta.dpi_tag, quad_size(quad)) or scale_from_size(quad_size(quad))).px_per_mm
+            else:
+                trace_px = px
+            curves = flat.trace(rgb, np.array(det["quad"], dtype=np.float64), trace_px, det.get("speck_threshold") or 30,
                                 ex["flatten_params"])
             det["curves"] = {k: c.to_dict() for k, c in curves.items()}
         window = None
-        if ex.get("photo_crop", "off") != "off":
+        if ex.get("photo_crop", "off") != "off" and not other:
             fix = job.get("window_fix")
-            if fix and job["detect"] and job.get("fingerprint") and job["fingerprint"] != res.get("fingerprint"):
-                fix = None      # the scan changed under a hand-set window: it described another picture
             # the automatic window of this outline (a fix landed after the window pass, or that pass lost the scan);
             # the user's choice, when it holds for the outline, is cut instead. The batch never stores the choice.
             auto = job.get("window")
-            if not auto_valid(auto, quad):
-                auto, res["window_time_s"] = _window_step(rgb, quad)
+            if not auto_valid(auto, quad, fmt):
+                auto, res["window_time_s"] = _window_step(rgb, quad, fmt)
                 res["window"] = auto
             window = effective_window({"window": auto, "window_fix": fix}, quad)
         if job.get("preview"):
             try:  # a preview that fails must not fail the scan
-                res["preview"] = write_preview(rgb, quad, px, (det or {}).get("curves"),
-                                               manual_outline(job.get("override"), det), job["preview"],
+                pv = {**job["preview"], "margin_mm": 0.0, "flatten": "off"} if other else job["preview"]
+                res["preview"] = write_preview(rgb, quad, px or 1.0, (det or {}).get("curves"),
+                                               manual_outline(job.get("override"), det), pv,
                                                Path(job["preview"]["dir"]) / f"{Path(job['key']).stem}.jpg")
             except Exception as e:  # noqa: BLE001
                 log.warning("preview of %s failed: %s", job["key"], e)
         if job["export"]:
-            fm = file_meta(ex.get("metadata"), job["key"], path, job.get("format"), quad_size(quad), meta.make, meta.model)
+            fm = file_meta(ex.get("metadata"), job["key"], path, job.get("format"), quad_size(quad), meta.make, meta.model,
+                           item=item)
             res.update(_export(rgb, quad, px, meta.icc_profile, job["key"], ex,
                                curves=(det or {}).get("curves"),
-                               override=manual_outline(job.get("override"), det), window=window, fm=fm))
+                               override=manual_outline(job.get("override"), det), window=window, fm=fm, other=other))
             res["metadata_key"] = fm.key()
             res["export_px_per_mm"] = px
             res["export_outline"] = outline_id(quad)
+            res["export_kind"] = item["kind"] if item else None      # what the files were cut as: the stamp needs it
             res["export_window"] = window      # what the photo crop was cut from: the key and the reconcile need it
     except Exception as e:  # noqa: BLE001
         res["error"] = f"{type(e).__name__}: {e}"
@@ -455,14 +519,18 @@ def _job(job: dict) -> dict:
     return res
 
 
-def _window_step(rgb: np.ndarray, quad: np.ndarray) -> Tuple[dict, float]:
-    """The photo window of a scan for the manifest; a failure of the step is a window not found, never an error."""
+def _window_step(rgb: np.ndarray, quad: np.ndarray, fmt=None) -> Tuple[dict, float]:
+    """The photo window of a scan for the manifest; a failure of the step is a window not found, never an error.
+    ``fmt``: the format the user named for the print (item kind 600 or Go), else the shape decides."""
     try:
-        return window_for_scan(rgb, quad)
+        return window_for_scan(rgb, quad, fmt=fmt)
     except Exception as e:  # noqa: BLE001
         log.warning("window step failed: %s", e)
-        return {"found": False, "reason": f"window step failed: {type(e).__name__}: {e}", "kind": None,
-                "format": None, "notes": [], "outline": outline_id(quad), "source": "auto", "accept_needed": True}, 0.0
+        failed = {"found": False, "reason": f"window step failed: {type(e).__name__}: {e}", "kind": None,
+                  "format": None, "notes": [], "outline": outline_id(quad), "source": "auto", "accept_needed": True}
+        if fmt is not None:
+            failed["named"] = True
+        return failed, 0.0
 
 
 def _window_job(job: dict) -> dict:
@@ -470,7 +538,8 @@ def _window_job(job: dict) -> dict:
     t0 = time.perf_counter()
     res = {"key": job["key"], "path": job["path"]}
     try:
-        res["window"], res["window_time_s"] = _window_step(load_rgb(job["path"]), np.array(job["quad"], dtype=np.float64))
+        res["window"], res["window_time_s"] = _window_step(load_rgb(job["path"]), np.array(job["quad"], dtype=np.float64),
+                                                           FORMAT_OF_ITEM.get(job.get("kind") or ""))
     except Exception as e:  # noqa: BLE001
         res["error"] = f"{type(e).__name__}: {e}"
     res["time_s"] = round(time.perf_counter() - t0, 2)
@@ -600,18 +669,32 @@ def _group(e: dict) -> Tuple[int, int]:
 
 
 def _sizes_by_group(manifest: Manifest) -> Dict[Tuple[int, int], List[Tuple[float, float]]]:
-    sizes: Dict[Tuple[int, int], List[Tuple[float, float]]] = {}
+    """Print sizes per scan-size group (an item of kind Other is no print and is left out)."""
+    return {g: [s for s, _ in v] for g, v in _prints_by_group(manifest).items()}
+
+
+def _prints_by_group(manifest: Manifest) -> Dict[Tuple[int, int], List[Tuple[Tuple[float, float], Optional[object]]]]:
+    """``(size, format the user named or None)`` of every print with an outline, per scan-size group. An item of
+    kind Other is no print: it never enters the batch scale or the reference sizes. A print the user told the format
+    of (item kind 600 or Go) counts like a hand-fixed print, with that format. A crop that still carries the agent
+    mark counts for nothing until a human confirms it."""
+    out: Dict[Tuple[int, int], list] = {}
     for _, e in manifest.items():
         q = Manifest.effective_quad(e)
-        if q is not None:
-            sizes.setdefault(_group(e), []).append(quad_size(q))
-    return sizes
+        if q is not None and not is_other(e) and not agent_crop(e):
+            out.setdefault(_group(e), []).append((quad_size(q), forced_format(e)))
+    return out
 
 
 def _ref_group(e: dict) -> Tuple:
-    """Scan-size group and print format (by shape): the reference size compares like with like."""
+    """Scan-size group and print format (the user's choice, else by shape): the reference size compares like with
+    like. An item of kind Other has a group of its own, which no reference size is made for."""
     q = Manifest.effective_quad(e)
-    return _group(e) + ((classify(quad_size(q)).name,) if q is not None else ())
+    if q is None:
+        return _group(e)
+    if is_other(e):
+        return _group(e) + ("other",)
+    return _group(e) + ((forced_format(e) or classify(quad_size(q))).name,)
 
 
 def reference_sizes(manifest: Manifest, min_scans: int = 5) -> Dict[Tuple, Tuple[float, float]]:
@@ -620,7 +703,7 @@ def reference_sizes(manifest: Manifest, min_scans: int = 5) -> Dict[Tuple, Tuple
     sizes: Dict[Tuple, List[Tuple[float, float]]] = {}
     for _, e in manifest.items():
         q = Manifest.effective_quad(e)
-        if q is not None:
+        if q is not None and not is_other(e) and not agent_crop(e):
             sizes.setdefault(_ref_group(e), []).append(quad_size(q))
     return {g: tuple(float(v) for v in np.median(np.array(s), axis=0)) for g, s in sizes.items() if len(s) >= min_scans}
 
@@ -655,7 +738,8 @@ def size_refit(entry: dict, scale: Scale, ref_size: Optional[Tuple[float, float]
     the batch; ``load_rgb_fn`` is called only when the seam has to be looked up in the scan.
     """
     det = entry.get("detection") or {}
-    if entry.get("override") or not det or det.get("refit") or det.get("background", "dark") != "dark" or not ref_size:
+    if (entry.get("override") or not det or det.get("refit") or det.get("background", "dark") != "dark" or not ref_size
+            or is_other(entry)):
         return None
     quad = np.array(det["quad"], dtype=np.float64)
     over = refit.oversize(quad, ref_size, rules.size_outlier_mm * scale.px_per_mm)
@@ -691,34 +775,53 @@ def apply_refit(entry: dict, quad: np.ndarray, info: dict, rgb: Optional[np.ndar
         det["curves"] = {k: c.to_dict() for k, c in curves.items()}
 
 
+def print_median_scale(manifest: Manifest, entry: dict, prints: Optional[dict] = None) -> Optional[Scale]:
+    """The median scale of the project's prints with the same scan size as ``entry`` (at least 3 of them), else None."""
+    found = (prints if prints is not None else _prints_by_group(manifest)).get(_group(entry), [])
+    if len(found) >= 3:
+        return batch_median_scale([s for s, _ in found], fmts=[f for _, f in found])
+    return None
+
+
 def resolve_scales(manifest: Manifest, keys: Sequence[str], settings: Settings) -> Dict[str, Scale]:
-    """Scale per scan: explicit > plausible TIFF tag > median of all scans with the same scan size."""
+    """Scale per scan: explicit > plausible TIFF tag > median of all scans with the same scan size.
+
+    A print the user told the format of (item kind 600 or Go) takes that format wherever the shape would have been
+    asked. An item of kind Other has its own order, because its scale only sets the resolution tag: the scan's own
+    ppi, the project's ppi or profile, the median of the project's prints with the same scan size (at least 3),
+    else the TIFF tag as it is (``tiff-tag-unverified``), else :data:`NO_SCALE` (no tag is written)."""
     explicit = explicit_scale(settings.ppi, settings.profile, settings.profiles_file)
     scales: Dict[str, Scale] = {}
     pending: List[str] = []
+    prints = _prints_by_group(manifest)
+
+    def group_median(e: dict) -> Optional[Scale]:
+        return print_median_scale(manifest, e, prints)
+
     for k in keys:
         e = manifest.get(k) or {}
         quad = Manifest.effective_quad(e)
         if quad is None:
             continue
+        tag = (e.get("meta") or {}).get("dpi_tag")
+        if is_other(e):
+            own = scan_ppi_of(e)
+            scales[k] = (Scale(own / MM_PER_INCH, SCAN_PPI) if own else explicit or group_median(e)
+                         or scale_from_tag_as_is(tuple(tag) if tag else None))
+            continue
         if explicit:
             scales[k] = explicit
             continue
-        tag = (e.get("meta") or {}).get("dpi_tag")
-        s = scale_from_tag(tuple(tag) if tag else None, quad_size(quad))
+        fmt = forced_format(e)
+        s = scale_from_tag(tuple(tag) if tag else None, quad_size(quad), (fmt,) if fmt else FORMATS)
         if s:
             scales[k] = s
         else:
             pending.append(k)
 
-    sizes_by_group = _sizes_by_group(manifest)
     for k in pending:
         e = manifest.get(k)
-        sizes = sizes_by_group.get(_group(e), [])
-        if len(sizes) >= 3:
-            scales[k] = batch_median_scale(sizes)
-        else:
-            scales[k] = scale_from_size(quad_size(Manifest.effective_quad(e)))
+        scales[k] = group_median(e) or scale_from_size(quad_size(Manifest.effective_quad(e)), forced_format(e))
     return scales
 
 
@@ -735,6 +838,8 @@ def evaluate(entry: dict, scale: Scale, rules: ReviewRules,
     """
     warnings: List[str] = []
     quad = Manifest.effective_quad(entry)
+    if is_other(entry):
+        return _evaluate_other(entry, scale)
     fplan = flatten_plan((entry.get("detection") or {}).get("curves"), scale.px_per_mm, flatten,
                          manual_outline((entry.get("override") or {}).get("quad"), entry.get("detection")),
                          flatten_params)
@@ -743,7 +848,8 @@ def evaluate(entry: dict, scale: Scale, rules: ReviewRules,
         warnings.append(f"flattened:{','.join(fplan.sides)}:{max(fplan.bend_mm.values()):.2f}mm")
         for side, reason in fplan.straight.items():
             warnings.append(f"flatten_straight:{side}")  # informational: this side's trace was not reliable
-    fm = match_format(quad_size(quad), scale.px_per_mm)
+    named = forced_format(entry)      # the format the user told, else the shape decides
+    fm = match_format(quad_size(quad), scale.px_per_mm, (named,) if named else FORMATS)
     fmt = None
     if fm:
         fmt = {"name": fm.format.name, "size_mm": list(fm.size_mm), "error": fm.error}
@@ -817,7 +923,36 @@ def evaluate(entry: dict, scale: Scale, rules: ReviewRules,
             review = review or not accepted
     if any(w.startswith("edge_curved") for w in warnings) and flatten == "off":
         warnings.append("hint:process with flatten on to unwarp curved edges")
+    if agent_crop(entry):      # an agent placed the crop on a scan without a detected outline: a human looks at it
+        warnings.append(AGENT_WARNING)
+        review = True
     return ("needs_review" if review else "ok"), warnings, fmt
+
+
+def _evaluate_other(entry: dict, scale: Scale) -> Tuple[str, List[str], Optional[dict]]:
+    """Status and warnings of an item of kind Other: it is exported exactly as drawn, so no size, shape, edge or window
+    rule applies and it is ``ok``, except a crop an agent placed (``cropped by agent``: a human confirms or saves it).
+    The scale only sets the resolution tag: ``scale_unverified`` says it could not be checked against anything and
+    never makes the scan need review."""
+    warnings: List[str] = []
+    if scale.source == "batch-median":
+        warnings.append(f"scale_inferred:{scale.source}")
+    if scale.source in (TAG_UNVERIFIED, NO_SCALE.source):
+        warnings.append(SCALE_UNVERIFIED)      # with no tag at all the files get no resolution tag
+    review = False
+    if agent_crop(entry):
+        warnings.append(AGENT_WARNING)
+        review = True
+    return ("needs_review" if review else "ok"), warnings, None
+
+
+def store_judgement(e: dict, scale: Scale, fmt: Optional[dict], status: str, warnings: List[str]) -> None:
+    """Put a scan's status, warnings, scale and format into its entry and clear its error. When a crop was put on a scan
+    nothing was detected on (it is no longer failed), the error it had stays as ``detection_error``."""
+    err = e.get("error")
+    if err and not e.get("detection") and e.get("override"):      # a crop over a scan nothing was detected on
+        e["detection_error"] = err
+    e.update(scale=scale.to_dict(), format=fmt, status=status, warnings=warnings, error=None)
 
 
 def reevaluate(manifest: Manifest, keys: Sequence[str], settings: Settings) -> None:
@@ -830,7 +965,7 @@ def reevaluate(manifest: Manifest, keys: Sequence[str], settings: Settings) -> N
         if k in scales and e and (e.get("detection") or e.get("override")):
             status, warnings, fmt = evaluate(e, scales[k], settings.rules, refs.get(_ref_group(e)), settings.margin_mm,
                                              settings.flatten, settings.flatten_params, settings.photo_crop)
-            e.update(scale=scales[k].to_dict(), format=fmt, status=status, warnings=warnings, error=None)
+            store_judgement(e, scales[k], fmt, status, warnings)
 
 
 class _Saver:
@@ -898,15 +1033,34 @@ def result_record(manifest: Manifest, key: str, exported: bool = False) -> dict:
         "exported": exported,
         "error": e.get("error"),
     }
-    if (e.get("window") or fix_window(e)) and manifest.data.get("settings", {}).get("photo_crop", "off") != "off":
+    crop_on = manifest.data.get("settings", {}).get("photo_crop", "off") != "off"
+    if (e.get("window") or fix_window(e)) and crop_on and not is_other(e):
         rec["window"] = window_record(e)
+    if item_of(e):      # only with a choice: records of scans "as detected" stay as they were
+        rec["item"] = item_record(e)
+    if agent_crop(e):
+        rec["agent_crop"] = True
+    if e.get("detection_error") and not det:
+        rec["detection_error"] = e["detection_error"]
+    return rec
+
+
+def item_record(e: dict) -> dict:
+    """The item choice of a manifest entry as the records show it."""
+    it = item_of(e)
+    rec = {"kind": it["kind"]}
+    if it.get("scan_ppi"):
+        rec["scan_ppi"] = it["scan_ppi"]
+    rec.update({k: it[k] for k in ("author", "at", "note") if it.get(k)})
+    rec["agent_crop"] = bool(agent_crop(e))      # the mark is the entry's own, see item.agent_crop
     return rec
 
 
 # --------------------------------------------------------------------------- driver
 def _history_scales(manifest: Manifest) -> Dict[Tuple[int, int], Scale]:
     """Median scale per scan-size group from scans already in the manifest (provisional)."""
-    return {g: batch_median_scale(s) for g, s in _sizes_by_group(manifest).items() if len(s) >= 3}
+    return {g: batch_median_scale([x for x, _ in s], fmts=[f for _, f in s])
+            for g, s in _prints_by_group(manifest).items() if len(s) >= 3}
 
 
 def _export_settings(settings: Settings, out_dir: Path) -> dict:
@@ -943,6 +1097,12 @@ def _store_job_result(manifest: Manifest, res: dict) -> None:
                     manifest.set_window_fix(key, None, "system", "input content changed; window choice dropped",
                                             "window-drop")
                 e["window_fix"] = None
+            if e.get("item_fix"):      # the item kind and the scan's own ppi: they described the old picture
+                manifest.set_item_fix(key, None, "system", "input content changed; item choice dropped", "item-drop")
+            if e.get("agent_crop"):      # an agent's crop of the old picture is gone, and so is its mark
+                manifest.set_agent_crop(key, None, "system", "input content changed; agent mark dropped",
+                                        "agent-crop-drop")
+            e.pop("detection_error", None)      # what failed on the old picture says nothing about this one
         e["fingerprint"] = res["fingerprint"]
     for k in ("meta", "size_bytes", "mtime"):
         if k in res:
@@ -950,9 +1110,14 @@ def _store_job_result(manifest: Manifest, res: dict) -> None:
     e["input"] = str(Path(res["path"]).resolve())
     if "detection" in res:
         e.update(detection=res["detection"], detected_at=now())
+        e.pop("detection_error", None)
     if "error" in res:
         if res["error"].startswith("detection failed"):
             e["detection"] = None
+            if held_by_hand(e):      # cropped by hand: the crop stays in force, the scan stays ok; why detection failed is kept
+                e["detection_error"] = res["error"]
+                e["error"] = None
+                return
         e.update(status="failed", error=res["error"], warnings=[])
         return
     e["error"] = None
@@ -975,9 +1140,17 @@ def _store_job_result(manifest: Manifest, res: dict) -> None:
 def retag_ok(e: dict, final: Scale, settings: Settings, curves: Optional[dict] = None, manual: bool = False) -> bool:
     """An export that differs from what a run would write only by an inferred scale can keep its pixels when
     the scale it was cut at is within 0.5 % of the new one (the margin and the widths of the unwarp and the
-    shading move by a fraction of a pixel) and the unwarp decision (flatten or not) comes out the same."""
+    shading move by a fraction of a pixel) and the unwarp decision (flatten or not) comes out the same.
+
+    An item of kind Other has no margin, unwarp or shading, so any scale keeps its pixels. Only the tags of an export
+    that has them can be patched and only to a scale that exists: an export made without a resolution tag (or
+    needing none any more) is exported again."""
     geom = e.get("export_geom_ppm")
-    if not geom or abs(geom - final.px_per_mm) / final.px_per_mm >= 0.005:
+    if not geom or not final.known:
+        return False
+    if is_other(e):
+        return True
+    if abs(geom - final.px_per_mm) / final.px_per_mm >= 0.005:
         return False
     plan = flatten_plan(curves, final.px_per_mm, settings.flatten, manual, settings.flatten_params)
     return plan.apply == bool((e.get("flatten") or {}).get("apply"))
@@ -1079,6 +1252,7 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
     exported_now: Dict[str, bool] = {}
     exp_outline: Dict[str, str] = {}   # outline_id of the outline a scan's export (pass A) was cut from
     exp_window: Dict[str, Optional[list]] = {}   # window_shape of the window its photo crop was cut from
+    exp_kind: Dict[str, Optional[str]] = {}      # the item kind its export (pass A) was cut as: None, 600, go or other
     saver = _Saver(manifest, settings)
 
     # ---- pass A: detect new or changed scans, export them from the same decode ----------
@@ -1086,15 +1260,22 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
     for f, key in zip(files, keys):
         e = manifest.get(key) or {}
         st = os.stat(f)
-        unchanged = (e.get("detection") and e.get("size_bytes") == st.st_size
-                     and abs(e.get("mtime", 0) - st.st_mtime) < 1e-3
-                     and (settings.flatten == "off" or "curves" in e["detection"]
-                          or e["detection"].get("background") == "light"))  # light: never traced
+        same_file = e.get("size_bytes") == st.st_size and abs(e.get("mtime", 0) - st.st_mtime) < 1e-3
+        # a scan cropped by hand that detection failed on is not detected again (only ``redetect`` does); a changed
+        # file is, which also drops the crop and the item choice (see _store_job_result)
+        unchanged = same_file and (held_by_hand(e) or bool(
+            e.get("detection") and (settings.flatten == "off" or "curves" in e["detection"]
+                                    or e["detection"].get("background") == "light")))  # light: never traced
         if unchanged and not settings.redetect:
             continue
         prov = explicit or (history.get(_group(e)) if e else None)
+        base_prov = prov      # without the item's own ppi: what a print of this scan would start from
+        if is_other(e) and scan_ppi_of(e):      # the scan's own resolution comes first
+            prov = Scale(scan_ppi_of(e) / MM_PER_INCH, SCAN_PPI)
         jobs.append({"key": key, "path": str(f), "detect": True, "detection": None,
-                     "override": None, "export": export_now, "scale": prov.px_per_mm if prov else None,
+                     "override": e["override"]["quad"] if e.get("override") else None, "item": e.get("item_fix"),
+                     "export": export_now, "scale": prov.px_per_mm if prov else None,
+                     "scale_base": base_prov.px_per_mm if base_prov else None,
                      "window": None, "window_fix": e.get("window_fix"),
                      "fingerprint": e.get("fingerprint"),
                      "export_settings": ex_settings, "detect_params": settings.detect_params, "preview": preview})
@@ -1109,6 +1290,7 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
             if "outputs" in res:
                 exp_outline[res["key"]] = res["export_outline"]
                 exp_window[res["key"]] = window_shape(res["export_window"])
+                exp_kind[res["key"]] = res["export_kind"]
             log.info("%s: %s in %.1fs", res["key"], res.get("error") or "done", res["time_s"])
             if progress:
                 progress(res["key"], res.get("error") or "detected")
@@ -1151,7 +1333,7 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
                     apply_refit(e, fit[0], fit[1], scan_rgb(), scales[k].px_per_mm, settings)
                     status, warnings, fmt = evaluate(e, scales[k], settings.rules, ref, settings.margin_mm,
                                                      settings.flatten, settings.flatten_params, settings.photo_crop)
-            e.update(scale=scales[k].to_dict(), format=fmt, status=status, warnings=warnings, error=None)
+            store_judgement(e, scales[k], fmt, status, warnings)
 
     # ---- photo windows: scans whose window is missing or was found for another outline ----
     if settings.photo_crop != "off" and not (cancel and cancel()):
@@ -1159,8 +1341,9 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
         for k in keys:
             e = manifest.entry(k)
             quad = Manifest.effective_quad(e)
-            if quad is not None and e.get("status") != "failed" and e.get("input") and not auto_valid(e.get("window"), quad):
-                w_jobs.append({"key": k, "path": e["input"], "quad": quad.tolist()})
+            if (quad is not None and e.get("status") != "failed" and e.get("input") and not is_other(e)
+                    and not auto_valid(e.get("window"), quad, forced_format(e))):
+                w_jobs.append({"key": k, "path": e["input"], "quad": quad.tolist(), "kind": kind_of(e)})
         if w_jobs:      # not counted as jobs (the app's "exported N scans" counts scans), the phase says what runs
             if on_phase:
                 on_phase("finding photo windows")
@@ -1177,7 +1360,7 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
                 if k in scales and (e.get("detection") or e.get("override")):
                     status, warnings, fmt = evaluate(e, scales[k], settings.rules, ref_of.get(k), settings.margin_mm,
                                                      settings.flatten, settings.flatten_params, settings.photo_crop)
-                    e.update(scale=scales[k].to_dict(), format=fmt, status=status, warnings=warnings, error=None)
+                    store_judgement(e, scales[k], fmt, status, warnings)
             saver.flush()
 
     # ---- reconcile exports with the final scale ---------------------------------------
@@ -1185,8 +1368,9 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
     fixed = manifest.take_fixed()     # fixes made while the sizes were checked, also of scans judged by now
     if fixed:
         reevaluate(manifest, fixed, settings)
+        scales.update(resolve_scales(manifest, fixed, settings))      # a scan cropped or re-kinded meanwhile has its own
     pass_b = []
-    xargs: Dict[str, tuple] = {}      # quad, scale, curves, manual of each export job: for the key of the window it cut
+    xargs: Dict[str, tuple] = {}      # quad, scale, curves, manual, item of each export job: for the key of the window it cut
     retagged = metadata_updated = metadata_skipped = 0
     phased = []
 
@@ -1208,16 +1392,17 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
         curves = (e.get("detection") or {}).get("curves")
         manual = manual_outline((e.get("override") or {}).get("quad"), e.get("detection"))
         win = effective_window(e, quad) if settings.photo_crop != "off" else None      # what the photo crop is cut from
-        xkey = settings.export_key(quad, final, curves, manual, win)
-        xbase = settings.export_base(quad, final, curves, manual, win)
+        item = e.get("item_fix")
+        xkey = settings.export_key(quad, final, curves, manual, win, item)
+        xbase = settings.export_base(quad, final, curves, manual, win, item)
         outs = e.get("outputs") or {}
         missing = not outs or any(not manifest.abs(p).exists() for p in outs.values())
         keep = False
         if exported_now.get(k):
-            # cut at a scale within 0.5 % of the final one, from the outline and the window the scan has now (a refit or
-            # a fix merged during the run moved them: the files then are not what the key would say)
+            # cut at a scale within 0.5 % of the final one, from the outline, the window and the item kind the scan has
+            # now (a refit or a fix merged during the run moved them: the files then are not what the key would say)
             if (exp_outline.get(k) == outline_id(quad) and exp_window.get(k) == window_shape(win)
-                    and retag_ok(e, final, settings, curves, manual)):
+                    and exp_kind.get(k) == kind_of(e) and retag_ok(e, final, settings, curves, manual)):
                 retag(manifest, e, final)
                 e["export_key"], e["export_base"] = xkey, xbase
                 keep = True
@@ -1239,10 +1424,11 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
                 e["warnings"] = [w for w in (e.get("warnings") or []) if not w.startswith(METADATA_SKIPPED)] + [note]
             if state != "failed":
                 continue
-        xargs[k] = (quad, final, curves, manual)
+        xargs[k] = (quad, final, curves, manual, item)
         pass_b.append({"key": k, "path": e["input"], "detect": False, "detection": e.get("detection"),
                        "override": e["override"]["quad"] if e.get("override") else None, "export": True,
-                       "scale": final.px_per_mm, "export_settings": ex_settings, "window": e.get("window"),
+                       "scale": final.px_per_mm if final.known else None, "export_settings": ex_settings,
+                       "window": e.get("window"), "item": item,
                        "window_fix": e.get("window_fix"), "format": e.get("format"),
                        "detect_params": settings.detect_params})
     if pass_b:
@@ -1260,15 +1446,15 @@ def _run_batch(inputs, out_dir, settings, emit, recursive, progress, cancel, on_
             else:
                 # the key is that of the window the photo was cut from (the job may have cut another one than the
                 # reconcile expected: a window fix or a new measurement landed meanwhile)
-                e["export_key"] = settings.export_key(*xargs[res["key"]], res["export_window"])
-                e["export_base"] = settings.export_base(*xargs[res["key"]], res["export_window"])
+                *used, item = xargs[res["key"]]
+                e["export_key"] = settings.export_key(*used, res["export_window"], item)
+                e["export_base"] = settings.export_base(*used, res["export_window"], item)
                 if "window" in res:      # measured again in the job
                     if res["key"] in scales and (e.get("detection") or e.get("override")):    # a window lost here is a review item
                         status, warnings, fmt = evaluate(e, scales[res["key"]], settings.rules, ref_of.get(res["key"]),
                                                          settings.margin_mm, settings.flatten, settings.flatten_params,
                                                          settings.photo_crop)
-                        e.update(scale=scales[res["key"]].to_dict(), format=fmt, status=status, warnings=warnings,
-                                 error=None)
+                        store_judgement(e, scales[res["key"]], fmt, status, warnings)
                 exported_now[res["key"]] = True
             log.info("%s: exported in %.1fs", res["key"], res["time_s"])
             if progress:

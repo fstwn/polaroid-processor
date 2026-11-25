@@ -165,6 +165,49 @@ def inspect_sheet(rgb: np.ndarray, quad: np.ndarray, window: int = 360, zoom: in
     return sheet
 
 
+def nice_step(raw: float) -> int:
+    """A round grid spacing (1, 2 or 5 times a power of ten, at least 1) close to ``raw``."""
+    raw = max(1.0, float(raw))
+    base = 10 ** int(np.floor(np.log10(raw)))
+    for m in (1, 2, 5, 10):
+        if m * base >= raw:
+            return int(m * base)
+    return int(10 * base)
+
+
+def scan_sheet(rgb: np.ndarray, rect: np.ndarray, grid: int, header: str = "", long_edge: int = 1600) -> np.ndarray:
+    """The whole scan with a pixel grid in absolute scan coordinates (a line every ``grid`` px, labelled) and
+    ``rect`` (a start rectangle: cyan outline, magenta corner names) drawn: what an agent needs to place a crop on a
+    scan whose detection failed. Dark scans are contrast-stretched like the review overview."""
+    h, w = rgb.shape[:2]
+    f = long_edge / max(h, w)
+    small = cv2.resize(to_uint8(rgb), (max(1, round(w * f)), max(1, round(h * f))), interpolation=cv2.INTER_AREA)
+    if is_dark(small):
+        small = _stretch(small)
+    small = np.ascontiguousarray(small)
+    step_px = grid * f
+    skip = max(1, int(np.ceil(46 / step_px))) if step_px > 0 else 1      # a label at least every ~46 screen px
+    for i, gx in enumerate(range(grid, w, grid), 1):
+        px = int(round(gx * f))
+        cv2.line(small, (px, 0), (px, small.shape[0] - 1), (90, 90, 160), 1)
+        if i % skip == 0:
+            cv2.putText(small, str(gx), (px + 2, 12), cv2.FONT_HERSHEY_PLAIN, 0.8, (160, 160, 255), 1, cv2.LINE_AA)
+    for i, gy in enumerate(range(grid, h, grid), 1):
+        py = int(round(gy * f))
+        cv2.line(small, (0, py), (small.shape[1] - 1, py), (90, 90, 160), 1)
+        if i % skip == 0:
+            cv2.putText(small, str(gy), (2, py - 2), cv2.FONT_HERSHEY_PLAIN, 0.8, (160, 160, 255), 1, cv2.LINE_AA)
+    q = np.asarray(rect, np.float64)
+    cv2.polylines(small, [np.round(q * f).astype(np.int32).reshape(-1, 1, 2)], True, CYAN, 2, cv2.LINE_AA)
+    for name, (x, y) in zip(CORNERS, q * f):
+        cv2.putText(small, name, (int(x) + 6, int(y) + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, MAGENTA, 1, cv2.LINE_AA)
+    if header:
+        bar = np.full((26, small.shape[1], 3), 20, np.uint8)
+        cv2.putText(bar, header, (6, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.55, WHITE, 1, cv2.LINE_AA)
+        small = np.concatenate([bar, small], axis=0)
+    return small
+
+
 def quad_summary(quad: np.ndarray) -> Dict[str, list]:
     w, h = quad_size(quad)
     return {"corners": {n: [round(float(x), 1), round(float(y), 1)] for n, (x, y) in zip(CORNERS, quad)},

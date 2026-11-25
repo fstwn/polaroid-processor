@@ -47,6 +47,8 @@ def _human(rec: dict) -> None:
         line += f"  {size[0]:.0f}x{size[1]:.0f}px"
     if fmt:
         line += f"  {fmt['name']} {fmt['size_mm'][0]:.1f}x{fmt['size_mm'][1]:.1f}mm"
+    if rec.get("item"):
+        line += f"  item {rec['item']['kind']}"
     if rec.get("error"):
         line += f"  ERROR {rec['error']}"
     elif rec.get("warnings"):
@@ -103,11 +105,13 @@ def cmd_detect(a) -> int:
 # --------------------------------------------------------------------------- inspect
 def cmd_inspect(a) -> int:
     rec, _ = api.inspect_scan(a.scan, a.manifest, image=a.image, window=a.window, zoom=a.zoom, grid=a.grid,
-                              stretch=a.stretch, of=a.of)
+                              stretch=a.stretch, of=a.of, item=a.item)
     if a.json:
         _emit(rec)
     else:
         print(f"inspect image: {rec['image']}")
+        if rec.get("failed"):
+            print(f"no outline yet: start rectangle for item {rec['item']}:")
         for n, c in (rec.get("window_corners") or rec["corners"]).items():
             print(f"  {n}: {c[0]:.1f}, {c[1]:.1f}")
     return 0
@@ -133,7 +137,7 @@ def cmd_fix(a) -> int:
                        nudges=_parse_pairs(a.nudge, "--nudge"), shifts=_parse_pairs(a.shift, "--shift"),
                        accept=a.accept, reset=a.reset, window_sets=_parse_pairs(a.window_set, "--window-set"),
                        window_nudges=_parse_pairs(a.window_nudge, "--window-nudge"), window_kind=a.window_kind,
-                       no_photo_crop=a.no_photo_crop, reset_window=a.reset_window,
+                       no_photo_crop=a.no_photo_crop, reset_window=a.reset_window, item=a.item, scan_ppi=a.scan_ppi,
                        author=a.author, note=a.note, export=a.export, emit=emit)
     summary = rec.pop("summary", None)
     if summary is not None:
@@ -244,9 +248,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--image", help="where to write the PNG")
     sp.add_argument("--window", type=int, default=360, help="tile size in scan pixels (default 360)")
     sp.add_argument("--zoom", type=int, default=1, help="integer upscaling of tiles")
-    sp.add_argument("--grid", type=int, default=50, help="grid spacing in scan pixels")
+    sp.add_argument("--grid", type=int, help="grid spacing in scan pixels (default 50; for a scan without an outline "
+                    "about 20 lines along the long edge)")
     sp.add_argument("--stretch", choices=("auto", "on", "off"), default="auto",
                     help="contrast stretch for dark tiles (auto: tiles that are dark throughout)")
+    sp.add_argument("--item", choices=api.ITEM_KINDS,
+                    help="for a scan without an outline (detection failed): the start rectangle of this item kind "
+                         "(default other)")
     sp.add_argument("--of", choices=("print", "window"), default="print",
                     help="window: tiles on the corners of the photo window (cyan), needs --manifest with the "
                          "photo crop on; a scan without a window shows the nominal one")
@@ -260,7 +268,15 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--nudge", action="append", metavar="CORNER=DX,DY", help="move a corner by pixels")
     sp.add_argument("--shift", action="append", metavar="SIDE=D", help="move a side outward (+) or inward (-)")
     sp.add_argument("--accept", action="store_true", help="accept the current quad as reviewed")
-    sp.add_argument("--reset", action="store_true", help="drop the manual fix, back to automatic detection")
+    sp.add_argument("--item", choices=(*api.ITEM_KINDS, api.AUTO),
+                    help="what the scan shows: 600 or go (a print of that format, replaces the shape guess), other "
+                         "(any flat item, exported exactly as drawn: no margin, flattening, shadow removal, photo "
+                         "crop or format), auto (as detected). A scan whose detection failed is cropped by "
+                         "--set with all four corners (item defaults to other); it turns ok at once")
+    sp.add_argument("--scan-ppi", type=float, metavar="PPI",
+                    help="the scan's own resolution, for item other only (0 takes it away); sets its resolution tag")
+    sp.add_argument("--reset", action="store_true", help="drop the manual fix (crop, item kind and own ppi too), back to "
+                    "automatic detection, or to failed without one")
     sp.add_argument("--window-set", action="append", metavar="CORNER=X,Y",
                     help="set a corner of the photo window (photo crop on); a scan without a window starts "
                          "from the nominal one")
