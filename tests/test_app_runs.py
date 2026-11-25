@@ -168,7 +168,9 @@ def test_the_drag_view_is_served_by_the_app_and_a_save_renews_card_and_preview(a
     status, headers, raw = app.request("/fix")
     assert status == 200 and b'window.POLAROID_API = "/api/fix"' in raw and b"Polaroid review" in raw
     status, data = app.json("/api/fix/scans")
-    assert status == 200 and [s["key"] for s in data["scans"]] == ["a_gold.tif", "a_white.tif"]
+    assert status == 200 and [s["key"] for s in data["scans"]] == ["a_blank.tif", "a_gold.tif", "a_white.tif"]
+    blank = data["scans"][0]      # hand crop, slice 2: a scan nothing was found on is listed too, without an outline (the page's place step)
+    assert blank["status"] == "failed" and blank["quad"] is None and blank["detected"] is False
     status, specs = app.json("/api/fix/scans/a_white.tif/tiles")
     assert status == 200 and len(specs["tiles"]) == 9
     assert specs["tiles"][0]["url"].startswith("/api/fix/scans/") and app.request(specs["tiles"][0]["url"])[0] == 200

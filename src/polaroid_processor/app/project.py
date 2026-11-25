@@ -21,7 +21,7 @@ from .. import api
 from ..detection import quad_size
 from ..geometry import homography
 from ..imageio import load_rgb
-from ..item import agent_crop, is_other, kind_of
+from ..item import agent_crop, held_by_hand, is_other, kind_of
 from ..lock import holder
 from ..manifest import MANIFEST_NAME, Manifest
 from ..pipeline import (collect_inputs, file_meta, manual_outline, reevaluate, resolve_scales, retag_ok,
@@ -276,6 +276,8 @@ class Project:
             rec["item"] = kind_of(e)
         if agent_crop(e):
             rec["agent_crop"] = True
+        if held_by_hand(e) and kind_of(e):      # a crop with an item on a scan nothing was detected on: a hand crop, not a "fixed" outline (a plain fixed print keeps its card)
+            rec["hand_crop"] = True
         if m and e and e.get("outputs") and plans is not None:      # no plans: the scale could not be resolved
             rec["export"] = export_state(m, e, plans.get(key), settings)
         if quad is not None:
@@ -559,6 +561,9 @@ class Project:
         if m and m.get(key):
             reevaluate(m, [key], settings_from_dict(m.data.get("settings") or {}))
             m.save()
+        if m and m.get(key) and Manifest.effective_quad(m.get(key)) is None:
+            self._sig = None      # a crop was taken away from a scan nothing was detected on: no outline, no preview
+            return
         self.make_preview(key, rgb)
         self._sig = None
 

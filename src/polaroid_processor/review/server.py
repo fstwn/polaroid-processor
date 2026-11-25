@@ -9,12 +9,18 @@ Routes::
     GET  /                                        the page
     GET  /api/scans                               scans with outline, status, warnings, review state
     GET  /api/stamp                               changes when the manifest on disk does
-    GET  /api/scans/<key>/tiles                   tile descriptors of one scan at its current outline
+    GET  /api/scans/<key>/tiles                   tile descriptors of one scan at its current outline; ``?q=x,y,x,y,x,y,x,y``
+                                                  (tl, tr, br, bl) cuts the corner tiles at those corners instead (the place
+                                                  step's rectangle, not stored yet); a scan without an outline has the overview only
+    GET  /api/scans/<key>/start?item=600|go|other the rectangle the place step starts from (``api.start_rectangle``)
     GET  /api/scans/<key>/tile/<name>.png?rev=N   one tile (raw pixels; the overview is downscaled)
     POST /api/scans/<key>/confirm                 accept the current outline (and a missing photo window)
     POST /api/scans/<key>/save                    body {"corners": {"tl": [x, y], ...}}: store all four corners;
                                                   with "window": {"corners": {...}, "kind": ...} the hand-set photo
-                                                  window in the same fix (both or neither)
+                                                  window in the same fix (both or neither); with "item": "600" | "go" |
+                                                  "other" | "auto" and "scan_ppi" the item choice in the same fix (corners
+                                                  may then be left out on a scan with an outline)
+    POST /api/scans/<key>/reset                   take the stored crop, item kind and own ppi away (the core's reset, by a human)
     POST /api/scans/<key>/window                  body {"corners": {...}, "kind": "square"|"round"} store the photo
                                                   window; {"none": true} no photo crop; {"reset": true} automatic again
 
@@ -41,7 +47,8 @@ import numpy as np
 
 from .. import api
 from ..imageio import load_rgb, read_meta, to_uint8
-from ..item import agent_crop, is_other, item_of
+from ..formats import FORMAT_OF_ITEM
+from ..item import MAX_ROTATION_DEG, MAX_SCAN_PPI, MIN_SIDE_PX, agent_crop, is_other, item_of
 from ..pipeline import item_record
 from ..manifest import MANIFEST_NAME, Manifest
 from ..render import CORNERS, _stretch, inspect_points, is_dark, quad_summary, raw_tile
@@ -124,7 +131,7 @@ class ReviewApp:
 
     def _record(self, m: Manifest, key: str, suggest: Optional[str] = None) -> dict:
         e = m.get(key)
-        quad = Manifest.effective_quad(e)
+        quad = Manifest.effective_quad(e)      # None: a scan whose detection failed and nobody cropped (the place step starts there)
         hist = [h for h in e.get("history", []) if h.get("action") in ("accept", "fix")]
         meta = e.get("meta") or {}
         review = None
@@ -134,13 +141,17 @@ class ReviewApp:
             "key": key,
             "status": e.get("status", "pending"),
             "warnings": e.get("warnings", []),
-            "quad": np.round(quad, 2).tolist(),
-            "quad_source": "override" if e.get("override") else "auto",
-            "size_px": quad_summary(quad)["size_px"],
+            "quad": None if quad is None else np.round(quad, 2).tolist(),
+            "quad_source": ("override" if e.get("override") else "auto") if quad is not None else None,
+            "size_px": None if quad is None else quad_summary(quad)["size_px"],
             "scan_px": [meta["width"], meta["height"]] if meta.get("width") else None,
             "rev": len(e.get("history", [])),
             "review": review,
+            "detected": bool(e.get("detection")),      # a detected outline exists (the item choice may go back to "as detected")
         }
+        if quad is None:
+            rec["error"] = e.get("error")
+            return rec
         win = self._window_info(m, e, quad, suggest)
         if win is not None:
             rec["window"] = win
@@ -166,16 +177,23 @@ class ReviewApp:
     def list_scans(self) -> dict:
         with self._lock:
             m = Manifest(self.output)
+            # a scan whose detection failed and nobody cropped is listed too (the place step starts there); a scan
+            # that was never detected stays closed
             keys = [k for k, e in sorted(m.items())
-                    if Manifest.effective_quad(e) is not None and (self.show_all or e.get("status") == "needs_review")]
+                    if (Manifest.effective_quad(e) is not None and (self.show_all or e.get("status") == "needs_review"))
+                    or (Manifest.effective_quad(e) is None and e.get("status") == "failed")]
             suggest = api.batch_window_kind(m) if (m.data.get("settings") or {}).get("photo_crop", "off") != "off" else None
             return {"output": str(m.out_dir), "all": self.show_all, "author": self.author, "export": self.export,
-                    "tile_px": TILE_PX, "scans": [self._record(m, k, suggest) for k in keys]}
+                    "tile_px": TILE_PX, "aspects": {k: f.aspect for k, f in FORMAT_OF_ITEM.items()},
+                    "limits": {"min_side_px": MIN_SIDE_PX, "max_rotation_deg": MAX_ROTATION_DEG, "max_scan_ppi": MAX_SCAN_PPI},
+                    "scans": [self._record(m, k, suggest) for k in keys]}
 
-    def _entry(self, key: str) -> Tuple[Manifest, dict]:
+    def _entry(self, key: str, need_quad: bool = True) -> Tuple[Manifest, dict]:
+        """The manifest and entry of ``key``. ``need_quad=False`` also takes a scan whose detection failed and that has no
+        crop yet (the place step works on it)."""
         m = Manifest(self.output)
         e = m.get(key)
-        if e is None or Manifest.effective_quad(e) is None:
+        if e is None or (Manifest.effective_quad(e) is None and (need_quad or e.get("status") != "failed")):
             raise NotFound(key)
         return m, e
 
@@ -195,16 +213,19 @@ class ReviewApp:
         f = min(1.0, OVERVIEW_PX / max(h, w))
         return max(1, round(w * f)), max(1, round(h * f))
 
-    def tile_specs(self, key: str, of: str = "print", kind: Optional[str] = None) -> dict:
+    def tile_specs(self, key: str, of: str = "print", kind: Optional[str] = None, quad: Optional[Any] = None) -> dict:
         """Where each tile sits for the current outline: scan window (x0, y0, size) and tile image size.
 
         A scan point (x, y) lies at ((x - x0) * size_w / window_w, (y - y0) * size_h / window_h)
         in the tile image. ``of="window"``: the tiles sit on the photo window's corners (see
-        :meth:`_window_quad`) instead of the print's.
+        :meth:`_window_quad`) instead of the print's. ``quad`` (4 x 2, tl tr br bl): the corner tiles sit on these
+        corners instead of the stored outline (the place step's rectangle, which is not stored yet). A scan without
+        an outline and without ``quad`` has the overview only.
         """
         with self._lock:
-            m, e = self._entry(key)
-            quad = self._tile_quad(m, e, of, kind)
+            m, e = self._entry(key, need_quad=False)
+            given = quad
+            quad = self._tile_quad(m, e, of, kind, given)
             meta = e.get("meta") or {}
             if meta.get("width"):
                 w, h = meta["width"], meta["height"]
@@ -213,28 +234,45 @@ class ReviewApp:
                 w, h = disk.width, disk.height
             rev = len(e.get("history", []))
             by_name = {}
-            for name, p in inspect_points(quad):
+            for name, p in (inspect_points(quad) if quad is not None else []):
                 by_name[name] = {"x0": int(round(p[0])) - TILE_PX // 2, "y0": int(round(p[1])) - TILE_PX // 2,
                                  "window": [TILE_PX, TILE_PX], "size": [TILE_PX, TILE_PX]}
             by_name["overview"] = {"x0": 0, "y0": 0, "window": [w, h], "size": list(self._overview_size(w, h))}
             extra = f"&of=window&kind={kind}" if of == "window" and kind else ("&of=window" if of == "window" else "")
+            if of == "print" and given is not None:
+                extra += "&q=" + ",".join(f"{v:.2f}" for v in np.asarray(given, float).ravel())
             tiles = [{"name": n, **by_name[n], "url": f"{self.api_prefix}/{quote(key)}/tile/{n}.png?rev={rev}{extra}"}
-                     for n in TILE_NAMES]
+                     for n in TILE_NAMES if n in by_name]
             return {"key": key, "rev": rev, "scan_px": [w, h], "tiles": tiles}
 
-    def _tile_quad(self, m: Manifest, e: dict, of: str, kind: Optional[str]) -> np.ndarray:
+    def _tile_quad(self, m: Manifest, e: dict, of: str, kind: Optional[str], given: Optional[Any] = None
+                   ) -> Optional[np.ndarray]:
+        """The corners the tiles sit on: the window's (``of="window"``), the given ones, else the stored outline
+        (None for a scan without one: only its overview can be cut)."""
         if of not in ("print", "window"):
             raise api.UsageError(f"of must be print or window, not {of!r}")
         if kind not in (None, *api.KINDS):
             raise api.UsageError(f"kind must be square or round, not {kind!r}")
-        return self._window_quad(m, e, kind) if of == "window" else Manifest.effective_quad(e)
+        if of == "window":
+            if Manifest.effective_quad(e) is None:
+                raise api.UsageError("this scan has no outline yet")
+            return self._window_quad(m, e, kind)
+        if given is not None:
+            q = np.asarray(given, float)
+            if q.shape != (4, 2) or not np.isfinite(q).all():
+                raise api.UsageError("q must be four finite points: x,y,x,y,x,y,x,y (tl, tr, br, bl)")
+            return q
+        return Manifest.effective_quad(e)
 
-    def tile_png(self, key: str, name: str, of: str = "print", kind: Optional[str] = None) -> bytes:
+    def tile_png(self, key: str, name: str, of: str = "print", kind: Optional[str] = None, quad: Optional[Any] = None) -> bytes:
         if name not in TILE_NAMES:
             raise NotFound(name)
         with self._lock:
-            m, e = self._entry(key)
-            quad = self._tile_quad(m, e, of, kind)
+            m, e = self._entry(key, need_quad=False)
+            tq = self._tile_quad(m, e, of, kind, quad)
+            if name != "overview" and tq is None:
+                raise NotFound(f"{name}: this scan has no outline yet")
+            quad = tq
             rgb = self._rgb(e)
             if name == "overview":
                 h, w = rgb.shape[:2]
@@ -265,20 +303,51 @@ class ReviewApp:
             raise api.UsageError("corners must be finite numbers")
         return sets
 
-    def save(self, key: str, corners: Any, window: Any = None) -> dict:
-        """Store the corrected outline and, in the same fix (so both or neither), a hand-set photo window:
-        ``window`` is ``{"corners": {...}, "kind": "square"|"round"}`` as for :meth:`window`."""
-        sets = self._corners(corners)
+    def save(self, key: str, corners: Any = None, window: Any = None, item: Any = None, scan_ppi: Any = None) -> dict:
+        """Store the corrected outline and, in the same fix (so all or nothing), a hand-set photo window and the item
+        choice: ``window`` is ``{"corners": {...}, "kind": "square"|"round"}`` as for :meth:`window`; ``item`` is
+        ``"600"``, ``"go"``, ``"other"`` or ``"auto"`` (as detected), ``scan_ppi`` the scan's own resolution (0 takes it
+        away; kind other only). ``corners`` may be left out on a scan that has an outline when an item or a ppi comes
+        with it; a scan without an outline (its detection failed) needs all four. The corner checks of a hand crop, the
+        refusals of the item rules and the stale-file check are those of ``api.fix_scan``: a refused save stores nothing."""
+        sets = self._corners(corners) if corners is not None else None
+        if item is not None and not isinstance(item, str):
+            raise api.UsageError("item must be 600, go, other or auto")
+        if scan_ppi is not None and (isinstance(scan_ppi, bool) or not isinstance(scan_ppi, (int, float))):
+            raise api.UsageError("scan_ppi must be a number")
         wsets, wkind = None, None
         if window is not None:
             if not isinstance(window, dict):
                 raise api.UsageError("window must be an object with corners and kind")
             wsets, wkind = self._corners(window.get("corners")), window.get("kind")
+        if sets is None and wsets is None and item is None and scan_ppi is None:
+            raise api.UsageError("save needs corners, an item or a scan_ppi")
         with self._lock:
-            self._entry(key)
-            rec = api.fix_scan(self.output, key, sets=sets, window_sets=wsets, window_kind=wkind, author=self.author,
-                               note=f"{NOTE}: corrected", export=self.export)
+            self._entry(key, need_quad=False)      # a scan nothing was found on is open: the core says what it needs (four corners)
+            note = f"{NOTE}: corrected" if sets is not None or wsets is not None else f"{NOTE}: item"
+            rec = api.fix_scan(self.output, key, sets=sets, window_sets=wsets, window_kind=wkind, item=item,
+                               scan_ppi=scan_ppi, author=self.author, note=note, export=self.export)
             return self._saved(key, rec)
+
+    def reset(self, key: str) -> dict:
+        """Take the stored crop, the item kind, the own ppi and the agent mark away (the core's ``reset``, by this page's
+        author): back to the automatic outline, or to ``failed`` on a scan nothing was detected on. A refusal of the core is
+        a 400 and nothing is stored."""
+        with self._lock:
+            self._entry(key, need_quad=False)
+            rec = api.fix_scan(self.output, key, reset=True, author=self.author, note=f"{NOTE}: crop and item taken away",
+                               export=self.export)
+            return self._saved(key, rec)
+
+    def start(self, key: str, item: str) -> dict:
+        """The rectangle the place step starts from for item kind ``item`` (600, go or other): ``api.start_rectangle``,
+        plus the format's aspect (width / height; None for other) the page locks the rectangle to."""
+        with self._lock:
+            self._entry(key, need_quad=False)
+            rec = api.start_rectangle(self.output, key, item)
+            fmt = FORMAT_OF_ITEM.get(rec["item"])
+            rec["aspect"] = fmt.aspect if fmt else None
+            return rec
 
     def window(self, key: str, body: dict) -> dict:
         """Store the photo window: ``corners`` (all four) and/or ``kind``; ``none`` = no photo crop by choice;
@@ -364,21 +433,36 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"stamp": app.stamp()})
             if len(segs) == 4 and segs[:2] == ["api", "scans"] and segs[3] == "tiles":
                 return self._json(app.tile_specs(segs[2], *self._tile_args()))
+            if len(segs) == 4 and segs[:2] == ["api", "scans"] and segs[3] == "start":
+                return self._json(app.start(segs[2], parse_qs(urlsplit(self.path).query).get("item", ["other"])[0]))
             if len(segs) == 5 and segs[:2] == ["api", "scans"] and segs[3] == "tile" and segs[4].endswith(".png"):
                 return self._send(200, app.tile_png(segs[2], segs[4][:-4], *self._tile_args()), "image/png")
-        elif method == "POST" and len(segs) == 4 and segs[:2] == ["api", "scans"] and segs[3] in ("confirm", "save", "window"):
+        elif method == "POST" and len(segs) == 4 and segs[:2] == ["api", "scans"] and segs[3] in ("confirm", "save", "window", "reset"):
             body = self._body()
             if segs[3] == "confirm":
                 return self._json(app.confirm(segs[2]))
+            if segs[3] == "reset":
+                return self._json(app.reset(segs[2]))
             if segs[3] == "window":
                 return self._json(app.window(segs[2], body))
-            return self._json(app.save(segs[2], body.get("corners"), body.get("window")))
+            return self._json(app.save(segs[2], body.get("corners"), body.get("window"), body.get("item"),
+                                       body.get("scan_ppi")))
         raise NotFound("/".join(segs))
 
-    def _tile_args(self) -> Tuple[str, Optional[str]]:
-        """``of`` and ``kind`` of a tile request's query string."""
+    def _tile_args(self) -> Tuple[str, Optional[str], Optional[list]]:
+        """``of``, ``kind`` and ``q`` (corners tl, tr, br, bl as x,y,x,y,x,y,x,y: tiles at these corners instead of the
+        stored outline) of a tile request's query string."""
         q = parse_qs(urlsplit(self.path).query)
-        return q.get("of", ["print"])[0], q.get("kind", [None])[0]
+        corners = None
+        if "q" in q:
+            try:
+                v = [float(x) for x in q["q"][0].split(",")]
+            except ValueError:
+                raise ValueError("q must be eight numbers: x,y,x,y,x,y,x,y (tl, tr, br, bl)") from None
+            if len(v) != 8:
+                raise ValueError("q must be eight numbers: x,y,x,y,x,y,x,y (tl, tr, br, bl)")
+            corners = [v[0:2], v[2:4], v[4:6], v[6:8]]
+        return q.get("of", ["print"])[0], q.get("kind", [None])[0], corners
 
     def _body(self) -> dict:
         if self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":

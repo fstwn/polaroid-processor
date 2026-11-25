@@ -69,7 +69,24 @@ ul.warn li.hint { color: var(--amber); }
 .mark.confirmed, .mark.fixed { color: var(--green); }
 .mark.skipped { color: var(--dim); }
 #empty { text-align: center; color: var(--dim); padding: 80px 20px; display: none; }
+#place { display: flex; align-items: center; justify-content: center; }
+#place[hidden] { display: none; }
+#pcanvas { display: block; touch-action: none; background: #000; border: 1px solid var(--line); border-radius: 4px; outline: none; }
+#pcanvas:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+#cropbox .st { margin: 4px 0 6px; word-break: break-word; }
+#cropbox label { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+#cropbox select, #cropbox input { font: inherit; color: var(--text); background: #2b2e37; border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
+#cropbox input[type=number] { width: 96px; }
+#cropbox label[hidden], #cropbox #hint[hidden] { display: none; }
+#hint { margin-top: 8px; color: var(--amber); word-break: break-word; }
+#list .tag { flex: none; font-size: 11px; color: var(--dim); border: 1px solid var(--line); border-radius: 8px; padding: 0 5px; }
+#list .tag.agent { color: var(--amber); border-color: var(--amber); }
 
+#takedlg { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: center; justify-content: center; z-index: 20; }
+#takedlg .dlg { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px 20px; max-width: 420px; }
+#takedlg p { margin: 0 0 12px; }
+#cropbox .err { color: var(--red); margin-top: 4px; word-break: break-word; }
+#cropbox input.bad { border-color: var(--red); }
 #discard { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: center; justify-content: center; z-index: 20; }
 #discard .dlg { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 16px 20px; max-width: 360px; }
 #discard p { margin: 0 0 12px; }
@@ -82,7 +99,7 @@ ul.warn li.hint { color: var(--amber); }
 kbd { background: #2b2e37; border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; font: 12px ui-monospace, Consolas, monospace; }
 
 @media (max-width: 900px) {
-  body { grid-template-columns: 1fr; grid-template-rows: auto auto auto; height: auto; }
+  body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto; height: auto; }      /* minmax(0, ..): a long output path in the header must not widen the page */
   header { grid-column: 1; }
   aside { border-left: 0; border-top: 1px solid var(--line); }
 }
@@ -100,6 +117,7 @@ kbd { background: #2b2e37; border: 1px solid var(--line); border-radius: 4px; pa
 
 <main>
   <div id="empty"></div>
+  <div id="place" hidden><canvas id="pcanvas" tabindex="0" aria-label="The whole scan with the crop rectangle"></canvas></div>
   <div id="grid"></div>
 </main>
 
@@ -114,6 +132,29 @@ kbd { background: #2b2e37; border: 1px solid var(--line); border-radius: 4px; pa
   <div id="warnbox">
     <h2>Warnings</h2>
     <ul class="warn" id="warns"></ul>
+  </div>
+  <div id="cropbox">
+    <h2>Crop</h2>
+    <div class="row">
+      <button id="st-place" title="A large view of the whole scan with one rectangle: move, resize, rotate or draw a new one">Place</button>
+      <button id="st-fine" title="The corners at full resolution: every corner moves on its own">Fine-tune</button>
+    </div>
+    <div class="st dim" id="cropstate"></div>
+    <label>Item
+      <select id="item" title="What the scan shows. 600 and Go: a print of that format (the crop keeps its proportions). Other: any flat item, exported exactly as drawn">
+      </select>
+    </label>
+    <label id="ppirow" hidden>Own ppi
+      <input id="ppi" type="number" step="any" placeholder="none" title="The scan's own resolution; sets the resolution tag of an item Other. Empty: the project's scale">
+    </label>
+    <div id="ppierr" class="err"></div>
+    <label id="rotrow">Rotation
+      <input id="rot" type="number" min="-45" max="45" step="0.1" title="Degrees, clockwise positive, at most 45. Arrow keys: 0.1, with Shift 1">
+      <span class="dim">deg</span>
+    </label>
+    <div class="dim" id="rectinfo"></div>
+    <div id="hint" hidden></div>
+    <div class="row" style="margin-top:8px"><button id="takeaway" hidden title="Take the stored crop, item and own ppi away">Back to automatic&hellip;</button></div>
   </div>
   <div>
     <div class="row">
@@ -143,7 +184,12 @@ kbd { background: #2b2e37; border: 1px solid var(--line); border-radius: 4px; pa
       <button id="w-reset" title="Throw away the hand-set window, back to the automatic one">Back to automatic</button>
     </div>
   </div>
-  <div class="dim">
+  <div class="dim" id="placehelp" hidden>
+    <b>Place:</b> drag the rectangle to move it, its <span style="color:var(--magenta)">corners</span> or <span style="color:var(--green)">sides</span>
+    to resize it, the round handle above the top edge (or the Rotation field) to turn it, or drag on empty area to draw a new one. With 600 or Go it keeps
+    the proportions of that print. <b>Fine-tune</b> then moves each corner on its own. Save works from both steps.
+  </div>
+  <div class="dim" id="finehelp">
     Drag a <span style="color:var(--magenta)">magenta corner</span> or the <span style="color:var(--green)">green grip</span>
     on an edge tile onto the print edge.<span id="winhelp" hidden> With a photo crop on, the <span style="color:var(--cyan)">cyan</span> line is the
     photo window: switch to <b>Photo window</b> and drag its corners onto the picture's edge.</span> Click a tile to enlarge it: arrow keys move 1&nbsp;px,
@@ -159,6 +205,13 @@ kbd { background: #2b2e37; border: 1px solid var(--line); border-radius: 4px; pa
   <div class="dlg">
     <p>This scan has edits that are not saved.</p>
     <div class="row"><button id="d-stay" class="primary">Keep editing</button><button id="d-leave" class="warn">Leave without saving</button></div>
+  </div>
+</div>
+
+<div id="takedlg" role="alertdialog" aria-label="Take the crop away">
+  <div class="dlg">
+    <p id="take-text"></p>
+    <div class="row"><button id="t-stay" class="primary">Keep it</button><button id="t-go" class="warn">Take it away</button></div>
   </div>
 </div>
 
@@ -180,6 +233,168 @@ const CORNER_IDX = { tl: 0, tr: 1, br: 2, bl: 3 };
 const SIDE_CORNERS = { top: [0, 1], right: [1, 2], bottom: [2, 3], left: [3, 0] };
 const HIT = 18;           // css px around a handle that grabs it
 
+// ==== crop geometry: pure functions, no DOM (tests/js/crop_runner.js loads this block on its own) ====
+// A crop rectangle is {cx, cy, w, h, angle}: centre and size in scan px, angle in degrees (the top side against the scan's
+// x axis, clockwise positive). Its corners run tl, tr, br, bl, as the outline does. Every operation takes the rectangle the
+// drag started from, so a rectangle held back by the scan's edge comes loose again when the pointer comes back.
+const D2R = Math.PI / 180;
+const rot2 = (v, deg) => { const c = Math.cos(deg * D2R), s = Math.sin(deg * D2R); return [v[0] * c - v[1] * s, v[0] * s + v[1] * c]; };
+const clampN = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const round1 = (v) => Math.round(v * 10) / 10;
+const CORNER_SIGN = { tl: [-1, -1], tr: [1, -1], br: [1, 1], bl: [-1, 1] };
+const SIDE_SIGN = { top: [0, -1], right: [1, 0], bottom: [0, 1], left: [-1, 0] };
+
+function rectToQuad(r) {
+  const hw = r.w / 2, hh = r.h / 2;
+  return [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]].map((p) => { const q = rot2(p, r.angle); return [r.cx + q[0], r.cy + q[1]]; });
+}
+// the rectangle that best stands for four corners: their centre, the mean of opposite sides, the top side's angle
+function rectFromQuad(q) {
+  const d = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  return { cx: (q[0][0] + q[1][0] + q[2][0] + q[3][0]) / 4, cy: (q[0][1] + q[1][1] + q[2][1] + q[3][1]) / 4,
+           w: (d(q[0], q[1]) + d(q[3], q[2])) / 2, h: (d(q[1], q[2]) + d(q[0], q[3])) / 2,
+           angle: Math.atan2(q[1][1] - q[0][1], q[1][0] - q[0][0]) / D2R };
+}
+// 0.05 px per corner: far below a deliberate fine-tune (the smallest is a 1 px arrow step), above the 0.01 px rounding of stored corners
+const isRectQuad = (q, tol = 0.05) => { const b = rectToQuad(rectFromQuad(q)); return q.every((p, i) => Math.hypot(p[0] - b[i][0], p[1] - b[i][1]) <= tol); };
+const extents = (r) => { const a = r.angle * D2R, c = Math.abs(Math.cos(a)), s = Math.abs(Math.sin(a)); return [(r.w * c + r.h * s) / 2, (r.w * s + r.h * c) / 2]; };
+const EPS = 1e-6;
+function insideScan(r, W, H) { const [hx, hy] = extents(r); return r.cx - hx >= -EPS && r.cx + hx <= W + EPS && r.cy - hy >= -EPS && r.cy + hy <= H + EPS; }
+// the rectangle moved the least that puts it inside the scan; null when it is too big for the scan at that angle
+function clampCenter(r, W, H) {
+  const [hx, hy] = extents(r);
+  if (hx * 2 > W + EPS || hy * 2 > H + EPS) return null;
+  return { ...r, cx: clampN(r.cx, hx, W - hx), cy: clampN(r.cy, hy, H - hy) };
+}
+// inside the scan whatever it takes: moved, else made smaller about its centre
+function fitInside(r, W, H) {
+  const c = clampCenter(r, W, H);
+  if (c) return c;
+  const [hx, hy] = extents(r), f = Math.min(W / (2 * hx), H / (2 * hy)) * 0.9999;
+  return clampCenter({ ...r, w: r.w * f, h: r.h * f }, W, H);
+}
+const lerpRect = (a, b, t) => ({ cx: a.cx + (b.cx - a.cx) * t, cy: a.cy + (b.cy - a.cy) * t, w: a.w + (b.w - a.w) * t,
+                                 h: a.h + (b.h - a.h) * t, angle: a.angle + (b.angle - a.angle) * t });
+// ``next`` when it lies inside the scan, else the last rectangle on the way from ``prev`` (which is inside) to ``next`` that does
+function constrainLerp(prev, next, W, H) {
+  if (insideScan(next, W, H)) return next;
+  if (!insideScan(prev, W, H)) return prev;
+  let lo = 0, hi = 1;
+  for (let i = 19; i >= 0; i--) { if (insideScan(lerpRect(prev, next, i / 20), W, H)) { lo = i / 20; hi = (i + 1) / 20; break; } }
+  for (let k = 0; k < 30; k++) { const m = (lo + hi) / 2; if (insideScan(lerpRect(prev, next, m), W, H)) lo = m; else hi = m; }
+  return lerpRect(prev, next, lo);
+}
+function moveRect(r0, dx, dy, W, H) { return clampCenter({ ...r0, cx: r0.cx + dx, cy: r0.cy + dy }, W, H) || r0; }
+// the aspect (width / height) a locked rectangle keeps, in the orientation it has (0: free)
+const lockedAspect = (r, aspect) => (!aspect ? 0 : r.w > r.h ? 1 / aspect : aspect);
+// resize at a corner (tl tr br bl) or a side (top right bottom left) to pointer ``p``: the opposite corner or side stays;
+// ``o`` = {aspect (width / height to keep, 0 = free), min (smallest side), W, H}
+function resizeRect(r0, handle, p, o) {
+  const min = o.min || 1, a = o.aspect || 0;
+  const l = rot2([p[0] - r0.cx, p[1] - r0.cy], -r0.angle);      // the pointer in the rectangle's own frame
+  let w = r0.w, h = r0.h, cl = [0, 0];
+  const keep = () => { if (a) { const k = Math.max(1, min / w, min / h); w *= k; h *= k; } else { w = Math.max(w, min); h = Math.max(h, min); } };
+  if (handle in CORNER_SIGN) {
+    const [sx, sy] = CORNER_SIGN[handle];
+    w = Math.max((l[0] + sx * r0.w / 2) * sx, min); h = Math.max((l[1] + sy * r0.h / 2) * sy, min);
+    if (a) { w = Math.max(w, h * a); h = w / a; }
+    keep();
+    cl = [-sx * r0.w / 2 + sx * w / 2, -sy * r0.h / 2 + sy * h / 2];
+  } else {
+    const [sx, sy] = SIDE_SIGN[handle];
+    if (sx) { w = Math.max((l[0] + sx * r0.w / 2) * sx, min); if (a) h = w / a; keep(); cl = [-sx * r0.w / 2 + sx * w / 2, 0]; }
+    else { h = Math.max((l[1] + sy * r0.h / 2) * sy, min); if (a) w = h * a; keep(); cl = [0, -sy * r0.h / 2 + sy * h / 2]; }
+  }
+  const c = rot2(cl, r0.angle);
+  return constrainLerp(r0, { cx: r0.cx + c[0], cy: r0.cy + c[1], w, h, angle: r0.angle }, o.W, o.H);
+}
+// the angle (deg) the rotation handle above the top side's middle has when it is at pointer ``p``
+function handleAngle(r, p) {
+  let a = Math.atan2(p[1] - r.cy, p[0] - r.cx) / D2R + 90;
+  while (a > 180) a -= 360;
+  while (a <= -180) a += 360;
+  return a;
+}
+// rotate about the centre to ``deg`` (0.1 deg steps, at most +-``o.max``); the rectangle slides to stay inside the scan, else turns less
+function rotateRect(r0, deg, o) {
+  const a = clampN(round1(deg), -o.max, o.max), next = { ...r0, angle: a };
+  return clampCenter(next, o.W, o.H) || constrainLerp(r0, next, o.W, o.H);
+}
+// a new axis-aligned rectangle from ``p0`` towards ``p1`` (both inside the scan); null while a side is below ``o.min``
+function drawRect(p0, p1, o) {
+  const sx = p1[0] >= p0[0] ? 1 : -1, sy = p1[1] >= p0[1] ? 1 : -1;
+  let w = Math.abs(p1[0] - p0[0]), h = Math.abs(p1[1] - p0[1]);
+  const lx = sx > 0 ? o.W - p0[0] : p0[0], ly = sy > 0 ? o.H - p0[1] : p0[1];
+  if (o.aspect) {
+    const a = w > h ? 1 / o.aspect : o.aspect;
+    w = Math.max(w, h * a); h = w / a;
+    const k = Math.min(1, lx / (w || 1), ly / (h || 1));
+    w *= k; h *= k;
+  } else { w = Math.min(w, lx); h = Math.min(h, ly); }
+  if (w < (o.min || 1) || h < (o.min || 1)) return null;
+  return { cx: p0[0] + sx * w / 2, cy: p0[1] + sy * h / 2, w, h, angle: 0 };
+}
+// what a point grabs, in css px (``scale`` = css px per scan px): the rotation handle, a corner, a side, the inside or nothing
+function hitTest(r, p, scale, o) {
+  const hit = ((o && o.hit) || 14) / scale, near = hit * 0.7;
+  const l = rot2([p[0] - r.cx, p[1] - r.cy], -r.angle), hx = r.w / 2, hy = r.h / 2;
+  if (Math.hypot(l[0], l[1] + hy + ((o && o.rotDist) || 30) / scale) <= hit) return { type: "rotate" };
+  for (const n in CORNER_SIGN) if (Math.hypot(l[0] - CORNER_SIGN[n][0] * hx, l[1] - CORNER_SIGN[n][1] * hy) <= hit) return { type: "corner", name: n };
+  if (Math.abs(l[0]) <= hx && Math.abs(l[1] + hy) <= near) return { type: "side", name: "top" };
+  if (Math.abs(l[0]) <= hx && Math.abs(l[1] - hy) <= near) return { type: "side", name: "bottom" };
+  if (Math.abs(l[1]) <= hy && Math.abs(l[0] + hx) <= near) return { type: "side", name: "left" };
+  if (Math.abs(l[1]) <= hy && Math.abs(l[0] - hx) <= near) return { type: "side", name: "right" };
+  if (Math.abs(l[0]) <= hx && Math.abs(l[1]) <= hy) return { type: "inside" };
+  return { type: "none" };
+}
+// the kinds ("600", "go") whose print has the proportions of a w x h crop (either orientation, within ``tol``, 1.5 % by
+// default), the closer one first; empty when none (the aspects of 600 and Go differ by 1.3 %, so both can fit)
+function proportionsOf(w, h, aspects, tol) {
+  const ratio = Math.min(w, h) / Math.max(w, h), lim = tol === undefined ? 0.015 : tol, hits = [];
+  for (const k in aspects) { const e = Math.abs(ratio - aspects[k]) / aspects[k]; if (e <= lim) hits.push([e, k]); }
+  return hits.sort((a, b) => a[0] - b[0]).map((h2) => h2[1]);
+}
+// A rectangle the core's corner checks accept after the page rounds its corners to 0.01 px: the top side within ``o.max`` deg
+// (the page passes the core's limit less 0.1), every side at least ``o.min`` (the core's smallest side plus 0.5), inside the scan
+// (``o.W`` x ``o.H``). A rectangle that fits keeps its centre and shape; one that does not is moved, then made smaller.
+function limitRect(r, o) {
+  const k = { ...r, angle: clampN(r.angle, -o.max, o.max), w: Math.max(r.w, o.min), h: Math.max(r.h, o.min) };
+  return fitInside(k, o.W, o.H) || k;
+}
+// The same centre, angle and orientation with the proportions ``aspect`` (width / height of the portrait format) and about the
+// same area, inside the scan and never below the smallest side.
+function reshapeRect(r, aspect, o) {
+  const a = r.w > r.h ? 1 / aspect : aspect;
+  let w = Math.sqrt(r.w * r.h * a), h = w / a;
+  const k = Math.max(1, o.min / w, o.min / h);
+  return limitRect({ ...r, w: w * k, h: h * k }, o);
+}
+// The own ppi field: ``text`` as typed, ``badInput`` the number input's own flag for text it cannot read ("abc" gives an empty
+// value there). Only an empty field means none; anything else must be a number above 0 and at most ``max``.
+function parsePpi(text, badInput, max) {
+  if (badInput) return { value: null, error: "The own ppi must be a number above 0; empty means none." };
+  const t = String(text === undefined || text === null ? "" : text).trim();
+  if (t === "") return { value: null, error: "" };
+  const v = Number(t);
+  if (!Number.isFinite(v) || v <= 0 || v > max) return { value: null, error: `The own ppi must be a number above 0 and at most ${max}; empty means none.` };
+  return { value: v, error: "" };
+}
+// What a save sends, from the editor's state: ``storedQuad`` (null: a scan nothing was found on), ``quad``, ``printDirty``,
+// ``item`` / ``item0`` ({kind: "auto" | "600" | "go" | "other", ppi}; ``item0`` null: no crop stored yet) and ``win`` (the dirty
+// photo window as {corners, kind}, else null). A first crop always names its kind; a kind other has no window.
+function saveBody(s) {
+  const body = {}, fresh = !s.storedQuad, k = s.item.kind;
+  if (s.printDirty || fresh) body.corners = s.quad.map((p) => p.slice());
+  if (fresh || !s.item0 || k !== s.item0.kind) body.item = k;
+  if (k === "other") {
+    const was = s.item0 && s.item0.kind === "other" ? (s.item0.ppi || null) : null, now = s.item.ppi || null;
+    if (now !== was) body.scan_ppi = now === null ? 0 : now;
+  }
+  if (s.win && k !== "other") body.window = s.win;
+  return body;
+}
+// ==== end of crop geometry ====
+
 const S = {
   scans: [], idx: 0, marks: {},     // marks: key -> "confirmed" | "fixed" | "skipped"
   cur: null,                        // {rec, specs, imgs, quad, orig, win, wspecs, wimgs}
@@ -193,22 +408,38 @@ const cells = {};                   // name -> {cell, canvas, cap, handles}
 // ---------------------------------------------------------------- helpers
 const clone = (q) => q.map((p) => p.slice());
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
-const printDirty = () => !!S.cur && S.cur.quad.some((p, i) => dist(p, S.cur.orig[i]) > 0.005);
+// a scan nothing was found on has no stored outline (orig is null): the rectangle shown is only a proposal until it is touched
+const printDirty = () => !!S.cur && (S.cur.orig ? S.cur.quad.some((p, i) => dist(p, S.cur.orig[i]) > 0.005) : S.cur.touched);
 // the photo window: win.quad is null while there is none; orig is the stored quad (null for a window placed here)
 const winDirty = () => {
   const w = S.cur && S.cur.win;
-  if (!w || !w.quad) return false;
+  if (!w || !w.quad || S.cur.item.kind === "other") return false;      // an item Other has no photo window: its edits are not sent
   return !w.orig || w.kind !== w.origKind || w.quad.some((p, i) => dist(p, w.orig[i]) > 0.005);
 };
-const isDirty = () => printDirty() || winDirty();
-const hasWin = () => !!(S.cur && S.cur.rec.window);                    // the project has a photo crop
+// the item choice: {kind: "auto" (as detected) | "600" | "go" | "other", ppi}; item0 is the stored one (null: no crop yet, it starts as Other)
+const itemDirty = () => {
+  const c = S.cur;
+  if (!c) return false;
+  const was = c.item0 || { kind: "other", ppi: null };
+  return c.item.kind !== was.kind || (c.item.kind === "other" && (c.item.ppi || null) !== (was.ppi || null));
+};
+const isDirty = () => printDirty() || winDirty() || itemDirty();
+// a stored crop exists, or a rectangle has been placed that can be saved as it is
+const canSaveFresh = () => !!S.cur && !S.cur.rec.quad && !!S.cur.quad;
+const hasWin = () => !!(S.cur && S.cur.rec.window) && S.cur.item.kind !== "other";      // the project has a photo crop
 const inWin = () => S.mode === "window" && !!S.cur && !!S.cur.win.quad && !!S.cur.wspecs;
 // what the tiles show and the handles edit now
 function M() {
   const c = S.cur;
   return inWin() ? { specs: c.wspecs, imgs: c.wimgs, quad: c.win.quad, orig: c.win.orig || c.win.quad }
-                 : { specs: c.specs, imgs: c.imgs, quad: c.quad, orig: c.orig };
+                 : { specs: c.specs, imgs: c.imgs, quad: c.quad, orig: c.orig || c.tilesQuad || c.quad };
 }
+const KIND_LABEL = { auto: "as detected", "600": "600", go: "Go", other: "Other" };
+const storedItem = (rec) => ({ kind: rec.item ? rec.item.kind : "auto", ppi: rec.item && rec.item.scan_ppi ? rec.item.scan_ppi : null });
+// "as detected" is offered while an outline was detected or the scan has a crop without an item; a scan nothing was found on starts as Other
+const canAuto = (rec) => !!rec.detected || (!!rec.quad && !rec.item);
+const aspectOf = (kind) => (S.meta && S.meta.aspects && S.meta.aspects[kind]) || 0;
+const limits = () => (S.meta && S.meta.limits) || { min_side_px: 50, max_rotation_deg: 45, max_scan_ppi: 50000 };
 function setQuad(q) { if (inWin()) S.cur.win.quad = q; else S.cur.quad = q; }
 function sideNormal(quad, side) {
   const [a, b] = SIDE_CORNERS[side].map((i) => quad[i]);
@@ -380,6 +611,7 @@ function caption(c, name) {
 
 function drawAll() {
   if (!S.cur) return;
+  if (S.cur.step === "place") { drawPlace(); updateButtons(); return; }
   for (const name of NAMES) drawTile(cells[name], name);
   if (S.zoom) drawZoom();
   updateButtons();
@@ -387,9 +619,10 @@ function drawAll() {
 
 function layout() {
   if (!S.cur) return;
+  if (S.cur.step === "place") { fitPlace(); drawAll(); return; }
   for (const name of NAMES) {
     const c = cells[name], t = M().specs.tiles.find((x) => x.name === name);
-    fitCanvas(c.canvas, { w: c.cell.clientWidth - 2, h: c.cell.clientHeight - 2 }, t);
+    if (t) fitCanvas(c.canvas, { w: c.cell.clientWidth - 2, h: c.cell.clientHeight - 2 }, t);
   }
   drawAll();
 }
@@ -523,6 +756,9 @@ function winOf(rec) {
   return { quad: w.quad ? clone(w.quad) : null, orig: w.quad ? clone(w.quad) : null, kind: w.kind || w.suggest, origKind: w.kind || null };
 }
 
+const scanUrl = (key, what) => `${API}/scans/${encodeURIComponent(key)}/${what}`;
+const cornersToQuad = (c) => ["tl", "tr", "br", "bl"].map((n) => c[n].slice());
+
 async function loadScan(i) {
   closeZoom();
   S.changedElsewhere = false;
@@ -530,15 +766,25 @@ async function loadScan(i) {
   S.mode = "print";
   const rec = S.scans[i];
   S.cur = null;
+  showStep("fine");
   renderSide();
   renderList();
   for (const name of NAMES) { cells[name].busy.textContent = "loading…"; }
-  let specs;
-  try { specs = await api(`${API}/scans/${encodeURIComponent(rec.key)}/tiles`); }
-  catch (e) { showMsg(e.message); return; }
+  let specs, start = null;
+  try {
+    specs = await api(scanUrl(rec.key, "tiles"));
+    if (!rec.quad) start = await api(scanUrl(rec.key, "start?item=other"));      // a scan nothing was found on: the place step starts here
+  } catch (e) { showMsg(e.message); return; }
   if (S.idx !== i) return;
-  const cur = { rec, specs, imgs: {}, quad: clone(rec.quad), orig: clone(rec.quad), win: winOf(rec), wspecs: null, wimgs: null };
+  const startQuad = start ? cornersToQuad(start.corners) : null;
+  const item = storedItem(rec);
+  const cur = { rec, specs, imgs: {}, quad: clone(rec.quad || startQuad), orig: rec.quad ? clone(rec.quad) : null,
+                win: winOf(rec), wspecs: null, wimgs: null, touched: false,
+                item: rec.quad ? { ...item } : { kind: "other", ppi: null }, item0: rec.quad ? { ...item } : null,
+                starts: start ? { other: startQuad } : {}, step: rec.quad ? "fine" : "place",
+                tilesQuad: rec.quad ? clone(rec.quad) : null };       // the corners the corner tiles were cut at
   S.cur = cur;
+  showStep(cur.step);
   layout();
   let pending = specs.tiles.length;
   for (const t of specs.tiles) {
@@ -546,7 +792,7 @@ async function loadScan(i) {
     img.onload = img.onerror = () => {
       if (S.cur !== cur) return;
       cells[t.name].busy.textContent = img.naturalWidth ? "" : "tile failed";
-      drawTile(cells[t.name], t.name);
+      if (cur.step === "place") drawPlace(); else drawTile(cells[t.name], t.name);
       if (S.zoom === t.name) drawZoom();
       if (--pending === 0) { showMsg(S.note || "", true); S.note = null; }
     };
@@ -557,10 +803,283 @@ async function loadScan(i) {
   updateButtons();
 }
 
+// ---------------------------------------------------------------- place step
+// The whole scan, one rectangle. It stays a rectangle: moved, resized at corners and sides, rotated by the handle above its
+// top edge or the number field, or drawn new on empty area. With 600 / Go it keeps that format's proportions. The geometry is
+// in the pure block at the top; what is drawn and saved is the four corners, as in the fine-tune step.
+function showStep(step) {
+  $("place").hidden = step !== "place";
+  $("grid").style.display = step === "place" ? "none" : "";
+  if (S.cur) S.cur.step = step;
+}
+
+const PAD = 38;      // css px of the canvas around the scan, so that the rotation handle of a rectangle at the top edge can be grabbed
+// css px per scan px of the place canvas (the scan is drawn PAD css px in from each canvas edge)
+function placeScale() {
+  const cv = $("pcanvas");
+  return (cv.getBoundingClientRect().width - 2 * PAD) / S.cur.specs.scan_px[0];
+}
+
+function fitPlace() {
+  const cur = S.cur, cv = $("pcanvas"), main = document.querySelector("main");
+  const [W, H] = cur.specs.scan_px, narrow = window.matchMedia("(max-width: 900px)").matches;
+  const box = { w: Math.max(200, main.clientWidth - 26 - 2 * PAD), h: (narrow ? Math.max(320, window.innerHeight * 0.62) : Math.max(200, main.clientHeight - 26)) - 2 * PAD };
+  const f = Math.min(box.w / W, box.h / H);
+  cv.style.width = Math.max(1, Math.floor(W * f)) + 2 * PAD + "px";
+  cv.style.height = Math.max(1, Math.floor(H * f)) + 2 * PAD + "px";
+  $("place").style.height = narrow ? "auto" : "100%";
+}
+
+// the rectangle the editor works on: the quad itself when it is one, else the rectangle that fits it (made the quad on the first edit)
+function currentRect() {
+  const cur = S.cur, [W, H] = cur.specs.scan_px;
+  const r = rectFromQuad(cur.quad);
+  return limitRect(r, geom());
+}
+// the page's own limits stay a little inside the core's (smallest side + 0.5 px, rotation - 0.1 deg): the corners are rounded to
+// 0.01 px when they are sent, and a side that came out at 49.99 px or a top side at 45.002 deg would be refused
+const geom = () => { const [W, H] = S.cur.specs.scan_px; return { W, H, min: limits().min_side_px + 0.5, max: limits().max_rotation_deg - 0.1 }; };
+function setRect(r) {
+  S.cur.quad = rectToQuad(r);
+  S.cur.touched = true;
+  syncCropControls();
+  drawPlace();
+  updateButtons();
+}
+
+function drawPlace() {
+  const cur = S.cur, cv = $("pcanvas");
+  if (!cur || cur.step !== "place") return;
+  const [W, H] = cur.specs.scan_px, dpr = window.devicePixelRatio || 1;
+  const w = Math.round((cv.clientWidth || 1) * dpr), h = Math.round((cv.clientHeight || 1) * dpr);
+  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  const ctx = cv.getContext("2d"), pad = PAD * dpr, sw = w - 2 * pad, sh = h - 2 * pad;
+  const X = (x) => pad + x * sw / W, Y = (y) => pad + y * sh / H;
+  ctx.fillStyle = "#0d0e11";
+  ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = "#000";
+  ctx.fillRect(pad, pad, sw, sh);
+  const img = cur.imgs.overview;
+  if (img && img.complete && img.naturalWidth) ctx.drawImage(img, pad, pad, sw, sh);
+  ctx.strokeStyle = "#343740"; ctx.lineWidth = dpr;
+  ctx.strokeRect(pad - 0.5, pad - 0.5, sw + 1, sh + 1);
+  const poly = (q) => { ctx.beginPath(); q.forEach((p, i) => (i ? ctx.lineTo(X(p[0]), Y(p[1])) : ctx.moveTo(X(p[0]), Y(p[1])))); ctx.closePath(); };
+  ctx.lineJoin = "round";
+  if (cur.rec.quad && cur.rec.quad !== cur.quad) { ctx.strokeStyle = "#28e628"; ctx.lineWidth = Math.max(1, dpr); poly(cur.rec.quad); ctx.stroke(); }      // the stored outline
+  const isRect = isRectQuad(cur.quad);
+  const r = isRect ? rectFromQuad(cur.quad) : currentRect(), q = rectToQuad(r);
+  ctx.strokeStyle = "#ff00ff";
+  ctx.lineWidth = Math.max(1.5, 2 * dpr);
+  if (!isRect) { poly(cur.quad); ctx.stroke(); ctx.save(); ctx.globalAlpha = 0.55; ctx.setLineDash([6 * dpr, 5 * dpr]); poly(q); ctx.stroke(); ctx.restore(); }
+  else { poly(q); ctx.stroke(); }
+  // handles: corner circles, side grips, and the rotation handle on a stem above the top side
+  const hq = rectToQuad(r), cs = Math.cos(r.angle * D2R), sn = Math.sin(r.angle * D2R);
+  for (const p of hq) {
+    ctx.beginPath(); ctx.arc(X(p[0]), Y(p[1]), 7 * dpr, 0, 2 * Math.PI);
+    ctx.fillStyle = "rgba(255,0,255,.25)"; ctx.fill(); ctx.stroke();
+  }
+  ctx.fillStyle = "rgba(40,230,40,.9)";
+  for (const [a, b] of [[0, 1], [1, 2], [2, 3], [3, 0]]) {
+    const mx = (hq[a][0] + hq[b][0]) / 2, my = (hq[a][1] + hq[b][1]) / 2, ang = Math.atan2(hq[b][1] - hq[a][1], hq[b][0] - hq[a][0]);
+    ctx.save(); ctx.translate(X(mx), Y(my)); ctx.rotate(ang);
+    ctx.beginPath(); const gw = 26 * dpr, gh = 8 * dpr;
+    if (ctx.roundRect) ctx.roundRect(-gw / 2, -gh / 2, gw, gh, gh / 2); else ctx.rect(-gw / 2, -gh / 2, gw, gh);
+    ctx.fill(); ctx.restore();
+  }
+  const stem = ROT_DIST / placeScale();                              // scan px
+  const tx = (hq[0][0] + hq[1][0]) / 2, ty = (hq[0][1] + hq[1][1]) / 2;
+  const hx = tx + sn * stem, hy = ty - cs * stem;                    // up in the rectangle's own frame
+  ctx.strokeStyle = "#ff00ff"; ctx.lineWidth = Math.max(1, dpr);
+  ctx.beginPath(); ctx.moveTo(X(tx), Y(ty)); ctx.lineTo(X(hx), Y(hy)); ctx.stroke();
+  ctx.beginPath(); ctx.arc(X(hx), Y(hy), 8 * dpr, 0, 2 * Math.PI); ctx.fillStyle = "#ff00ff"; ctx.fill();
+  ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(X(hx), Y(hy), 3 * dpr, 0, 2 * Math.PI); ctx.fill();
+}
+const ROT_DIST = 30;      // css px from the top side to the rotation handle
+
+function syncCropControls() {
+  const cur = S.cur;
+  if (!cur) return;
+  const r = rectFromQuad(cur.quad), fit = isRectQuad(cur.quad);
+  const rot = $("rot");
+  if (document.activeElement !== rot) rot.value = (round1(r.angle) + 0).toFixed(1);
+  $("rectinfo").textContent = fit || cur.step !== "place" ? `${Math.round(r.w)} × ${Math.round(r.h)} px`
+    : "This outline is not a rectangle: drag, resize or rotate to replace it by the rectangle that fits it (dashed).";
+  // an untouched start rectangle (80 % of the scan) says nothing about the item: the hint waits until the crop is placed or stored
+  const hint = $("hint"), kinds = cur.item.kind === "other" && (cur.rec.quad || cur.touched) ? proportionsOf(r.w, r.h, (S.meta && S.meta.aspects) || {}) : [];
+  hint.hidden = !kinds.length;
+  if (kinds.length) {
+    const names = kinds.map((k) => KIND_LABEL[k]).join(" or a ");
+    hint.textContent = `This crop has the proportions of a ${names} print. If it is one, choose ${kinds.map((k) => KIND_LABEL[k]).join(" or ")} as the item; nothing changes by itself.`;
+  }
+}
+
+let pdrag = null;
+function attachPlace() {
+  const cv = $("pcanvas");
+  // the pointer in scan px; clamped to the scan unless ``free`` (a handle may lie outside it)
+  const toScan = (e, free) => {
+    const b = cv.getBoundingClientRect(), [W, H] = S.cur.specs.scan_px, k = placeScale();
+    const x = (e.clientX - b.left - PAD) / k, y = (e.clientY - b.top - PAD) / k;
+    return free ? [x, y] : [clampN(x, 0, W), clampN(y, 0, H)];
+  };
+  const lockOf = (r) => lockedAspect(r, aspectOf(S.cur.item.kind));
+  cv.addEventListener("pointerdown", (e) => {
+    if (!S.cur || S.cur.step !== "place" || S.busy || e.button !== 0) return;
+    const r = currentRect(), hit = hitTest(r, toScan(e, true), placeScale(), { hit: 14, rotDist: ROT_DIST });
+    cv.setPointerCapture(e.pointerId);
+    cv.focus();
+    pdrag = { hit, p0: toScan(e), r0: r, x: e.clientX, y: e.clientY, moved: false };
+    e.preventDefault();
+  });
+  cv.addEventListener("pointermove", (e) => {
+    if (!S.cur || S.cur.step !== "place") return;
+    if (!pdrag) {
+      const h = hitTest(currentRect(), toScan(e, true), placeScale(), { hit: 14, rotDist: ROT_DIST });
+      cv.style.cursor = { rotate: "alias", corner: "nwse-resize", side: "move", inside: "move", none: "crosshair" }[h.type];
+      return;
+    }
+    if (!pdrag.moved && Math.hypot(e.clientX - pdrag.x, e.clientY - pdrag.y) <= 3) return;
+    pdrag.moved = true;
+    const g = geom(), r0 = pdrag.r0, h = pdrag.hit, p = toScan(e, h.type === "rotate");
+    let next = null;
+    if (h.type === "inside") next = moveRect(r0, p[0] - pdrag.p0[0], p[1] - pdrag.p0[1], g.W, g.H);
+    else if (h.type === "corner" || h.type === "side") next = resizeRect(r0, h.name, p, { aspect: lockOf(r0), min: g.min, W: g.W, H: g.H });
+    else if (h.type === "rotate") next = rotateRect(r0, handleAngle(r0, p), { max: g.max, W: g.W, H: g.H });
+    else next = drawRect(pdrag.p0, p, { aspect: aspectOf(S.cur.item.kind), min: g.min, W: g.W, H: g.H });      // empty area: a new rectangle
+    if (next) setRect(next);
+  });
+  const end = (e) => {
+    if (!pdrag) return;
+    if (cv.hasPointerCapture(e.pointerId)) cv.releasePointerCapture(e.pointerId);
+    pdrag = null;
+  };
+  cv.addEventListener("pointerup", end);
+  cv.addEventListener("pointercancel", () => { pdrag = null; });
+  cv.addEventListener("keydown", (e) => {      // arrows move the rectangle 1 px, Shift 10 px (as in the enlarged tile)
+    const dir = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+    if (!dir || !S.cur || S.cur.step !== "place" || S.busy) return;
+    const g = geom(), k = e.shiftKey ? 10 : 1;
+    setRect(moveRect(currentRect(), dir[0] * k, dir[1] * k, g.W, g.H));
+    e.preventDefault();
+  });
+}
+attachPlace();
+
+// the rotation field: 0.1 deg steps (the field's own arrow keys), Shift + arrow 1 deg, at most +-45
+function applyRotation(deg) {
+  const cur = S.cur;
+  if (!cur || !Number.isFinite(deg)) return;
+  const g = geom();
+  setRect(rotateRect(currentRect(), deg, { max: g.max, W: g.W, H: g.H }));
+}
+$("rot").addEventListener("input", () => { if ($("rot").value !== "") applyRotation(parseFloat($("rot").value)); });
+$("rot").addEventListener("change", () => { $("rot").blur(); syncCropControls(); });
+$("rot").addEventListener("keydown", (e) => {
+  if (!e.shiftKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown") || !S.cur) return;
+  applyRotation(rectFromQuad(S.cur.quad).angle + (e.key === "ArrowUp" ? 1 : -1));
+  syncCropControls();
+  e.preventDefault();
+});
+
+async function setStep(step) {
+  const cur = S.cur;
+  if (!cur || S.busy || step === cur.step) return;
+  closeZoom();
+  if (step === "place") {
+    S.mode = "print";
+    showStep("place");
+    fitPlace();
+    renderSide();
+    drawPlace();
+    updateButtons();
+    return;
+  }
+  if (!cur.quad) return;
+  await ensureFineTiles();
+  if (S.cur !== cur) return;
+  showStep("fine");
+  renderSide();
+  layout();
+}
+
+// the corner tiles sit on the stored outline (as loaded), or on the rectangle the place step made
+async function ensureFineTiles() {
+  const cur = S.cur;
+  const same = cur.tilesQuad && cur.quad.every((p, i) => dist(p, cur.tilesQuad[i]) < 0.005);
+  if (same && cur.specs.tiles.length > 1) return;
+  const q = cur.quad.map((p) => p.map((v) => v.toFixed(2)).join(",")).join(",");
+  let specs;
+  try { specs = await api(scanUrl(cur.rec.key, "tiles?q=" + q)); } catch (e) { showMsg(e.message); return; }
+  if (S.cur !== cur) return;
+  cur.specs = specs;
+  cur.tilesQuad = clone(cur.quad);
+  const old = cur.imgs.overview;
+  cur.imgs = { overview: old };
+  for (const t of specs.tiles) {
+    if (t.name === "overview") continue;
+    const img = new Image();
+    cells[t.name].busy.textContent = "loading…";
+    img.onload = img.onerror = () => {
+      if (S.cur !== cur) return;
+      cells[t.name].busy.textContent = img.naturalWidth ? "" : "tile failed";
+      if (cur.step === "fine") { drawTile(cells[t.name], t.name); if (S.zoom === t.name) drawZoom(); }
+    };
+    img.src = t.url;
+    cur.imgs[t.name] = img;
+  }
+}
+$("st-place").onclick = () => setStep("place");
+$("st-fine").onclick = () => setStep("fine");
+
+// the item choice: the select, the own ppi field
+async function setItem(kind) {
+  const cur = S.cur;
+  if (!cur || S.busy || cur.item.kind === kind) return;
+  cur.item.kind = kind;      // the own ppi stays in the editor whatever the kind: it is only sent with Other
+  if (kind === "other" && S.mode === "window") S.mode = "print";      // an item Other has no photo window
+  if (!cur.rec.quad && !cur.touched && kind !== "auto" && !cur.starts[kind]) {
+    // a scan nothing was found on, rectangle untouched: it starts again from the start rectangle of the new kind (600 / Go: the nominal size)
+    try { cur.starts[kind] = cornersToQuad((await api(scanUrl(cur.rec.key, `start?item=${kind}`))).corners); } catch (e) { showMsg(e.message); }
+    if (S.cur !== cur) return;
+  }
+  // checked after the await: a drag while the start rectangle loaded, or another choice since, wins over the answer
+  if (cur.item.kind === kind) {
+    if (!cur.rec.quad && !cur.touched && cur.starts[kind]) cur.quad = clone(cur.starts[kind]);
+    else if ((kind === "600" || kind === "go") && !cur.rec.detected && isRectQuad(cur.quad)) {
+      // no detected outline (a touched rectangle, or a stored hand crop): the rectangle takes the format's proportions at once, with
+      // the same centre, angle and orientation and about the same area; corners that are no rectangle and detected outlines stay
+      cur.quad = rectToQuad(reshapeRect(rectFromQuad(cur.quad), aspectOf(kind), geom()));
+      cur.touched = true;
+    }
+  }
+  renderSide();
+  syncCropControls();
+  if (cur.step === "place") drawPlace(); else drawAll();
+  updateButtons();
+}
+$("item").onchange = () => setItem($("item").value);
+// a ppi that is not a number above 0 is shown as invalid and blocks Save; only an empty field means none
+const ppiProblem = () => (S.cur && S.cur.item.kind === "other" ? S.cur.ppiBad || "" : "");
+function showPpi() {
+  const msg = ppiProblem();
+  $("ppierr").textContent = msg;
+  $("ppi").classList.toggle("bad", !!msg);
+}
+$("ppi").addEventListener("input", () => {
+  const cur = S.cur;
+  if (!cur) return;
+  const el = $("ppi"), p = parsePpi(el.value, !!(el.validity && el.validity.badInput), limits().max_scan_ppi || 50000);
+  cur.ppiBad = p.error;
+  if (!p.error) cur.item.ppi = p.value;
+  showPpi();
+  updateButtons();
+});
+
 // Window mode: the tiles are cut at the window's corners (the stored window, else the nominal one of the kind).
 async function setMode(mode) {
   const cur = S.cur;
-  if (!cur || S.busy || mode === S.mode) return;
+  if (!cur || S.busy || (mode === S.mode && cur.step === "fine")) return;
+  if (cur.step === "place") { await setStep("fine"); if (S.cur !== cur || cur.step !== "fine") return; }      // the window tiles are the fine-tune step's
   if (mode === "window") {
     if (!cur.win.quad) return;
     const stored = cur.rec.window.state === "found";
@@ -595,7 +1114,7 @@ function renderSide() {
   const st = $("status");
   st.textContent = rec ? rec.status : "";
   st.className = "badge " + (rec ? rec.status : "");
-  $("source").textContent = rec ? `outline: ${rec.quad_source === "override" ? "manual" : "automatic"}` : "";
+  $("source").textContent = !rec ? "" : !rec.quad ? "no outline" : `outline: ${rec.quad_source === "override" ? "manual" : "automatic"}`;
   const rv = rec && rec.review;
   $("reviewed").textContent = rv ? `${rv.action === "accept" ? "confirmed" : "corrected"} by ${rv.author}, ${rv.at.replace("T", " ").slice(0, 16)}` : "";
   const ul = $("warns");
@@ -608,11 +1127,53 @@ function renderSide() {
     ul.append(li);
   }
   $("warnbox").style.display = warns.length ? "" : "none";
+  renderCrop(rec);
   renderWindow(rec);
 }
 
+// the Crop box: the two steps, the item choice (with the own ppi of an Other), the rotation field and the proportions hint
+function renderCrop(rec) {
+  const cur = S.cur && S.cur.rec === rec ? S.cur : null;
+  $("cropbox").hidden = !rec;
+  if (!rec) return;
+  const sel = $("item"), kind = cur ? cur.item.kind : (rec.quad ? storedItem(rec).kind : "other");
+  sel.textContent = "";
+  for (const k of ["auto", "600", "go", "other"]) {
+    if (k === "auto" && !canAuto(rec)) continue;
+    const o = document.createElement("option");
+    o.value = k;
+    o.textContent = KIND_LABEL[k];
+    sel.append(o);
+  }
+  sel.value = kind;
+  sel.disabled = !cur || S.busy;
+  $("ppirow").hidden = kind !== "other";
+  if (!cur || !cur.ppiBad) $("ppi").value = cur && cur.item.ppi ? cur.item.ppi : "";      // a field with text that is no number keeps what was typed
+  $("ppi").disabled = !cur || S.busy;
+  showPpi();
+  const lim = limits();
+  $("rot").min = -(lim.max_rotation_deg - 0.1);
+  $("rot").max = lim.max_rotation_deg - 0.1;
+  const away = takeAwayInfo(rec);
+  $("takeaway").hidden = !away;
+  if (away) $("takeaway").textContent = away.label;
+  const step = cur ? cur.step : "fine";
+  $("rotrow").hidden = step !== "place";
+  $("placehelp").hidden = step !== "place";
+  $("finehelp").hidden = step === "place";
+  if (cur) syncCropControls();
+  $("st-place").classList.toggle("on", step === "place");
+  $("st-fine").classList.toggle("on", step === "fine");
+  const st = $("cropstate");
+  if (!rec.quad) st.textContent = "No outline was found" + (rec.error ? ` (${rec.error})` : "") + ". Place the rectangle on the item, then fine-tune the corners and save: the scan then counts as ok.";
+  else if (rec.agent_crop) st.textContent = "Cropped by an agent: confirm it, or save a corrected crop.";
+  else st.textContent = "";
+  if (cur) syncCropControls();
+}
+
 function renderWindow(rec) {
-  const w = rec && rec.window;
+  const other = !!S.cur && S.cur.rec === rec && S.cur.item.kind === "other";      // an item Other has no window step
+  const w = rec && !other ? rec.window : null;
   $("winbox").hidden = $("winhelp").hidden = !w;
   $("confirm").title = "The outline is right: store it as reviewed, go to the next scan"
     + (w ? ". A photo window that was not found is accepted too: this print is exported without a photo crop" : "");
@@ -661,6 +1222,10 @@ function renderList() {
     t.textContent = rec.key;
     t.title = rec.key;
     d.append(mark, t);
+    const tag = (text, cls, title) => { const x = document.createElement("span"); x.className = "tag " + (cls || ""); x.textContent = text; x.title = title; d.append(x); };
+    if (!rec.quad) tag("no outline", "", "Detection failed: place a crop by hand");
+    else if (rec.item) tag(KIND_LABEL[rec.item.kind], "", "Item: " + KIND_LABEL[rec.item.kind]);
+    if (rec.agent_crop) tag("by agent", "agent", "Cropped by an agent: a human confirms or saves it");
     d.onclick = () => go(i);
     box.append(d);
   });
@@ -668,8 +1233,15 @@ function renderList() {
 
 function updateButtons() {
   const has = !!S.cur, dirty = isDirty(), busy = S.busy;
-  $("confirm").disabled = !has || dirty || busy;
-  $("save").disabled = !has || !dirty || busy;
+  $("confirm").disabled = !has || dirty || busy || !S.cur.rec.quad;      // nothing to confirm on a scan without an outline
+  $("save").disabled = !has || !(dirty || canSaveFresh()) || busy || !!ppiProblem();
+  $("save").title = ppiProblem() || (S.cur && S.cur.rec.window ? "Store the moved outline and photo window in the manifest" : "Store the moved outline in the manifest");
+  $("takeaway").disabled = !has || busy;
+  $("st-place").disabled = !has || busy;
+  $("st-fine").disabled = !has || busy || !S.cur.quad;
+  $("item").disabled = !has || busy;
+  $("ppi").disabled = !has || busy;
+  $("rot").disabled = !has || busy;
   $("reset").disabled = !has || !dirty || busy;
   $("skip").disabled = !has || busy;
   $("prev").disabled = busy || S.idx <= 0;
@@ -697,9 +1269,25 @@ function askDiscard() {
 }
 
 async function go(i) {
-  if (i < 0 || i >= S.scans.length || (i === S.idx && S.cur)) return;
+  if (S.busy || i < 0 || i >= S.scans.length || (i === S.idx && S.cur)) return;      // not while a save runs: its answer belongs to this scan
   if (isDirty() && !(await askDiscard())) return;
   loadScan(i);
+}
+
+// A save came back: its record goes to the row of its own scan, and the editor takes it over only while that scan is still open (the
+// editor then holds the stored record, so a second Save compares with what is stored and does not store a second fix).
+function saved(cur, rec, mark) {
+  const key = cur.rec.key, i = S.scans.findIndex((x) => x.key === key);
+  if (i >= 0) S.scans[i] = rec;
+  S.marks[key] = mark;
+  S.busy = false;
+  if (S.cur !== cur) { renderList(); return; }
+  cur.rec = rec;
+  cur.item0 = rec.quad ? storedItem(rec) : null;
+  markClean();
+  renderSide();
+  renderList();
+  updateButtons();
 }
 
 // the corners of a window run clockwise on the scan (tl, tr, br, bl), else its photo would be mirrored
@@ -722,16 +1310,19 @@ async function commit(kind) {
     let rec;
     if (kind === "confirm") rec = await api(url("confirm"), {});
     else {
-      // one fix for both: either both are stored or neither (a window outside the new outline is refused)
-      const win = winDirty() ? { corners: corners(cur.win.quad), kind: cur.win.kind } : null;
-      if (printDirty()) rec = await api(url("save"), { corners: corners(cur.quad), window: win });
-      else if (win) rec = await api(url("window"), win);
+      // one fix for all of it: outline, item choice and window are stored together or not at all (a refused corner check,
+      // a window outside the new outline, an item rule leaves everything as it was, and the edits stay in the page)
+      const body = saveBody({ storedQuad: cur.rec.quad, quad: cur.quad, printDirty: printDirty(), item: cur.item, item0: cur.item0,
+                              win: winDirty() ? { corners: corners(cur.win.quad), kind: cur.win.kind } : null });
+      if (body.corners) body.corners = corners(body.corners);
+      if (body.corners || body.item !== undefined || body.scan_ppi !== undefined) rec = await api(url("save"), body);
+      else if (body.window) rec = await api(url("window"), body.window);
+      else { S.busy = false; showMsg("Nothing to save: this scan is stored as it is shown.", true); updateButtons(); return; }      // e.g. a second click
     }
-    S.scans[S.idx] = rec;
-    S.marks[key] = kind === "confirm" ? "confirmed" : "fixed";
-    S.busy = false;
+    saved(cur, rec, kind === "confirm" ? "confirmed" : "fixed");
     showMsg(kind === "confirm" ? `Confirmed ${key}` : `Saved ${key}${rec.exported ? " and exported" : ""}`, true);
-    if (EMBED) { markClean(); toApp({ type: "fix-saved", key }); return; }   // nothing unsaved is left
+    if (EMBED) { toApp({ type: "fix-saved", key }); return; }   // nothing unsaved is left
+    if (S.cur !== cur) return;
     if (kind === "confirm" && S.idx < S.scans.length - 1) loadScan(S.idx + 1);
     else loadScan(S.idx);       // re-cut tiles at the stored outline
   } catch (e) {
@@ -743,14 +1334,96 @@ async function commit(kind) {
 
 $("confirm").onclick = () => commit("confirm");
 $("save").onclick = () => commit("save");
-$("reset").onclick = () => {
+$("reset").onclick = async () => {      // throws away what is not saved: the outline, the item choice, the window
   if (!S.cur) return;
   if (S.changedElsewhere) { loadScan(S.idx); return; }     // take over the outline stored meanwhile
-  S.cur.quad = clone(S.cur.orig);
-  Object.assign(S.cur.win, winOf(S.cur.rec));
-  if (S.mode === "window" && !S.cur.win.quad) S.mode = "print";
+  const cur = S.cur;
+  cur.touched = false;
+  cur.ppiBad = "";
+  cur.item = cur.item0 ? { ...cur.item0 } : { kind: "other", ppi: null };
+  if (cur.orig) cur.quad = clone(cur.orig);
+  else cur.quad = clone(cur.starts[cur.item.kind] || cur.starts.other);      // a scan nothing was found on: the start rectangle again
+  Object.assign(cur.win, winOf(cur.rec));
+  if (S.mode === "window" && !cur.win.quad) S.mode = "print";
+  showMsg("");
+  if (cur.step === "fine") { await ensureFineTiles(); if (S.cur !== cur) return; layout(); }      // the tiles follow the corners that are back
   renderSide();
   drawAll();
+};
+
+// ---- taking the stored crop, item and own ppi away (the core's reset, by a human, after a question)
+// Offered only when something of it is stored: an item (its own ppi is part of it), or a hand crop on a scan nothing was detected on.
+// A plain outline fix of a detected print without an item has no such button: that print keeps the page it had.
+function takeAwayInfo(rec) {
+  if (!rec || !(rec.item || (rec.quad && !rec.detected))) return null;
+  const parts = [];
+  if (rec.quad && !rec.detected) parts.push("the hand crop");
+  else if (rec.quad_source === "override") parts.push("the outline you or an agent set");
+  if (rec.item) parts.push(`the item choice (${KIND_LABEL[rec.item.kind]}${rec.item.scan_ppi ? `, own ppi ${rec.item.scan_ppi}` : ""})`);
+  if (rec.agent_crop) parts.push("the \"cropped by agent\" mark");
+  const what = parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}` : parts[0];
+  const files = " Files already exported for this scan stay on disk.";      // the core's reset leaves them (true whether or not there are any)
+  const after = rec.detected ? "The scan goes back to its automatic outline and to \"as detected\"."
+    : "The scan has no detected outline, so it goes back to failed and the place step starts again.";
+  const win = rec.window && rec.window.source === "manual"
+    ? " A photo window set by hand stays; if it then lies outside the outline, the scan needs review again." : "";
+  return { label: rec.detected ? "Back to automatic\u2026" : "Remove hand crop\u2026", text: `This takes away ${what}. ${after}${win}${files}` };
+}
+// While the question is open the page is modal: S.busy keeps every other action out (Save, next / previous, the steps, the item,
+// the keys on the canvas and the rotation field, the live reload), a second click on the button finds it open and asks nothing,
+// Escape keeps the crop, and the app's Back answers "stay" (closeToApp).
+function askTakeAway(text) {
+  if (S.modal) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const box = $("takedlg");
+    S.modal = true;
+    S.busy = true;
+    updateButtons();
+    $("take-text").textContent = text;
+    box.style.display = "flex";
+    const key = (e) => { if (e.key === "Escape") { e.preventDefault(); done(false); } };
+    const done = (yes) => {
+      box.style.display = "none";
+      document.removeEventListener("keydown", key);
+      $("t-go").onclick = $("t-stay").onclick = null;
+      S.modal = false;
+      S.busy = false;
+      updateButtons();
+      resolve(yes);
+    };
+    document.addEventListener("keydown", key);
+    $("t-go").onclick = () => done(true);
+    $("t-stay").onclick = () => done(false);
+    $("t-stay").focus();
+  });
+}
+$("takeaway").onclick = async () => {
+  const cur = S.cur;
+  if (!cur || S.busy) return;
+  const info = takeAwayInfo(cur.rec);
+  if (!info) return;
+  const edits = isDirty() ? " Your unsaved edits on this scan are dropped too." : "";
+  if (!(await askTakeAway(info.text + edits))) return;
+  if (S.cur !== cur || S.busy) return;
+  S.busy = true;
+  updateButtons();
+  showMsg("Taking it away…", true);
+  const key = cur.rec.key;
+  try {
+    const rec = await api(scanUrl(key, "reset"), {});
+    const i = S.scans.findIndex((x) => x.key === key);
+    if (i >= 0) S.scans[i] = rec;
+    delete S.marks[key];
+    S.busy = false;
+    showMsg(`Took the crop and item of ${key} away`, true);
+    S.note = `Took the crop and item of ${key} away`;      // shown again when the tiles of the new state are in (loadScan clears the message then)
+    if (S.cur === cur) loadScan(S.scans.findIndex((x) => x.key === key));      // the state after the reset: fine-tune, or the place step of a failed scan
+    else renderList();
+  } catch (e) {
+    S.busy = false;
+    showMsg("Not taken away: " + e.message);
+    updateButtons();
+  }
 };
 
 // ---- the photo window
@@ -787,12 +1460,10 @@ async function windowAction(body, text) {
   const key = cur.rec.key;
   try {
     const rec = await api(`${API}/scans/${encodeURIComponent(key)}/window`, body);
-    S.scans[S.idx] = rec;
-    S.marks[key] = "fixed";
-    S.busy = false;
+    saved(cur, rec, "fixed");
     showMsg(`${text} ${key}`, true);
-    if (EMBED) { markClean(); toApp({ type: "fix-saved", key }); return; }
-    loadScan(S.idx);
+    if (EMBED) { toApp({ type: "fix-saved", key }); return; }
+    if (S.cur === cur) loadScan(S.idx);
   } catch (e) {
     S.busy = false;
     showMsg("Not saved: " + e.message);
@@ -802,6 +1473,7 @@ async function windowAction(body, text) {
 $("w-none").onclick = () => windowAction({ none: true }, "No photo crop for");
 $("w-reset").onclick = () => windowAction({ reset: true }, "Automatic photo window again for");
 async function closeToApp() {
+  if (S.modal) return false;      // the take-away question is open: stay
   if (isDirty() && !(await askDiscard())) return false;
   markClean();
   toApp({ type: "fix-close" });
@@ -810,6 +1482,8 @@ async function closeToApp() {
 function markClean() {
   if (!S.cur) return;
   S.cur.orig = clone(S.cur.quad);
+  S.cur.touched = false;
+  if (!S.cur.item0) S.cur.item0 = { ...S.cur.item };
   if (S.cur.win.quad) { S.cur.win.orig = clone(S.cur.win.quad); S.cur.win.origKind = S.cur.win.kind; }
 }
 $("back").onclick = closeToApp;
@@ -891,7 +1565,7 @@ async function refreshScans() {
   }
   updateButtons();
 }
-const sameQuad = (a, b) => a.every((p, i) => dist(p, b[i]) < 0.005);
+const sameQuad = (a, b) => (!a || !b ? a === b : a.every((p, i) => dist(p, b[i]) < 0.005));
 async function watch() {
   try {
     const s = (await api(`${API}/stamp`)).stamp;

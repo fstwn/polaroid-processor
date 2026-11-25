@@ -38,7 +38,14 @@ function fakeEl(id, tag) {
   return e;
 }
 const document = {
-  getElementById(id) { if (!els.has(id)) els.set(id, fakeEl(id)); return els.get(id); },
+  getElementById(id) {
+    if (!els.has(id)) {
+      const e = fakeEl(id);
+      if (id === "fixframe") e.contentWindow = { location: { replace(u) { opened.push(u); } } };      // the fix page's frame
+      els.set(id, e);
+    }
+    return els.get(id);
+  },
   createElement(t) { return fakeEl("_" + t, t); }, querySelector() { return null; }, querySelectorAll() { return []; },
   addEventListener() {}, body: fakeEl("body"), title: "",
 };
@@ -100,6 +107,37 @@ const SCENARIOS = {
   },
 };
 
+// grid cards of hand crops, and which scans open the fix page
+SCENARIOS.cards = {
+  settings: BASE,
+  async run(h, input) {
+    const text = (e) => (e.children.length ? e.children.map(text).join("") : e.textContent);
+    const find = (e, cls) => e.children.find((c) => c.className === cls);
+    const out = { cards: {}, opened: {} };
+    for (const scan of input.scans) {
+      const card = await h.call(`buildCard(${JSON.stringify(scan)})`);
+      const meta = find(card, "meta"), tags = find(meta, "tags"), warns = find(meta, "warns");
+      out.cards[scan.key] = { cls: card.className, tags: tags.children.map(text), warns: warns ? warns.children.map(text) : [],
+                              img: text(find(card, "img")) };
+      opened.length = 0;
+      h.el("msg").textContent = "";
+      h.el("fixview").hidden = true;
+      await h.call(`openScan(${JSON.stringify(scan)})`);
+      out.opened[scan.key] = { url: opened[0] || null, shown: !h.el("fixview").hidden, msg: h.el("msg").textContent };
+    }
+    return out;
+  },
+};
+
+SCENARIOS.sig = {      // the signature that decides when a card is built again
+  settings: BASE,
+  async run(h, input) {
+    const out = {};
+    for (const [k, scan] of Object.entries(input)) out[k] = await h.call(`sig(${JSON.stringify(scan)})`);
+    return out;
+  },
+};
+
 SCENARIOS.scale_error = {
   settings: BASE,
   async run(h) {      // the progress bar says so when the server could not work out the scale
@@ -114,7 +152,7 @@ SCENARIOS.scale_error = {
   },
 };
 
-const sent = [];
+const sent = [], opened = [];
 let scenario = null;
 async function fetch(path, opt) {
   if (opt && opt.method === "POST" && path === "/api/project/settings") sent.push(JSON.parse(opt.body));

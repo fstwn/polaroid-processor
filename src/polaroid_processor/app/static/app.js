@@ -193,11 +193,14 @@ function applyFilter() {
 
 function warnItems(scan) {
   if (scan.error && scan.status === "failed") return [scan.error];
-  return (scan.warnings || []).filter((w) => !w.startsWith("hint:") && !w.startsWith("scale_inferred") && !w.startsWith("flatten"));
+  // "cropped by agent" is a tag of its own on the card; the stored detection error of a hand crop is not in the record
+  return (scan.warnings || []).filter((w) => !w.startsWith("hint:") && !w.startsWith("scale_inferred") && !w.startsWith("flatten") && w !== "cropped by agent");
 }
 
+const ITEM_LABEL = { "600": "600", go: "Go", other: "Other" };
+
 function sig(scan) {
-  return JSON.stringify([scan.status, scan.preview && scan.preview.url, scan.stale, scan.warnings, scan.error, scan.export, scan.quad_source, scan.window, scan.window_fix]);
+  return JSON.stringify([scan.status, scan.preview && scan.preview.url, scan.stale, scan.warnings, scan.error, scan.export, scan.quad_source, scan.window, scan.window_fix, scan.item, scan.agent_crop, scan.hand_crop]);
 }
 
 // The photo window (cyan) over a card's crop preview, placed on the image as it is shown in the box.
@@ -238,13 +241,16 @@ function buildCard(scan) {
     if (scan.window && !scan.stale) img.append(windowOverlay(img, im, scan.window));
     if (scan.stale) img.append(el("span", "stale", "updating…"));
   } else {
-    img.append(el("span", "none", scan.status === "failed" ? "no outline" : scan.status === "pending" ? "waiting for detection" : "preview pending"));
+    img.append(el("span", "none", scan.status === "failed" ? "no outline: click to crop by hand" : scan.status === "pending" ? "waiting for detection" : "preview pending"));
   }
   const meta = el("div", "meta");
   meta.append(el("div", "nm", scan.key, { title: scan.key }));
   const tags = el("div", "tags");
   tags.append(el("span", "badge " + scan.status, scan.status.replace("_", " ")));
-  if (scan.quad_source === "override") tags.append(el("span", "x", "fixed"));
+  if (scan.hand_crop) tags.append(el("span", "x", "hand crop"));      // a crop on a scan nothing was found on
+  else if (scan.quad_source === "override") tags.append(el("span", "x", "fixed"));
+  if (scan.item) tags.append(el("span", "x", "item: " + ITEM_LABEL[scan.item]));
+  if (scan.agent_crop) tags.append(el("span", "x warnx", "cropped by agent"));
   if (scan.window_fix === "hand") tags.append(el("span", "x", "window by hand"));
   else if (scan.window_fix === "none") tags.append(el("span", "x", "no photo crop"));
   if (scan.export === "done") tags.append(el("span", "x", "exported"));
@@ -265,7 +271,8 @@ function buildCard(scan) {
 }
 
 function openScan(scan) {
-  if (!scan.size_px) { showMsg(scan.status === "failed" ? "No outline was found for this scan." : "This scan has not been detected yet.", true); return; }
+  // a failed scan opens too (its fix page starts at the place step); a scan not detected yet stays closed
+  if (!scan.size_px && scan.status !== "failed") { showMsg("This scan has not been detected yet.", true); return; }
   showMsg("");
   // location.replace: opening and closing the page adds no history entries to step through with Back
   $("fixframe").contentWindow.location.replace("/fix#" + encodeURIComponent(scan.key));

@@ -197,7 +197,10 @@ TOOLS: List[Dict[str, Any]] = [
             "item sets what the scan shows for any scan (auto: as detected); scan_ppi is the scan's own resolution (item "
             "other only; 0 takes it away). A crop you place on a scan without a detected outline stays needs_review "
             "with the warning \"cropped by agent\" until a human confirms it; your own accept or new save does not "
-            "clear it. reset takes crop, item and scan_ppi away. A crop or item is refused when the scan file is missing or changed since the last polaroid_process (run it first). Every change is logged with author, time, note and previous value. "
+            "clear it. reset takes crop, item and scan_ppi away. You cannot change or remove an item or a scan_ppi that "
+            "a human set (item, item auto, scan_ppi and reset are refused, with or without a detected outline, also on "
+            "your own crop after a human changed its item or ppi; ask the human to change it in the app); corners "
+            "together with the unchanged item are fine. A crop or item is refused when the scan file is missing or changed since the last polaroid_process (run it first). Every change is logged with author, time, note and previous value. "
             "While another run works on the output folder the fix is saved and the export is skipped "
             "(the result has a note)."),
         "inputSchema": {

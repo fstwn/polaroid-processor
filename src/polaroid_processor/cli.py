@@ -272,7 +272,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="what the scan shows: 600 or go (a print of that format, replaces the shape guess), other "
                          "(any flat item, exported exactly as drawn: no margin, flattening, shadow removal, photo "
                          "crop or format), auto (as detected). A scan whose detection failed is cropped by "
-                         "--set with all four corners (item defaults to other); it turns ok at once")
+                         "--set with all four corners (item defaults to other); it turns ok at once. With "
+                         "--author agent an item or ppi that a human set cannot be changed or removed")
     sp.add_argument("--scan-ppi", type=float, metavar="PPI",
                     help="the scan's own resolution, for item other only (0 takes it away); sets its resolution tag")
     sp.add_argument("--reset", action="store_true", help="drop the manual fix (crop, item kind and own ppi too), back to "

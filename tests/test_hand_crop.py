@@ -895,13 +895,16 @@ def test_the_review_page_lists_a_cropped_scan_and_serves_its_tiles(out):
         rec = {r["key"]: r for r in listing["scans"]}["ticket.tif"]
         assert rec["item"]["kind"] == "other" and rec["item"]["agent_crop"] is True and rec["status"] == "needs_review"
         assert "item" not in {r["key"]: r for r in listing["scans"]}["p0.tif"]      # scans as detected: records as before
-        assert "lift.tif" not in {r["key"] for r in listing["scans"]}      # no outline, nothing to drag (the page is slice 2)
+        lift = {r["key"]: r for r in listing["scans"]}["lift.tif"]      # slice 2: a scan nothing was found on opens the place step
+        assert lift["quad"] is None and lift["status"] == "failed" and lift["detected"] is False and "item" not in lift
         status, tiles = page.json("/api/scans/ticket.tif/tiles")
         assert status == 200 and len(tiles["tiles"]) == 9
         status, _, png = page.request("/api/scans/ticket.tif/tile/tl.png")
         assert status == 200 and png[:4] == b"\x89PNG"
-        status, body = page.json("/api/scans/lift.tif/tiles")
-        assert status == 404
+        status, body = page.json("/api/scans/lift.tif/tiles")      # its overview only: the corner tiles need corners
+        assert status == 200 and [t["name"] for t in body["tiles"]] == ["overview"]
+        assert page.request("/api/scans/lift.tif/tile/tl.png")[0] == 404
+        assert page.request("/api/scans/lift.tif/tile/overview.png")[2][:4] == b"\x89PNG"
         # a human's Confirm clears the agent mark
         status, rec = page.json("/api/scans/ticket.tif/confirm", {})
         assert status == 200 and rec["status"] == "ok" and rec["item"]["agent_crop"] is False
@@ -1515,6 +1518,7 @@ def test_q2_the_refusals_reach_fix_cli_and_mcp_and_store_nothing(out, capsys):
 
 def test_q3_a_crop_with_the_agent_mark_counts_for_no_scale_and_no_reference_size(cropped):
     """It counts again once a human has confirmed it."""
+    api.fix_scan(str(cropped), "sheet.tif", item="600", author="human")      # a human's item: an agent may not change it (slice 2), it moves corners only
     api.fix_scan(str(cropped), "sheet.tif", sets=SHEET, item="600", author="agent")
     m = Manifest(str(cropped))
     group = (2400, 2900)
@@ -1525,9 +1529,9 @@ def test_q3_a_crop_with_the_agent_mark_counts_for_no_scale_and_no_reference_size
     m.scans["p4.tif"] = json.loads(json.dumps(m.get("p0.tif")))
     assert len(pipeline._prints_by_group(m)[group]) == 5 and ref in reference_sizes(m)
     # a plain print without an item and with the mark counts for nothing either
-    api.fix_scan(str(cropped), "sheet.tif", item="auto", author="agent")
+    api.fix_scan(str(cropped), "sheet.tif", item="auto", author="human")      # a human's item change alone keeps the mark
     m = Manifest(str(cropped))
-    assert len(pipeline._prints_by_group(m)[group]) == 3
+    assert m.get("sheet.tif")["agent_crop"] and len(pipeline._prints_by_group(m)[group]) == 3
     api.fix_scan(str(cropped), "sheet.tif", accept=True, author="human")
     m = Manifest(str(cropped))
     assert len(pipeline._prints_by_group(m)[group]) == 4      # confirmed: it counts like a hand-fixed print
@@ -1537,6 +1541,7 @@ def test_q3_a_crop_with_the_agent_mark_counts_for_no_scale_and_no_reference_size
 
 def test_q3_the_marked_crop_cannot_move_the_scale_of_the_prints(cropped):
     base = {k: v for k, v in scales(cropped).items() if k.startswith("p")}
+    api.fix_scan(str(cropped), "sheet.tif", item="600", author="human")
     api.fix_scan(str(cropped), "sheet.tif", sets=box(10, 10, 2390, 2890), item="600", author="agent")      # a far too big "600"
     assert {k: v for k, v in scales(cropped).items() if k.startswith("p")} == base
     api.fix_scan(str(cropped), "sheet.tif", accept=True, author="human")      # confirmed, it counts (and moves the median)
@@ -1886,10 +1891,10 @@ def test_t2_an_agents_reset_on_a_detected_scan_keeps_a_humans_item_or_ppi(out):
     api.fix_scan(str(out), "p2.tif", item="go", author="agent")
     api.fix_scan(str(out), "p2.tif", reset=True, author="agent")
     assert entry(out, "p2.tif").get("item_fix") is None
-    # a human set the kind and an agent changed the ppi: the safe reading refuses, and so does the other order
+    # a human set the kind: an agent cannot change its ppi any more (slice 2, fourth review), nor reset it
     api.fix_scan(str(out), "p2.tif", item="other", author="human")
-    api.fix_scan(str(out), "p2.tif", scan_ppi=700, author="agent")
-    assert entry(out, "p2.tif")["item_fix"]["author"] == "agent"
+    with pytest.raises(api.UsageError, match="a human set"):
+        api.fix_scan(str(out), "p2.tif", scan_ppi=700, author="agent")
     with pytest.raises(api.UsageError, match="a human set"):
         api.fix_scan(str(out), "p2.tif", reset=True, author="agent")
     api.fix_scan(str(out), "p2.tif", reset=True, author="human")      # a human's reset is always allowed
@@ -1941,3 +1946,65 @@ def test_t3_a_forced_format_is_traced_at_its_own_scale_and_only_other_without_th
     assert other_px == pytest.approx(none_px)      # Other is traced as if it had no item
     base_px, _ = _trace_px(src, tmp_path, {"kind": "other"}, scale_base=500 / 25.4)
     assert base_px == pytest.approx(500 / 25.4)
+
+
+def test_s2_an_agent_cannot_change_or_remove_a_humans_item_or_ppi(out):
+    """Slice 2, decision after the fourth review: --item, --item auto, --scan-ppi and reset, with and without a
+    detected outline, also on an agent's own crop whose item or ppi a human changed. Nothing is stored on refusal."""
+    gone = "an agent cannot (change or )?take away an item choice or an own ppi that a human set"
+    # a human's crop with a human's item and ppi on a scan without an outline
+    api.fix_scan(str(out), "ticket.tif", sets=TICKET, item="other", scan_ppi=500, author="human")
+    before = stored(out)
+    for kw in ({"item": "go"}, {"item": "600"}, {"item": "auto"}, {"scan_ppi": 700}, {"scan_ppi": 0}, {"reset": True},
+               {"item": "go", "sets": TICKET}):
+        with pytest.raises(api.UsageError, match="agent"):
+            api.fix_scan(str(out), "ticket.tif", author="agent", **kw)
+        with pytest.raises(api.UsageError, match="agent"):
+            mcp_server.tool_fix({"output": str(out), "scan": "ticket.tif", "export": False,
+                                 **{("set" if k == "sets" else k): v for k, v in kw.items()}}, None)
+        assert stored(out) == before
+    with pytest.raises(api.UsageError, match="human set"):
+        api.fix_scan(str(out), "ticket.tif", item="auto", author="agent")
+    # allowed: the same item again, a corner nudge with the unchanged item (it marks the crop again, first review 5)
+    api.fix_scan(str(out), "ticket.tif", item="other", scan_ppi=500, author="agent")
+    api.fix_scan(str(out), "ticket.tif", nudges={"tl": [3.0, 3.0]}, item="other", author="agent")
+    assert entry(out, "ticket.tif")["item_fix"]["kind"] == "other" and entry(out, "ticket.tif")["item_fix"]["scan_ppi"] == 500.0
+    with pytest.raises(api.UsageError, match="agent"):
+        api.fix_scan(str(out), "ticket.tif", reset=True, author="agent")
+    api.fix_scan(str(out), "ticket.tif", item="go", author="human")      # a human's actions are always allowed
+    api.fix_scan(str(out), "ticket.tif", reset=True, author="human")
+    assert entry(out, "ticket.tif")["status"] == "failed" and entry(out, "ticket.tif").get("item_fix") is None
+
+    # an agent's own crop (from the start) whose ppi a human changed: no longer the agent's to change, remove or reset
+    api.fix_scan(str(out), "lift.tif", sets=TICKET, scan_ppi=None, author="agent")
+    assert entry(out, "lift.tif")["agent_crop"]["from_start"] is True and entry(out, "lift.tif")["item_fix"]["by_human"] is False
+    api.fix_scan(str(out), "lift.tif", item="go", author="agent")      # while no human touched it, the agent may
+    api.fix_scan(str(out), "lift.tif", item="other", author="agent")
+    api.fix_scan(str(out), "lift.tif", scan_ppi=600, author="human")      # a human changes the ppi: the crop stays unconfirmed
+    assert entry(out, "lift.tif")["agent_crop"] and entry(out, "lift.tif")["item_fix"]["by_human"] is True
+    before = stored(out)
+    for kw in ({"item": "auto"}, {"item": "go"}, {"scan_ppi": 0}, {"scan_ppi": 900}, {"reset": True}):
+        with pytest.raises(api.UsageError, match="agent"):
+            api.fix_scan(str(out), "lift.tif", author="agent", **kw)
+        assert stored(out) == before
+    api.fix_scan(str(out), "lift.tif", reset=True, author="human")
+    assert entry(out, "lift.tif")["status"] == "failed"
+
+    # a detected scan: the human's item holds against every agent change; corners with the unchanged item are fine
+    api.fix_scan(str(out), "p1.tif", item="go", author="human")
+    before = stored(out)
+    for kw in ({"item": "other"}, {"item": "600"}, {"item": "auto"}, {"reset": True}):
+        with pytest.raises(api.UsageError, match="agent"):
+            api.fix_scan(str(out), "p1.tif", author="agent", **kw)
+        assert stored(out) == before
+    api.fix_scan(str(out), "p1.tif", item="go", shifts={"left": [1.0]}, author="agent")
+    assert entry(out, "p1.tif")["item_fix"]["kind"] == "go" and entry(out, "p1.tif")["override"]
+    # an item an agent set stays the agent's to change, until a human touches it
+    api.fix_scan(str(out), "p2.tif", item="go", author="agent")
+    api.fix_scan(str(out), "p2.tif", item="other", scan_ppi=400, author="agent")
+    api.fix_scan(str(out), "p2.tif", item="auto", author="agent")
+    assert entry(out, "p2.tif").get("item_fix") is None
+    # the CLI is an agent with --author agent
+    api.fix_scan(str(out), "p2.tif", item="other", author="human")
+    assert cli.main(["fix", str(out), "p2.tif", "--item", "auto", "--author", "agent"]) == 2
+    assert entry(out, "p2.tif")["item_fix"]["kind"] == "other"

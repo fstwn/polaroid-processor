@@ -98,3 +98,44 @@ def test_the_progress_bar_shows_the_scale_error():
     assert out["plain"] == {"text": "", "hidden": True}
     assert out["error"]["hidden"] is False and out["error"]["cls"] == "panel runbar locked"
     assert "scanner profile 'x' not found in /p.yaml" in out["error"]["text"] and "Settings > Advanced" in out["error"]["text"]
+
+
+# --------------------------------------------------------------------------- grid cards of hand crops (hand crop, slice 2)
+def card(key, status, **kw):
+    return {"key": key, "status": status, "warnings": [], "error": None, "exported": False, "quad_source": None, "format": None,
+            "preview": None, "stale": False, "export": None, "rev": 0, **kw}
+
+
+def test_grid_cards_show_a_hand_crop_its_item_and_the_agent_mark_and_failed_scans_open():
+    scans = [
+        card("plain.tif", "ok", quad_source="auto", size_px=[800, 1000], preview={"url": "/p.jpg", "size": [10, 10]}),
+        card("fixed.tif", "ok", quad_source="override", size_px=[800, 1000], item="go", preview={"url": "/p.jpg", "size": [10, 10]}),
+        card("ticket.tif", "ok", quad_source="override", size_px=[700, 1200], item="other", hand_crop=True, error=None,
+             preview={"url": "/t.jpg", "size": [10, 10]}),
+        card("sheet.tif", "needs_review", quad_source="override", size_px=[700, 1200], item="600", hand_crop=True, agent_crop=True,
+             warnings=["cropped by agent", "scale_unverified"], preview={"url": "/s.jpg", "size": [10, 10]}),
+        card("fail.tif", "failed", error="detection failed: no plausible print outline at any threshold"),
+        card("wait.tif", "pending"),
+    ]
+    out = run_page("cards", {"scans": scans})
+    c = out["cards"]
+    assert c["plain.tif"]["tags"] == ["ok"]                                                                # a scan without a choice: the card as before
+    assert c["fixed.tif"]["tags"] == ["ok", "fixed", "item: Go"]
+    assert c["ticket.tif"]["tags"] == ["ok", "hand crop", "item: Other"]                                  # no "fixed": it is a hand crop
+    assert c["ticket.tif"]["warns"] == []                                                                  # the stored detection error is not shown
+    assert c["sheet.tif"]["tags"] == ["needs review", "hand crop", "item: 600", "cropped by agent"]
+    assert c["sheet.tif"]["warns"] == ["scale_unverified"]                                                 # the mark is a tag, not a second line
+    assert c["fail.tif"]["tags"] == ["failed"] and c["fail.tif"]["warns"] == [scans[4]["error"]]
+    assert c["fail.tif"]["img"] == "no outline: click to crop by hand" and c["wait.tif"]["img"] == "waiting for detection"
+    o = out["opened"]
+    assert o["fail.tif"] == {"url": "/fix#fail.tif", "shown": True, "msg": ""}                           # a failed scan opens on the fix page
+    assert o["ticket.tif"]["shown"] is True and o["sheet.tif"]["url"] == "/fix#sheet.tif"
+    assert o["wait.tif"] == {"url": None, "shown": False, "msg": "This scan has not been detected yet."}     # not detected yet: closed
+
+
+def test_a_card_is_redrawn_when_the_item_or_the_agent_mark_changes():
+    out = run_page("sig", {"a": card("a.tif", "ok", quad_source="override", size_px=[1, 1]),
+                           "b": card("a.tif", "ok", quad_source="override", size_px=[1, 1], item="go"),
+                           "c": card("a.tif", "ok", quad_source="override", size_px=[1, 1], agent_crop=True),
+                           "d": card("a.tif", "ok", quad_source="override", size_px=[1, 1], hand_crop=True)})
+    assert len(set(out.values())) == 4

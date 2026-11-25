@@ -504,6 +504,12 @@ def fix_scan(output: str, scan: str, *, sets=None, nudges=None, shifts=None, acc
     ``UsageError`` and nothing is stored; a human's reset is always allowed; a reset on a scan that was never detected
     (pending) is refused like ``set`` and an item.
 
+    An agent may not change or remove an item choice or an own ppi that a human set (``item_fix["by_human"]``; one without
+    the record counts as a human's): ``item``, ``item="auto"``, ``scan_ppi`` and ``reset`` are refused with ``UsageError`` and
+    nothing is stored, with or without a detected outline, also on an agent's own unconfirmed crop whose item or ppi a human
+    changed. The same item given again, and corners together with an unchanged item, stay allowed; a human's actions are
+    always allowed.
+
     Returns the result record of the scan (type ``fix``), with the last history entries and,
     after an export, the batch summary under ``summary``.
     """
@@ -553,8 +559,9 @@ def fix_scan(output: str, scan: str, *, sets=None, nudges=None, shifts=None, acc
             # human saved corners or confirmed it since (the mark says so; one without the information is read as a human's)
             raise UsageError("an agent can reset only a crop that was an agent's from the start and still carries the agent "
                              "mark; a human's crop (or one a human saved or confirmed since) is reset by a human")
-        if by_agent and detected and old_item and old_item.get("by_human", True):
-            # a human set the kind or the ppi (an item without a record of who is read as a human's): not the agent's to take away
+        if by_agent and old_item and old_item.get("by_human", True):
+            # a human set the kind or the ppi (an item without a record of who is read as a human's): not the agent's to take
+            # away, with or without a detected outline (also on an agent's own crop whose item or ppi a human changed)
             raise UsageError("an agent cannot take away an item choice or an own ppi that a human set; a human resets it")
         had_crop = bool(old_item or mark_old or (not detected and e.get("override")))
         m.set_override(key, None, author, note or "reset to automatic detection", "reset")
@@ -612,6 +619,11 @@ def fix_scan(output: str, scan: str, *, sets=None, nudges=None, shifts=None, acc
             check_crop_quad(new, w, h)
         old_ppi = old_item.get("scan_ppi") if old_item else None
         new_ppi = (ppi if ppi_given else old_ppi) if kind == "other" else None
+        if by_agent and old_item and old_item.get("by_human", True) and (kind, new_ppi) != (old_kind, old_ppi):
+            # a human set some part of the choice (an item without a record of who is read as a human's): an agent may not
+            # replace it, take it away (--item auto) or change its ppi; the same item given again changes nothing
+            raise UsageError("an agent cannot change or take away an item choice or an own ppi that a human set; "
+                             "a human changes it")
         mark = mark_old
         if by_agent:
             if geometry and not detected:
