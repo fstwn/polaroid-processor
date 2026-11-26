@@ -129,6 +129,33 @@ SCENARIOS.cards = {
   },
 };
 
+// the grid's filter chips; `search` is the address the page is loaded with (`polaroid review` adds ?filter=review)
+SCENARIOS.filters = {
+  settings: BASE,
+  search: "?filter=review",
+  async run(h, input) {
+    const counts = { ok: 0, needs_review: 0, failed: 0, detected: 0, pending: 0, exported: 0, total: input.scans.length,
+                     to_export: 0, to_retag: 0, to_headers: 0 };
+    for (const s of input.scans) counts[s.status] += 1;
+    const label = (chip) => chip.textContent + chip.children.map((c) => (typeof c === "string" ? c : c.textContent)).join("");
+    const view = () => ({
+      chips: h.el("filters").children.map(label), on: h.el("filters").children.filter((c) => / on$/.test(c.className)).map(label),
+      shown: input.scans.map((s) => s.key).filter((k) => !h.call(`S.cards.get(${JSON.stringify(k)}).hidden`)),
+      empty: h.el("empty").hidden ? null : h.el("empty").textContent,
+    });
+    h.call("tick = async () => {}");      // no poller: the scenario hands the page its answers itself
+    await h.call('enterProject({ name: "p", input: "in", output: "out" })');
+    h.call(`renderScans(${JSON.stringify({ rev: "1", scans: input.scans })})`);
+    h.call(`renderProgress(${JSON.stringify({ rev: "1", counts, run: null, previews_pending: 0, lock: null, can_run: true, scale_error: null })})`);
+    const out = { start: view() };
+    for (const [name, i] of Object.entries(input.clicks)) {
+      h.el("filters").children[i].onclick();
+      out[name] = view();
+    }
+    return out;
+  },
+};
+
 SCENARIOS.sig = {      // the signature that decides when a card is built again
   settings: BASE,
   async run(h, input) {
@@ -161,9 +188,10 @@ async function fetch(path, opt) {
     : path === "/api/project" ? { project: null } : path === "/api/home" ? { projects: [], recent_inputs: [], current: null } : {};
   return { ok: true, status: 200, json: async () => body };
 }
+const search = (SCENARIOS[process.argv[3]] || {}).search || "";
 const ctx = vm.createContext({
-  document, window: { addEventListener() {}, location: { search: "", pathname: "/" } },
-  location: { search: "", pathname: "/" }, history: { replaceState() {}, pushState() {} },
+  document, window: { addEventListener() {}, location: { search, pathname: "/" } },
+  location: { search, pathname: "/" }, history: { replaceState() {}, pushState() {} },
   URLSearchParams, fetch, setTimeout, clearTimeout, setInterval() { return 0; }, clearInterval() {}, console,
   requestAnimationFrame() {}, getComputedStyle() { return {}; }, navigator: {}, EventSource: function () {},
 });

@@ -176,7 +176,7 @@ def cmd_review(a) -> int:
     if a.export:
         print("note: --export is ignored here; the app has an Export button", file=sys.stderr)
     return launch(output=a.output, port=a.port, open_browser=not a.no_browser, author=a.author,
-                  filter_name=None if a.all else "needs_review", announce=_announce)
+                  filter_name=None if a.all else "review", announce=_announce)
 
 
 # --------------------------------------------------------------------------- parser
@@ -309,7 +309,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("review", help="open the app on an output folder (drag outlines onto the print edge)")
     sp.add_argument("output", help="output folder holding the manifest")
-    sp.add_argument("--all", action="store_true", help="show every scan (default: the grid starts on 'needs review')")
+    sp.add_argument("--all", action="store_true", help="start on 'All' (default: the grid starts on 'To review': needs review and failed)")
     sp.add_argument("--port", type=int, help="port on 127.0.0.1 (default 8780, or a free one when that is busy)")
     sp.add_argument("--author", default="human", help="author recorded with each fix (default human)")
     sp.add_argument("--export", action="store_true", help="ignored; the app has an Export button")

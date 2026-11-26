@@ -196,7 +196,7 @@ def test_review_command_opens_the_app_on_the_output(served, home, tmp_path, caps
     assert call["state"].project.output == str(out)
     assert main(["review", str(out), "--no-browser", "--author", "alex", "--export"]) == 0
     call = served[-1]
-    assert call["path"] == "/?filter=needs_review" and call["state"].author == "alex" and call["fallback"] is True
+    assert call["path"] == "/?filter=review" and call["state"].author == "alex" and call["fallback"] is True
     assert "--export is ignored" in capsys.readouterr().err
     assert main(["review", str(tmp_path / "missing"), "--no-browser"]) == 2
     assert "not an output folder" in capsys.readouterr().err

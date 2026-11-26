@@ -139,3 +139,21 @@ def test_a_card_is_redrawn_when_the_item_or_the_agent_mark_changes():
                            "c": card("a.tif", "ok", quad_source="override", size_px=[1, 1], agent_crop=True),
                            "d": card("a.tif", "ok", quad_source="override", size_px=[1, 1], hand_crop=True)})
     assert len(set(out.values())) == 4
+
+
+# --------------------------------------------------------------------------- the grid's "To review" filter
+def test_to_review_shows_needs_review_and_failed_and_needs_review_still_hides_failed():
+    scans = [card("a.tif", "ok"), card("b.tif", "needs_review"), card("c.tif", "failed", error="detection failed: x"),
+             card("d.tif", "needs_review"), card("e.tif", "pending")]
+    # chip order: All, To review, OK, Needs review, Failed, Not checked yet
+    out = run_page("filters", {"scans": scans, "clicks": {"needs_review": 3, "failed": 4, "all": 0, "again": 1}})
+    assert out["start"]["chips"] == ["All 5", "To review 3", "OK 1", "Needs review 2", "Failed 1", "Not checked yet 1"]
+    assert out["start"]["on"] == ["To review 3"]                              # the address `polaroid review` opens
+    assert out["start"]["shown"] == ["b.tif", "c.tif", "d.tif"]
+    assert out["needs_review"]["shown"] == ["b.tif", "d.tif"] and out["needs_review"]["on"] == ["Needs review 2"]
+    assert out["failed"]["shown"] == ["c.tif"]
+    assert out["all"]["shown"] == [s["key"] for s in scans]
+    assert out["again"] == out["start"] and out["start"]["empty"] is None
+    clean = run_page("filters", {"scans": [card("a.tif", "ok")], "clicks": {"failed": 4}})
+    assert clean["start"]["shown"] == [] and clean["start"]["empty"] == "Nothing to review."
+    assert clean["failed"]["empty"] == "No scans with this status."

@@ -1,6 +1,6 @@
 # polaroid-processor
 
-Detects, crops and rectifies high-resolution flatbed scans of instant prints (Polaroid 600 / i-Type / SX-70 and Polaroid Go) lying in a black scanning holder, and camera shots of white-framed prints on light paper. Works with white, black (incl. glitter), gold and printed special-edition frames. Built to run unattended, from the command line or by an agent.
+Detects, crops and rectifies high-resolution flatbed scans of instant prints (Polaroid 600 / i-Type / SX-70 and Polaroid Go) lying in a black scanning holder, and camera shots of white-framed prints on light paper. Works with white, black (incl. glitter), gold and printed special-edition frames. Built to run unattended, from the command line or by an agent. A scan that detection cannot read (a ticket, an emulsion lift, any flat item) can be [cropped by hand](#hand-crop-and-item-kind).
 
 Scope and roadmap: [docs/SCOPE.md](docs/SCOPE.md).
 
@@ -62,12 +62,12 @@ A local app (stdlib server on `127.0.0.1`, plain JavaScript, no extra dependenci
 
 - **Projects.** The home page lists recent projects (input folder, output folder, counts of ok / needs review / failed / exported). A new project takes an input folder (Browse opens the native folder dialog, or type a path; recent folders are offered) and an output folder, by default `<input>_processed` next to it. Any existing output folder with a `polaroid-manifest.json` can be opened too, also one made on the command line. The list is kept per user in `%APPDATA%/polaroid-processor/app.json` (`~/.polaroid-processor/` elsewhere).
 - **Detect.** Finds the print in every scan and stores the outlines in the manifest, without exporting. A bar shows done/total and time left; the grid fills as scans finish, each card with a small straightened preview of the crop (cached in `<out>/_previews/`), its status and warnings. Cancel stops the run at once; the scans in flight are redone by the next run. The grid filters by status.
-- **Fix.** A click on a card opens the 9-tile drag view (the same page the old `review` command served): drag a corner or an edge grip onto the print edge, then Confirm or Save correction. The card and its preview update. Fixes can be made at any time, also during a run.
-- **Export.** Writes the TIFF master and the JPG derivatives of every detected scan that has no up to date export; `Export (N)` says how many. It has the same progress and Cancel. `Detect + export` does both in one go, for batches you trust. A scale-only change shows as `Update tags (T)`: the resolution tags are patched, nothing is encoded. A change of the metadata counts in `Export (N)` too (the card says "metadata to update"); that run only rewrites the text headers of the finished files (the bar says "updating metadata") and encodes nothing.
+- **Fix.** A click on a card opens the 9-tile drag view (the same page the old `review` command served): drag a corner or an edge grip onto the print edge, then Confirm or Save correction. The card and its preview update. Fixes can be made at any time, also during a run. A failed scan opens too, to be [cropped by hand](#hand-crop-and-item-kind); a scan not detected yet stays closed.
+- **Export.** Writes the TIFF master and the JPG derivatives of every detected or hand-cropped scan that has no up to date export; `Export (N)` says how many. It has the same progress and Cancel. `Detect + export` does both in one go, for batches you trust. A scale-only change shows as `Update tags (T)`: the resolution tags are patched, nothing is encoded. A change of the metadata counts in `Export (N)` too (the card says "metadata to update"); that run only rewrites the text headers of the finished files (the bar says "updating metadata") and encodes nothing.
 - **Settings.** Per project, kept in the manifest: crop margin, the photo area crop and its bleed, the JPG derivatives `high` and `web`, flatten and shadow correction, the Metadata group (see [Export metadata](#export-metadata)); under Advanced the scale (a ppi, or a scanner profile picked from a dropdown of the profiles file; see [Scanner profiles](#scanner-profiles)), TIFF compression, interpolation and the overlay. Your last choices are the start for new projects (the scale is not carried over; of the metadata only author and copyright are, title, description, keywords and date taken belong to a project). Settings apply to the next run and cannot be changed while one goes; a change shows in the Export count.
 - **With the command line and agents.** The app watches the manifest: a fix made by `polaroid fix`, an agent or another window shows up in the grid and in an open drag view without a reload. Only one run can work on an output folder at a time (see [Run lock](#run-lock-and-concurrent-writers)); the app shows when another process holds it.
 
-`polaroid review OUTPUT [--all] [--port N] [--no-browser]` opens the app on that project; the grid starts on "needs review" unless `--all` is given. `--author NAME` sets the author recorded with fixes made in the app (only when this command starts the app; a running app keeps its own); `--export` is ignored (use the Export button). `polaroid app` and `polaroid review` reuse an app that already runs on the port (default 8780, or a free one when that is busy and no `--port` is given): the browser opens on it and on the project, and no second server starts. A run in the running app is never stopped for that; the app stays on its project.
+`polaroid review OUTPUT [--all] [--port N] [--no-browser]` opens the app on that project; the grid starts on "To review" (scans that need review and failed scans), with `--all` on "All". `--author NAME` sets the author recorded with fixes made in the app (only when this command starts the app; a running app keeps its own); `--export` is ignored (use the Export button). `polaroid app` and `polaroid review` reuse an app that already runs on the port (default 8780, or a free one when that is busy and no `--port` is given): the browser opens on it and on the project, and no second server starts. A run in the running app is never stopped for that; the app stays on its project.
 
 ## How it works
 
@@ -100,7 +100,7 @@ polaroid process INPUT... -o OUTPUT [options]
 | `--shadows auto\|off` | Remove edge shadows on plain frames (default `auto`) |
 | `--overlay` | Also write `_overlays/<name>.jpg` with the detected outline (and the curved edges when flattened) |
 | `--strict` | Do not export scans that need review |
-| `--force` / `--redetect` | Re-export / re-detect even if up to date |
+| `--force` / `--redetect` | Re-export / re-detect even if up to date; only `--redetect` detects a [hand-cropped](#hand-crop-and-item-kind) failed scan again |
 | `--dry-run` | Detect and evaluate only, write nothing |
 | `-j N` | Worker processes (default: from free RAM, about 1.5 GB per worker) |
 | `--json` | Machine-readable output (see below) |
@@ -136,6 +136,8 @@ Writes a PNG with eight full-resolution tiles (four corners, four edge midpoints
 
 With the photo crop on, `--of window` puts the tiles on the corners of the photo window instead: its border is cyan (a round window: its bounding square and the circle in it), the print outline stays green. A scan without a window shows the nominal window of its format, which `fix --window-set` / `--window-nudge` start from.
 
+A scan without an outline (detection failed) gets one overview instead of tiles: the whole scan with a grid in scan pixels (`--grid`, default about 20 lines along the long edge) and a cyan start rectangle, whose corners are also printed. `--item 600|go|other` picks the start rectangle (default `other`); see [Hand crop](#hand-crop-and-item-kind).
+
 ### `fix`
 
 ```bash
@@ -147,7 +149,12 @@ polaroid fix OUTPUT NAME --window-nudge br=-4,-3 --window-set tl=610,905
 polaroid fix OUTPUT NAME --window-kind round
 polaroid fix OUTPUT NAME --no-photo-crop
 polaroid fix OUTPUT NAME --reset-window
+polaroid fix OUTPUT NAME --set tl=378,1620 --set tr=6988,1626 --set br=6962,10880 --set bl=386,10882 --item other
+polaroid fix OUTPUT NAME --item go
+polaroid fix OUTPUT NAME --item other --scan-ppi 2400
 ```
+
+`--item` and `--scan-ppi` say what a scan shows, and the four `--set` corners crop a failed scan: see [Hand crop and item kind](#hand-crop-and-item-kind).
 
 Corners are `tl`, `tr`, `br`, `bl`; sides are `top`, `right`, `bottom`, `left`. `--shift` moves a side outward (positive) or inward (negative). `--accept` marks the current outline as reviewed. Every change is stored in the manifest with author (`--author`, default `human`), time, note and previous value. `--export` re-exports that scan right away; otherwise the next `process` run does it.
 
@@ -160,7 +167,7 @@ polaroid app [FOLDER...] [--port N] [--no-browser]
 polaroid review OUTPUT [--all] [--port N] [--author NAME] [--no-browser]
 ```
 
-`app` starts the [web app](#web-app); each `FOLDER` becomes a project (an output folder with a manifest opens as it is). `review` opens the app on one output folder, with the grid on "needs review" unless `--all` is given. Both start a local stdlib server on `127.0.0.1` (no network access, no extra dependencies) and open the browser, or reuse the app that already runs. When they start the server they block until it is stopped (Ctrl+C); when an app already runs they open the browser on it and return at once. The fix page of the app shows each scan as a 3x3 grid: the four corners and the four edge midpoints as 480 px tiles of the original pixels (contrast-stretched when dark), and an overview in the middle. The green line is the current outline.
+`app` starts the [web app](#web-app); each `FOLDER` becomes a project (an output folder with a manifest opens as it is). `review` opens the app on one output folder, with the grid on "To review" (needs review and failed), or on "All" with `--all`. Both start a local stdlib server on `127.0.0.1` (no network access, no extra dependencies) and open the browser, or reuse the app that already runs. When they start the server they block until it is stopped (Ctrl+C); when an app already runs they open the browser on it and return at once. The fix page of the app shows each scan as a 3x3 grid: the four corners and the four edge midpoints as 480 px tiles of the original pixels (contrast-stretched when dark), and an overview in the middle. The green line is the current outline.
 
 - Drag a magenta corner, or the green grip on an edge tile (moves the whole side), onto the print edge.
 - Click a tile to enlarge it; there the arrow keys move 1 px and `Shift` + arrow 10 px. `Esc` closes.
@@ -174,6 +181,71 @@ Saves go through the same code as `fix` (history with author, time, note and pre
 ```bash
 polaroid status OUTPUT [--needs-review] [--json]
 ```
+
+## Hand crop and item kind
+
+A scan on which detection fails can be cropped by hand and exported. It may hold any flat item: a ticket, a paper sheet with an emulsion lift, or a print that detection could not read. Every scan can also be told what it shows, its **item**:
+
+| Item | Meaning |
+|---|---|
+| as detected | No choice stored (detected scans); results and exports are those without this feature |
+| `600`, `go` | A print of that format. It replaces the guess from the shape (format, size check, scale, `{format}`, photo window); a hand crop exports like a hand-fixed print |
+| `other` | Any flat item, exported exactly as drawn: only straightened from the four corners. No margin, flattening, shadow removal, photo crop or format (`{format}` is empty). File names, derivatives and metadata as for prints |
+
+### On the page
+
+A failed scan's card (grid filter "To review", "Failed" or "All") says "no outline: click to crop by hand". It opens at the **Place** step, with item Other:
+
+1. **Place.** One rectangle on the whole scan. Drag inside to move it, drag a corner or side to resize it, turn it with the round handle above the top edge or the Rotation field (0.1 deg steps, Shift + arrow 1 deg, up to about 45 deg), or drag on empty area to draw a new one. Arrow keys move it 1 px (Shift 10 px). With 600 or Go it keeps that print's proportions.
+2. **Fine-tune.** The nine full-resolution tiles at the new corners; every corner moves on its own.
+
+**Save correction** works from both steps and stores crop and item together. After a human's save the scan is ok; an agent's save of a crop on a scan without a detected outline gives `needs_review` with `cropped by agent`. Place and the item choice are offered on detected scans too. There Place shows the detected outline; if that is not a rectangle, the first edit replaces it by the fitting rectangle (drawn dashed), and Reset brings it back. Choosing 600 or Go for a scan nothing was detected on gives a placed rectangle that format's proportions at once (fine-tuned corners stay). An Other crop with the proportions of a 600 or Go print (within 1.5 %) gets a hint; nothing changes by itself.
+
+**Own ppi** (Other only) is the scan's own resolution. It only sets the resolution tag.
+
+A button takes a stored crop, item and own ppi away, after a question: **Remove hand crop…** on a failed scan, **Back to automatic…** on a detected scan with an item. The page's Reset only drops unsaved edits. The grid tags such cards "hand crop", "item: 600" / "Go" / "Other" and, for an agent's crop, "cropped by agent".
+
+### Command line and API
+
+```bash
+polaroid inspect NAME -m OUTPUT                      # whole scan, pixel grid, start rectangle
+polaroid fix OUTPUT NAME --set tl=378,1620 --set tr=6988,1626 --set br=6962,10880 --set bl=386,10882 --item other
+polaroid inspect NAME -m OUTPUT                      # check the crop at full resolution
+polaroid process INPUT -o OUTPUT                     # or pass --export to fix
+```
+
+- A failed scan needs all four corners in one `--set` call (no `--nudge`, `--shift` or `--accept`). Without `--item` the first crop is `other`. The scan turns `ok` at once. A scan never detected is refused.
+- `--item 600|go|other|auto` also works alone on a detected scan; `auto` takes the choice away. A detected scan set to `other` keeps its outline and is `ok`; the next export deletes its photo crop files.
+- `--scan-ppi N` is for `other` only; `0` takes it away.
+- A hand crop must lie inside the scan, run clockwise `tl tr br bl`, be convex, have sides of at least 50 px, keep every corner at least 50 px from the lines of the other two sides, and be turned by at most 45 deg.
+- A crop or item is refused while the scan file is missing or changed since the last run: run `process` first.
+- Python: `api.fix_scan(output, name, sets={...}, item="other", scan_ppi=2400)`.
+
+### Scale of an `other` item
+
+The scale only sets the resolution tag; the pixels are the same whatever it is. First hit wins:
+
+1. the scan's own ppi (`--scan-ppi`);
+2. the project's `--ppi` or `--profile`;
+3. the median of at least 3 prints of the project with the same scan size in pixels;
+4. the scan's TIFF tag as it is, warning `scale_unverified`;
+5. none: no resolution tag, warning `scale_unverified`.
+
+A small item scanned with its own scan area has no batch median, so it gets the scanner's tag; give `--scan-ppi` when that tag is wrong. A later change of scale only patches the tags (nothing is encoded), unless the export had no tag or gets none. `scale_unverified` never makes a scan need review. An `other` item never counts in the batch scale or the reference sizes.
+
+### What stays
+
+- Later runs do not detect a hand-cropped failed scan again. `--redetect` does: a success is stored but the crop stays in force, a failure leaves the scan `ok`. The first error is kept as `detection_error`.
+- `fix --reset` takes crop, item and own ppi away: back to the automatic outline, or to `failed`. Files already exported stay on disk.
+- A changed scan file drops all of it at the next run (logged in the history).
+
+### Agents
+
+A fix is an agent's with `--author agent` (API: `author="agent"`), and every MCP fix is one.
+
+- A crop an agent places or moves on a scan without a detected outline is `needs_review` with the warning `cropped by agent`. It is exported unless `--strict`, and counts in no batch scale or reference size. A human's Confirm (`fix --accept`), corner save or `fix --reset` clears the mark, and a changed scan file drops it. An agent's accept or new save does not clear it.
+- An agent cannot change or remove an item or own ppi that a human set.
+- An agent can reset a crop on a failed scan only if no human saved or confirmed it since it began.
 
 ## Photo area crop
 
@@ -229,7 +301,9 @@ Summary keys beyond the counts: `exported` (scans written in this run), `retagge
 |---|---|
 | `ok` | Exported, no warnings that need a look |
 | `needs_review` | Exported (unless `--strict`), check with `inspect` and correct with `fix` or `fix --accept` |
-| `failed` | No outline found or export error; see `error` |
+| `failed` | No outline found (and no [hand crop](#hand-crop-and-item-kind)) or export error; see `error` |
+
+A scan with an item choice also carries `item` (kind, `scan_ppi` when set, author, time, note), an agent's unconfirmed crop `agent_crop`, and a hand-cropped failed scan `detection_error`.
 
 Warnings that set `needs_review`:
 
@@ -244,8 +318,9 @@ Warnings that set `needs_review`:
 | `edge_inside:<side>:<mm>` | A stretch of the print edge lies further inside the outline than the crop margin, so holder would show in the export there (curved or concave edge) |
 
 | `photo window not found: <reason>` | Only with the photo crop on: no photo window was found in the print (see [Photo area crop](#photo-area-crop)) |
+| `cropped by agent` | An agent placed or moved the crop on a scan without a detected outline; a human confirms or saves it |
 
-Informational: `metadata_not_updated: <file>: <reason>` (a file's text headers could not be rewritten, the next run tries again; the status is not changed), `scale_inferred:<source>`, `size_unverified` (single scan, no scale reference), `edge_repaired:<side>` (the holder rim touched that side; the side was refit on the print edge behind it), `flattened:<sides>:<mm>` (the export follows these sides' curves; largest bend), `flatten_straight:<side>` (in a flattened print, this side's trace was not reliable and stays straight), `rim_refit:<side>:<mm>` (the outline sat on the holder rim along that side; the batch showed the print oversized by exactly the distance to the print edge behind the rim, so the side was moved there; the original outline stays in the manifest as `quad_detected`).
+Informational: `scale_unverified` (item `other`: the resolution tag could not be checked, or there is none), `metadata_not_updated: <file>: <reason>` (a file's text headers could not be rewritten, the next run tries again; the status is not changed), `scale_inferred:<source>`, `size_unverified` (single scan, no scale reference), `edge_repaired:<side>` (the holder rim touched that side; the side was refit on the print edge behind it), `flattened:<sides>:<mm>` (the export follows these sides' curves; largest bend), `flatten_straight:<side>` (in a flattened print, this side's trace was not reliable and stays straight), `rim_refit:<side>:<mm>` (the outline sat on the holder rim along that side; the batch showed the print oversized by exactly the distance to the print edge behind the rim, so the side was moved there; the original outline stays in the manifest as `quad_detected`).
 
 For sides that follow a curve, the straight-line checks `not_parallel`, `edge_inside` and `edge_curved` do not apply. Each result also carries `flatten` (applied, sides, bend per side) and `shadows` (corrected sides, strongest darkening, share of each side that could be measured).
 
@@ -259,7 +334,7 @@ Writers merge before they save: the manifest is re-read under a short lock and m
 
 ### Review loop for agents
 
-1. `polaroid process IN -o OUT --json` and collect scans with `status: needs_review`.
+1. `polaroid process IN -o OUT --json` and collect scans with `status: needs_review` or `failed` (a failed scan can be [cropped by hand](#hand-crop-and-item-kind)).
 2. For each: `polaroid inspect NAME -m OUT --json`, open the PNG, compare the green line with the print edge.
 3. Correct with `polaroid fix OUT NAME --nudge/--shift/--set ... --author agent --note "why"`, or confirm with `--accept --author agent`. A scan flagged `photo window not found` (photo crop on): `polaroid inspect NAME -m OUT --of window` shows the nominal window and the print; place it with `--window-set` / `--window-nudge`, or use `--no-photo-crop`, or `--accept` to export the full print without the crop.
 4. `polaroid process IN -o OUT --json` again, or pass `--export` to `fix`.
@@ -282,9 +357,9 @@ Use the full path to `polaroid-mcp` (for example `.../envs/<env>/Scripts/polaroi
 |---|---|
 | `polaroid_process` | `process` a batch; returns the summary and per-scan results (full records for flagged scans and for scans whose metadata headers could not be rewritten); takes a `metadata` object for the export metadata. Sends a progress notification per finished scan. |
 | `polaroid_detect` | Detect outlines, write nothing |
-| `polaroid_inspect` | Review sheet as an inline image plus corner coordinates; also saved to `<output>/_inspect/`; `of: "window"` centres it on the photo window |
-| `polaroid_fix` | `set` / `nudge` / `shift` / `accept` / `reset` as JSON objects, author `agent` by default, re-exports by default; with the photo crop on also `window_set` / `window_nudge` / `window_kind` / `no_photo_crop` / `reset_window` |
-| `polaroid_status` | Counts and the scans that need review |
+| `polaroid_inspect` | Review sheet as an inline image plus corner coordinates; also saved to `<output>/_inspect/`; `of: "window"` centres it on the photo window; a failed scan gets the whole-scan overview (`item` picks the start rectangle) |
+| `polaroid_fix` | `set` / `nudge` / `shift` / `accept` / `reset` as JSON objects, plus `item` and `scan_ppi`; author `agent` by default, every fix counts as an agent's, re-exports by default; with the photo crop on also `window_set` / `window_nudge` / `window_kind` / `no_photo_crop` / `reset_window` |
+| `polaroid_status` | Counts and the scans that need review (`needs_review: false` lists all, also failed ones) |
 
 Tool errors (bad arguments, missing manifest, another run working on the output folder) come back as tool results with `isError`, so the agent can correct itself. A refused run is not a failure of the scans: wait and try again. `polaroid_fix` with `export` while another run holds the folder still saves the fix; its result says the export was skipped.
 

@@ -544,6 +544,10 @@ Decided with the user after the first review of the page (R28 to R35). The earli
 4. **The proportions hint of an `Other` crop has a tolerance of 1.5 %** and names both formats when both fit (the aspects of 600 and Go differ by 1.3 %).
 5. **Choosing `600` or `Go` on a scan without a detected outline gives a touched rectangle that format's proportions at once** (narrows decision 4): same centre, same angle, same orientation, kept inside the scan. Corners that are not a rectangle (fine-tuned ones) and detected outlines are not changed by an item choice.
 
+### Hand crop: decision after the slice 3 review (2026-11-26)
+
+1. **`polaroid review` starts on a new grid filter "To review"** (needs review and failed). This is how decision 3 after the fifth review is met: slice 2 changed the list of the standalone review server, which no command starts, so failed scans stayed hidden behind the `needs_review` filter of the app (the commit message of `adc5bbe` says otherwise). The filters "Needs review" and "Failed" are unchanged.
+
 ### Hand crop: delivery
 
 Three slices, each built by an implementer session, checked by a reviewer session, and shown to the user before it is committed:
@@ -678,3 +682,46 @@ Last small round (R36 to R38 and a wording):
 - **R39** (a detected rectangle beyond the page's limits) is not changed.
 
 Contradictions with the decisions: none. One point to say: the reshape area rule keeps the area of the rectangle, so a rectangle that was far from the format's proportions can grow or shrink in one direction by a lot (a 900 x 700 landscape Other becomes 875 x 720 for 600; a very flat rectangle becomes much taller).
+
+### Hand crop: slice 3 status (2026-11-25)
+
+Documentation and a check on the two real scans. No code changed in this first round; the changes after its review are listed at the end.
+
+Documented:
+
+- `README.md`: a section "Hand crop and item kind" (item values, the place and fine-tune steps, own ppi, the take-away button, the card tags, CLI and API, the scale of `other`, what stays, agent rules), and updates to the intro, the web app bullets, `process --redetect`, `inspect`, `fix`, the status and warning tables, the record fields, the review loop and the MCP tool table.
+- `skills/polaroid-processor/SKILL.md`: how to find a failed scan, inspect, `fix` with corners and item, the scale, when to escalate, what an agent may not do, `cropped by agent` and `scale_unverified`. The copy in `~/.claude/skills/` is identical. The skill adds two things the decisions do not cover: its 1 mm escalation limit does not apply while an agent places its own crop, and an agent escalates when it is not clear what belongs in the picture.
+
+Checked on copies of the ticket and the lift, each with three prints of its folder (`.dev/hand_crop/real/`). Size, time and SHA-256 of the two sources, and sizes and times of the 186 files of both source folders and both `*_processed` folders, are the same before and after.
+
+- **`process`.** Both fail: ticket `light background: photo window not found (top)`, lift `light background: too few edge points (top: 0)`. The six prints are ok.
+- **`inspect` / `fix`** (CLI, item `other`). Ticket (7597 x 11465 px, tagged 600): `tl 378,1620`, `tr 6988,1626`, `br 6962,10880`, `bl 386,10882`. Lift (15114 x 20518 px, tagged 400): the paper sheet, `tl 2,236`, `tr 15060,155`, `br 15112,20314`, `bl 45,20418`, own ppi 2400; the sheet runs a little past the scan at two corners. Both turn ok at once. Times (wall, one run each): `inspect` 1.4 s ticket and 4.5 s lift before the crop, `fix` without export 0.6 s, `fix --export` by an agent 3.4 s and 8.9 s.
+- **Export.** TIFF 6593 x 9258 and 15063 x 20171 px, the mean of opposite sides of the quad. High and web JPG long edge 6000 and 2048. Names as for prints, no description, ICC profile kept, no format, no flattening, shadows or window. Resolution tags: ticket 600 (JPG 389 and 133) with `scale_unverified`; lift 2400 (JPG 714 and 244), source `scan-ppi`. `--scan-ppi 3200` on a ticket copy retagged (`retagged 1`, `exported 0`, 2074 and 708 on the JPGs), pixels equal.
+- **Neighbours.** After `--force` on the folder with the crop and on a copy without it, the records, manifest entries (times aside), pixels and bytes of the six prints and their derivatives are equal.
+- **Ticket size.** 6593 x 9258 px is 52.3 x 73.5 mm at 3200 ppi (52.2 x 73.3 mm at the 3208 ppi of the prints), against about 52 x 74 mm. At the tag's 600 ppi it would be 279 x 392 mm.
+- **Lift resolution.** At 400 ppi the scan would be 960 x 1303 mm, more than a flatbed holds, so the tag is wrong. At 2400 ppi the cropped sheet is 159 x 214 mm and the lifted image about 81 x 79 mm (measured by eye on the overview), close to the 79 x 77 mm picture of a 600 print; the writing on the sheet names a 600-type camera. At 3200 ppi the image would be about 61 x 59 mm. 2400 is plausible; this is not a measurement of the scanner setting.
+- **Re-run.** A second and third `process` detect nothing; the second exports the crop, the third nothing. `--redetect` (fails on both) keeps crop, `ok`, `detection_error`. A human's `reset` makes the ticket `failed` with its first error; the exported files stay.
+- **Agent.** `fix --author agent` in separate folders: `needs_review`, `cropped by agent`, exported, files byte-identical to the human's. An agent's accept keeps the mark, a human's accept clears it. An agent's reset of a human's crop, of a confirmed one, and its `--item 600` on a human's item are refused (exit 2).
+- **Tests.** No test reads README or SKILL. `tests/test_hand_crop.py` and `tests/test_hand_crop_page.py`: 128 passed (7 min 33 s); the full suite is the coordinator's.
+
+Found in the first round (which of these changed afterwards is said there):
+
+- **Failed scans and `polaroid review`.** Decision 3 after the fifth review puts failed scans in the default `polaroid review` list. The command opens the app with the grid filter `needs_review` (`cli.cmd_review`), and the filter keeps only cards of that status (`app.js` `matches`), so a failed scan is not shown. The change of slice 2 is in `ReviewApp.list_scans` without `--all`, which no command starts any more. Read in the code, not run in a browser. The README and the skill said that failed scans are not under "needs review". **Fixed after the review** (R40, below).
+- **Scale of a small item.** Both items were scanned with their own scan area (pixel sizes unlike the prints'), so the batch median of decision 6 does not apply and the tag is taken as it is: 600 on the ticket, about five times too low.
+- **MCP text.** `polaroid_fix` does not contradict the skill, but says "reset takes crop, item and scan_ppi away" without the limit that an agent resets on a failed scan only a crop that was an agent's from the start. **Fixed after the review** (R41, below).
+
+Not checked: the pages in a browser (the coordinator's), touch input, the MCP server on the real scans, a `--redetect` that succeeds and a changed scan file on real scans (tests only), a hand crop marked `600` or `Go` on a real scan.
+
+After the slice 3 review (R40 to R45, 2026-11-26):
+
+- **R40, the user's decision** ("Hand crop: decision after the slice 3 review"). The app's grid has a new filter "To review" after "All" (`app.js` `FILTERS`, `matches`, `filterCount`): scans that need review and failed scans, with the sum as its count. `polaroid review` starts on it (`cli.cmd_review`, `?filter=review`); `--all` starts on All; the `--all` help text says so. "Needs review" and "Failed" are unchanged, and so is `ReviewApp.list_scans`. README and skill (installed copy identical) say it.
+- **R41.** The `polaroid_fix` tool text states the reset limit on a failed scan.
+- **R42.** README: a human's `fix --reset` clears the agent mark too, and a changed scan file drops it.
+- **R43.** README `fix` examples: `--item other --scan-ppi 2400`.
+- **R44.** README "On the page": after a human's save the scan is ok; an agent's save of a crop without a detected outline gives `needs_review` with `cropped by agent`.
+- **R45.** The `polaroid_process` tool text says that `isError` true can also mean that some scans failed while the other results are valid.
+- **Round 2 nits (R46 to R49).** The "To review" count has the needs-review colour (`app.css`); an empty grid under it says "Nothing to review."; the harness scenario `filters` stubs the page's poller instead of clearing its timer; the `polaroid_fix` text says "only a crop an agent placed that no human saved or confirmed since", as README and skill do.
+
+Tests of these changes: `tests/test_app_page.py` +1 (the filter chips, their counts, the cards shown, the empty-grid text), `tests/test_app_launch.py` updated to `?filter=review`. After R40 to R45, `test_app_page`, `test_app_launch`, `test_mcp_server`, `test_app_metadata`, `test_metadata_pipeline`, `test_photo_window_review`, `test_hand_crop` and `test_hand_crop_page`: 308 passed (17 min 34 s). After R46 to R49, `test_app_page`, `test_app_launch` and `test_mcp_server`: 69 passed (1 min 19 s). Full suite on the final code (coordinator): 702 passed, 40 skipped, 4 xfailed, 0 failed (24 min 50 s; no tracked file changed during it).
+
+Browser (coordinator, synthetic project on its own port and settings file, an agent's crop on one failed scan and one failed scan without a crop): the address `?filter=review` opens the project on "To review 2" with both cards; "Needs review 1" shows only the agent's crop; the counts have the amber and red colours; no console errors. `polaroid review` itself was not started in the browser (it would write to the user's app settings); its address is covered by `tests/test_app_launch.py`.

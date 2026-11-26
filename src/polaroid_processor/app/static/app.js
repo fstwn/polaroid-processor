@@ -1,6 +1,6 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
-// ?filter=needs_review (from `polaroid review`) applies to the first project only, then the address is clean
+// ?filter=review (from `polaroid review`) applies to the first project only, then the address is clean
 let startFilter = new URLSearchParams(location.search).get("filter");
 if (startFilter) history.replaceState(null, "", location.pathname);
 const SETTING_FIELDS = ["margin_mm", "photo_crop", "photo_bleed_mm", "flatten", "shadows", "high_on", "high_edge", "high_quality", "web_on", "web_edge",
@@ -148,16 +148,18 @@ for (const [id, btn] of [["in-path", "create"], ["out-path", "create"], ["open-p
 }
 
 // ---------------------------------------------------------------- project
-const FILTERS = [["all", "All"], ["ok", "OK"], ["needs_review", "Needs review"], ["failed", "Failed"], ["todo", "Not checked yet"]];
+const FILTERS = [["all", "All"], ["review", "To review"], ["ok", "OK"], ["needs_review", "Needs review"], ["failed", "Failed"], ["todo", "Not checked yet"]];
 
 function matches(scan, filter) {
   if (filter === "all") return true;
+  if (filter === "review") return scan.status === "needs_review" || scan.status === "failed";
   if (filter === "todo") return scan.status === "pending" || scan.status === "detected";
   return scan.status === filter;
 }
 
 function filterCount(c, f) {
   if (f === "all") return c.total;
+  if (f === "review") return c.needs_review + c.failed;
   if (f === "todo") return c.pending + c.detected;
   return c[f];
 }
@@ -188,6 +190,7 @@ function applyFilter() {
     empty.textContent = !S.scans.length ? "This project has no scans yet."
       : S.filter === "all" ? "" : "No scans with this status.";
     if (S.filter === "todo" && S.scans.length) empty.textContent = "Every scan has been checked.";
+    if (S.filter === "review" && S.scans.length) empty.textContent = "Nothing to review.";
   }
 }
 
